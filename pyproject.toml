@@ -1,0 +1,63 @@
+[project]
+name = "hypersussy"
+version = "0.1.0"
+description = "Monitoring and alerting system for suspicious activity on HyperLiquid perpetual futures"
+readme = "README.md"
+authors = [
+    { email = "24949824+brah@users.noreply.github.com" }
+]
+requires-python = ">=3.13"
+dependencies = [
+    "hyperliquid-python-sdk>=0.22.0",
+    "aiosqlite>=0.20.0",
+    "orjson>=3.10.0",
+    "polars>=1.0.0",
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.0.0",
+    "websockets>=13.0",
+    "structlog>=24.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+    "mypy>=1.10",
+    "ruff>=0.8.0",
+    "pytest-cov>=6.0",
+    "aioresponses>=0.7.0",
+]
+notebooks = [
+    "ipykernel>=6.0",
+    "ipywidgets>=8.0",
+    "tqdm>=4.60",
+]
+
+[project.scripts]
+hypersussy = "hypersussy.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 88
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "A", "SIM"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[[tool.mypy.overrides]]
+module = "hyperliquid.*"
+ignore_missing_imports = true
+follow_untyped_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

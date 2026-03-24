@@ -29,6 +29,14 @@ class HyperSussySettings(BaseSettings):
     rate_limit_weight: int = 1200
     rate_limit_window_s: int = 60
 
+    # Engine toggles
+    engine_oi_concentration: bool = True
+    engine_whale_tracker: bool = True
+    engine_twap_detector: bool = True
+    engine_pre_move: bool = True
+    engine_funding_anomaly: bool = True
+    engine_liquidation_risk: bool = True
+
     # OI Concentration engine
     oi_change_pct_threshold: float = 0.10
     oi_change_windows_ms: list[int] = Field(
@@ -39,11 +47,11 @@ class HyperSussySettings(BaseSettings):
     oi_min_usd: float = 100_000.0
 
     # Whale Tracker engine
-    whale_volume_threshold_usd: float = 500_000.0
+    whale_volume_threshold_usd: float = 5_000_000.0
     whale_volume_lookback_ms: int = 3_600_000
     max_tracked_addresses: int = 200
     position_poll_interval_s: float = 30.0
-    large_position_oi_pct: float = 0.05
+    large_position_oi_pct: float = 0.20
     large_position_change_usd: float = 1_000_000.0
 
     # TWAP Detector engine
@@ -74,6 +82,10 @@ class HyperSussySettings(BaseSettings):
     # Alert system
     alert_cooldown_s: int = 3600
     alert_max_per_minute: int = 10
+
+    # WebSocket throttling
+    ws_connect_delay_s: float = 2.5
+    ws_subscribe_delay_s: float = 0.05
 
     # Polling intervals
     meta_poll_interval_s: float = 10.0

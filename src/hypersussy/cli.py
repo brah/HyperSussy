@@ -11,12 +11,14 @@ import sys
 import structlog
 
 
-def _configure_logging(level: str) -> None:
+def _configure_logging(level: str, log_file: str | None = None) -> None:
     """Set up structlog with JSON output.
 
     Args:
         level: Log level string (e.g. "INFO", "DEBUG").
+        log_file: Optional path to write logs to. If None, writes to stdout.
     """
+    file_handle = open(log_file, "a") if log_file else None  # noqa: SIM115
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -28,82 +30,94 @@ def _configure_logging(level: str) -> None:
             logging.getLevelName(level)
         ),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
+        logger_factory=structlog.PrintLoggerFactory(file=file_handle),
         cache_logger_on_first_use=True,
     )
     logging.basicConfig(
         level=getattr(logging, level, logging.INFO),
         format="%(message)s",
+        stream=file_handle,
     )
 
 
-async def _run() -> None:
-    """Wire up all components and start the orchestrator."""
-    from hypersussy.alerts.manager import AlertManager
-    from hypersussy.alerts.sinks.log_sink import LogSink
+def _build_components(settings: object) -> tuple:  # type: ignore[type-arg]
+    """Import and instantiate all core components from settings.
+
+    Args:
+        settings: HyperSussySettings instance.
+
+    Returns:
+        Tuple of (reader, stream, storage, engines, rate_limiter).
+    """
     from hypersussy.config import HyperSussySettings
     from hypersussy.engines.base import DetectionEngine
-    from hypersussy.engines.funding_anomaly import (
-        FundingAnomalyEngine,
-    )
-    from hypersussy.engines.liquidation_risk import (
-        LiquidationRiskEngine,
-    )
-    from hypersussy.engines.oi_concentration import (
-        OiConcentrationEngine,
-    )
+    from hypersussy.engines.funding_anomaly import FundingAnomalyEngine
+    from hypersussy.engines.liquidation_risk import LiquidationRiskEngine
+    from hypersussy.engines.oi_concentration import OiConcentrationEngine
     from hypersussy.engines.pre_move import PreMoveEngine
     from hypersussy.engines.twap_detector import TwapDetectorEngine
     from hypersussy.engines.whale_tracker import WhaleTrackerEngine
-    from hypersussy.exchange.hyperliquid.client import (
-        HyperLiquidReader,
-    )
-    from hypersussy.exchange.hyperliquid.websocket import (
-        HyperLiquidStream,
-    )
-    from hypersussy.orchestrator import Orchestrator
+    from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
+    from hypersussy.exchange.hyperliquid.websocket import HyperLiquidStream, WsThrottle
     from hypersussy.rate_limiter import WeightRateLimiter
     from hypersussy.storage.sqlite import SqliteStorage
+
+    s: HyperSussySettings = settings  # type: ignore[assignment]
+
+    rate_limiter = WeightRateLimiter(
+        max_weight=s.rate_limit_weight,
+        window_seconds=s.rate_limit_window_s,
+    )
+    reader = HyperLiquidReader(base_url=s.hl_api_url, rate_limiter=rate_limiter)
+    throttle = WsThrottle(
+        connect_delay_s=s.ws_connect_delay_s,
+        subscribe_delay_s=s.ws_subscribe_delay_s,
+    )
+    stream = HyperLiquidStream(ws_url=s.hl_ws_url, throttle=throttle)
+    storage = SqliteStorage(db_path=s.db_path)
+
+    engines: list[DetectionEngine] = []
+    if s.engine_oi_concentration:
+        engines.append(OiConcentrationEngine(storage=storage, settings=s))
+    if s.engine_whale_tracker:
+        engines.append(WhaleTrackerEngine(storage=storage, reader=reader, settings=s))
+    if s.engine_twap_detector:
+        engines.append(TwapDetectorEngine(settings=s))
+    if s.engine_pre_move:
+        engines.append(PreMoveEngine(settings=s))
+    if s.engine_funding_anomaly:
+        engines.append(FundingAnomalyEngine(settings=s))
+    if s.engine_liquidation_risk:
+        engines.append(
+            LiquidationRiskEngine(storage=storage, reader=reader, settings=s)
+        )
+
+    return reader, stream, storage, engines, rate_limiter
+
+
+async def _run() -> None:
+    """Wire up all components and start the orchestrator (headless mode)."""
+    from hypersussy.alerts.base import AlertSink
+    from hypersussy.alerts.manager import AlertManager
+    from hypersussy.alerts.sinks.log_sink import LogSink
+    from hypersussy.config import HyperSussySettings
+    from hypersussy.orchestrator import Orchestrator
 
     settings = HyperSussySettings()
     _configure_logging(settings.log_level)
 
     log = structlog.get_logger("hypersussy.cli")
-    log.info("Starting HyperSussy", log_level=settings.log_level)
+    log.info("Starting HyperSussy (headless)", log_level=settings.log_level)
 
-    # Ensure data directory exists
     db_dir = os.path.dirname(settings.db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
 
-    # Initialize components
-    rate_limiter = WeightRateLimiter(
-        max_weight=settings.rate_limit_weight,
-        window_seconds=settings.rate_limit_window_s,
-    )
-    reader = HyperLiquidReader(
-        base_url=settings.hl_api_url,
-        rate_limiter=rate_limiter,
-    )
-    stream = HyperLiquidStream(ws_url=settings.hl_ws_url)
-    storage = SqliteStorage(db_path=settings.db_path)
+    reader, stream, storage, engines, _ = _build_components(settings)
     await storage.init()
 
-    # Engines
-    engines: list[DetectionEngine] = [
-        OiConcentrationEngine(storage=storage, settings=settings),
-        WhaleTrackerEngine(storage=storage, reader=reader, settings=settings),
-        TwapDetectorEngine(settings=settings),
-        PreMoveEngine(settings=settings),
-        FundingAnomalyEngine(settings=settings),
-        LiquidationRiskEngine(storage=storage, reader=reader, settings=settings),
-    ]
-
-    # Alert system
-    sinks = [LogSink()]
+    sinks: list[AlertSink] = [LogSink()]
     alert_manager = AlertManager(storage=storage, sinks=sinks, settings=settings)
-
-    # Orchestrator
     orchestrator = Orchestrator(
         reader=reader,
         stream=stream,
@@ -113,7 +127,6 @@ async def _run() -> None:
         settings=settings,
     )
 
-    # Graceful shutdown on SIGINT/SIGTERM
     loop = asyncio.get_running_loop()
 
     def _shutdown() -> None:
@@ -133,9 +146,80 @@ async def _run() -> None:
         log.info("HyperSussy stopped")
 
 
+async def _run_tui() -> None:
+    """Wire up all components and start the TUI."""
+    from hypersussy.alerts.base import AlertSink
+    from hypersussy.alerts.manager import AlertManager
+    from hypersussy.alerts.sinks.log_sink import LogSink
+    from hypersussy.alerts.sinks.tui_sink import TuiSink
+    from hypersussy.config import HyperSussySettings
+    from hypersussy.orchestrator import Orchestrator
+    from hypersussy.tui.app import HyperSussyApp
+
+    settings = HyperSussySettings()
+
+    # In TUI mode write logs to file — Textual owns stdout
+    db_dir = os.path.dirname(settings.db_path)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+    log_file = os.path.join(db_dir or "data", "hypersussy.log")
+    _configure_logging(settings.log_level, log_file=log_file)
+
+    log = structlog.get_logger("hypersussy.cli")
+    log.info("Starting HyperSussy (TUI mode)", log_level=settings.log_level)
+
+    reader, stream, storage, engines, _ = _build_components(settings)
+    await storage.init()
+
+    # App is constructed first so we have the DataBus reference for TuiSink.
+    # The orchestrator is injected via set_orchestrator() before run_async().
+    app = HyperSussyApp()
+
+    sinks: list[AlertSink] = [LogSink(), TuiSink(app)]
+    alert_manager = AlertManager(storage=storage, sinks=sinks, settings=settings)
+    orchestrator = Orchestrator(
+        reader=reader,
+        stream=stream,
+        storage=storage,
+        engines=engines,
+        alert_manager=alert_manager,
+        settings=settings,
+        data_bus=app,
+    )
+    app.set_orchestrator(orchestrator)
+
+    try:
+        await app.run_async()
+    finally:
+        await storage.close()
+        log.info("HyperSussy stopped")
+
+
+def _run_streamlit() -> None:
+    """Launch the Streamlit dashboard via subprocess.
+
+    Delegates entirely to `streamlit run` so Streamlit manages its own
+    server lifecycle and event loop, avoiding conflicts with asyncio.
+    """
+    import subprocess
+    from importlib.resources import files
+
+    app_path = str(files("hypersussy.dashboard").joinpath("app.py"))
+    result = subprocess.run(
+        ["streamlit", "run", app_path, "--server.headless", "true"],
+        check=False,
+    )
+    sys.exit(result.returncode)
+
+
 def main() -> None:
     """Synchronous entry point for the CLI."""
-    asyncio.run(_run())
+    if "--streamlit" in sys.argv:
+        _run_streamlit()
+    elif "--no-tui" in sys.argv:
+        asyncio.run(_run())
+    else:
+        asyncio.run(_run_tui())
 
 
 if __name__ == "__main__":

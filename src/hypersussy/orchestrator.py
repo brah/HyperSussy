@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from collections.abc import Sequence
 
@@ -18,8 +19,13 @@ from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.exchange.hyperliquid.websocket import HyperLiquidStream
 from hypersussy.models import Trade
 from hypersussy.storage.base import StorageProtocol
+from hypersussy.protocols import DataBus
 
 logger = logging.getLogger(__name__)
+
+# HyperLiquid enforces max 10 WS connections per IP.
+# Reserve 1 for future allMids/l2Book streams.
+_MAX_TRADE_WS_CONNECTIONS = 9
 
 
 class Orchestrator:
@@ -42,6 +48,7 @@ class Orchestrator:
         engines: Sequence[DetectionEngine],
         alert_manager: AlertManager,
         settings: HyperSussySettings,
+        data_bus: DataBus | None = None,
     ) -> None:
         self._reader = reader
         self._stream = stream
@@ -49,6 +56,7 @@ class Orchestrator:
         self._engines = engines
         self._alert_manager = alert_manager
         self._settings = settings
+        self._data_bus = data_bus
         self._coins: list[str] = []
         self._running = False
 
@@ -69,18 +77,25 @@ class Orchestrator:
             asyncio.create_task(self._refresh_coins_loop(), name="refresh_coins"),
         ]
 
-        # Start trade streams for all coins
-        for coin in self._coins:
-            tasks.append(
-                asyncio.create_task(
-                    self._trade_stream_task(coin),
-                    name=f"trades_{coin}",
+        # Multiplex trade streams across a limited number of WS connections
+        n_conns = min(_MAX_TRADE_WS_CONNECTIONS, len(self._coins))
+        if n_conns > 0:
+            batch_size = math.ceil(len(self._coins) / n_conns)
+            for i in range(n_conns):
+                batch = self._coins[i * batch_size : (i + 1) * batch_size]
+                if not batch:
+                    break
+                tasks.append(
+                    asyncio.create_task(
+                        self._trade_stream_batch(batch),
+                        name=f"trades_ws_{i}",
+                    )
                 )
-            )
 
         logger.info(
-            "Orchestrator running with %d coins, %d engines",
+            "Orchestrator running with %d coins across %d WS connections, %d engines",
             len(self._coins),
+            n_conns,
             len(self._engines),
         )
 
@@ -123,6 +138,8 @@ class Orchestrator:
                 await self._storage.insert_asset_snapshots(snapshots)
 
                 for snapshot in snapshots:
+                    if self._data_bus is not None:
+                        self._data_bus.push_snapshot(snapshot)
                     for engine in self._engines:
                         alerts = await engine.on_asset_update(snapshot)
                         for alert in alerts:
@@ -145,14 +162,18 @@ class Orchestrator:
                     logger.exception("Error in engine tick: %s", engine.name)
             await asyncio.sleep(self._settings.meta_poll_interval_s)
 
-    async def _trade_stream_task(self, coin: str) -> None:
-        """Stream trades for a single coin and dispatch.
+    async def _trade_stream_batch(self, coins: list[str]) -> None:
+        """Stream trades for a batch of coins on one WS connection.
 
         Args:
-            coin: Asset name to stream.
+            coins: Asset names to subscribe to on this connection.
         """
-        logger.info("Starting trade stream for %s", coin)
-        async for trade in self._stream.stream_trades(coin):
+        logger.info(
+            "Starting multiplexed trade stream for %d coins: %s",
+            len(coins),
+            ", ".join(coins[:5]) + ("..." if len(coins) > 5 else ""),
+        )
+        async for trade in self._stream.stream_trades_multi(coins):
             if not self._running:
                 break
             await self._dispatch_trade(trade)

@@ -50,6 +50,9 @@ def parse_meta_and_asset_ctxs(
     snapshots: list[AssetSnapshot] = []
 
     for asset_info, ctx in zip(universe, ctxs, strict=True):
+        # Skip delisted / inactive assets (no mark price from the exchange)
+        if not ctx.get("markPx"):
+            continue
         coin = asset_info["name"]
         mark = _f(ctx.get("markPx"))
         oi = _f(ctx.get("openInterest"))

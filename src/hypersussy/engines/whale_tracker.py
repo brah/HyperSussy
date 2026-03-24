@@ -81,7 +81,7 @@ class WhaleTrackerEngine:
                 self._tracked.add(addr)
                 await self._storage.upsert_tracked_address(
                     addr,
-                    f"whale_{len(self._tracked)}",
+                    f"{trade.coin} WHALE",
                     "discovered",
                     self._address_volume[addr],
                 )

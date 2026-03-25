@@ -208,7 +208,7 @@ class PreMoveEngine:
 
 
 def _find_price_at(prices: deque[tuple[int, float]], target_ms: int) -> float | None:
-    """Find the price at or just after a target timestamp.
+    """Find the price at or just after a target timestamp via binary search.
 
     Args:
         prices: Sorted deque of (timestamp_ms, price).
@@ -217,7 +217,16 @@ def _find_price_at(prices: deque[tuple[int, float]], target_ms: int) -> float | 
     Returns:
         Price at the target time, or None if not found.
     """
-    for ts, price in prices:
-        if ts >= target_ms:
-            return price
+    n = len(prices)
+    if n == 0:
+        return None
+    lo, hi = 0, n - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if prices[mid][0] < target_ms:
+            lo = mid + 1
+        else:
+            hi = mid
+    if prices[lo][0] >= target_ms:
+        return prices[lo][1]
     return None

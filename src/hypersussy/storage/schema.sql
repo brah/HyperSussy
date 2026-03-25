@@ -78,6 +78,9 @@ CREATE TABLE IF NOT EXISTS alerts (
 CREATE INDEX IF NOT EXISTS idx_alerts_type_coin_ts
     ON alerts (alert_type, coin, timestamp_ms);
 
+CREATE INDEX IF NOT EXISTS idx_alerts_metadata_address
+    ON alerts (json_extract(metadata_json, '$.address'), timestamp_ms);
+
 CREATE TABLE IF NOT EXISTS candles (
     coin            TEXT    NOT NULL,
     interval_str    TEXT    NOT NULL,

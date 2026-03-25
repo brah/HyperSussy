@@ -3,8 +3,23 @@
 from __future__ import annotations
 
 import math
+import time
+from collections.abc import Sequence
 
 import polars as pl
+
+# -- Chart colour palette (shared across charts.py and whale_tracker.py) --
+
+CHART_TEAL = "#00d4aa"
+CHART_RED = "#ff4b4b"
+CHART_ORANGE = "#ffa500"
+CHART_GRID = "#2a2d35"
+CHART_GREY = "#4a4e69"
+CHART_PAPER_BG = "rgba(0,0,0,0)"
+CHART_PLOT_BG = "rgba(0,0,0,0)"
+CHART_FONT_COLOR = "#fafafa"
+
+# -- Severity helpers --
 
 _SEV_COLORS: dict[str, str] = {
     "critical": "#ff4b4b",
@@ -12,6 +27,8 @@ _SEV_COLORS: dict[str, str] = {
     "medium": "#ffd700",
     "low": "#21c354",
 }
+
+SEV_RANK: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
 def format_price(value: float) -> str:
@@ -67,6 +84,58 @@ def severity_color(severity: str) -> str:
         Hex colour string.
     """
     return _SEV_COLORS.get(severity, "#cccccc")
+
+
+def render_alert_line(
+    severity: str,
+    coin: str,
+    title: str,
+    timestamp_ms: int,
+    alert_type: str = "",
+    address: str | None = None,
+) -> str:
+    """Return an HTML string for a single colour-coded alert line.
+
+    Args:
+        severity: Alert severity level.
+        coin: Asset ticker symbol.
+        title: Alert title text.
+        timestamp_ms: Alert timestamp in milliseconds.
+        alert_type: Optional engine alert type string.
+        address: Optional wallet address for a clickable link.
+
+    Returns:
+        HTML string for use with ``st.markdown(unsafe_allow_html=True)``.
+    """
+    color = severity_color(severity)
+    ts = time.strftime("%H:%M:%S", time.localtime(timestamp_ms / 1000))
+    type_part = f" | {alert_type}" if alert_type else ""
+    addr_part = f" | {wallet_link_html(address)}" if address else ""
+    return (
+        f'<span style="color:{color};font-weight:bold">'
+        f"[{severity.upper()}]</span> "
+        f"`{coin}`{type_part} | "
+        f"**{title}** | _{ts}_{addr_part}"
+    )
+
+
+def sort_alerts_by_severity(
+    rows: Sequence[dict[str, object]],
+    ts_key: str = "timestamp_ms",
+) -> list[dict[str, object]]:
+    """Sort alert dicts by severity (critical first), then newest first.
+
+    Args:
+        rows: Alert dicts with ``severity`` and a timestamp key.
+        ts_key: Name of the timestamp key in each dict.
+
+    Returns:
+        Sorted copy of the input list.
+    """
+    return sorted(
+        rows,
+        key=lambda r: (SEV_RANK.get(str(r["severity"]), 9), -int(r[ts_key])),  # type: ignore[arg-type]
+    )
 
 
 def wallet_link_html(address: str) -> str:
@@ -131,14 +200,18 @@ def build_positions_df(
                 "Liq. Distance": liq_dist_str,
             }
         )
-    return pl.DataFrame(rows) if rows else pl.DataFrame(
-        schema={
-            "Coin": pl.Utf8,
-            "Size (%OI)": pl.Utf8,
-            "Notional (USD)": pl.Float64,
-            "Unr. PnL": pl.Float64,
-            "Mark Price": pl.Utf8,
-            "Liq. Price": pl.Utf8,
-            "Liq. Distance": pl.Utf8,
-        }
+    return (
+        pl.DataFrame(rows)
+        if rows
+        else pl.DataFrame(
+            schema={
+                "Coin": pl.Utf8,
+                "Size (%OI)": pl.Utf8,
+                "Notional (USD)": pl.Float64,
+                "Unr. PnL": pl.Float64,
+                "Mark Price": pl.Utf8,
+                "Liq. Price": pl.Utf8,
+                "Liq. Distance": pl.Utf8,
+            }
+        )
     )

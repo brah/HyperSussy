@@ -7,15 +7,16 @@ import polars as pl
 import streamlit as st
 
 from hypersussy.dashboard.db_reader import DashboardReader
-from hypersussy.dashboard.formatting import price_d3_format
-
-_TEAL = "#00d4aa"
-_RED = "#ff4b4b"
-_ORANGE = "#ffa500"
-_GRID = "#2a2d35"
-_PAPER_BG = "rgba(0,0,0,0)"
-_PLOT_BG = "rgba(0,0,0,0)"
-_FONT_COLOR = "#fafafa"
+from hypersussy.dashboard.formatting import (
+    CHART_FONT_COLOR,
+    CHART_GRID,
+    CHART_ORANGE,
+    CHART_PAPER_BG,
+    CHART_PLOT_BG,
+    CHART_RED,
+    CHART_TEAL,
+    price_d3_format,
+)
 
 
 def _base_layout(**kwargs: object) -> dict[str, object]:
@@ -28,12 +29,12 @@ def _base_layout(**kwargs: object) -> dict[str, object]:
         Layout dict suitable for go.Figure(layout=...).
     """
     layout: dict[str, object] = {
-        "plot_bgcolor": _PLOT_BG,
-        "paper_bgcolor": _PAPER_BG,
-        "font": {"color": _FONT_COLOR},
+        "plot_bgcolor": CHART_PLOT_BG,
+        "paper_bgcolor": CHART_PAPER_BG,
+        "font": {"color": CHART_FONT_COLOR},
         "margin": {"l": 10, "r": 10, "t": 30, "b": 10},
-        "xaxis": {"gridcolor": _GRID, "showgrid": True},
-        "yaxis": {"gridcolor": _GRID, "showgrid": True},
+        "xaxis": {"gridcolor": CHART_GRID, "showgrid": True},
+        "yaxis": {"gridcolor": CHART_GRID, "showgrid": True},
         "hovermode": "x unified",
     }
     layout.update(kwargs)
@@ -104,7 +105,7 @@ def _render_oi_chart(db_reader: DashboardReader, coin: str, hours: int) -> None:
             y=oi_vals,
             mode="lines",
             fill="tozeroy",
-            line={"color": _TEAL, "width": 2},
+            line={"color": CHART_TEAL, "width": 2},
             fillcolor="rgba(0,212,170,0.15)",
             name="OI (USD)",
             hovertemplate="$%{y:,.0f}<extra></extra>",
@@ -113,8 +114,8 @@ def _render_oi_chart(db_reader: DashboardReader, coin: str, hours: int) -> None:
     fig.update_layout(
         **_base_layout(
             title=f"Open Interest — {coin}",
-            yaxis={"tickprefix": "$", "tickformat": ",.0f", "gridcolor": _GRID},
-            xaxis={"rangeslider": {"visible": True}, "gridcolor": _GRID},
+            yaxis={"tickprefix": "$", "tickformat": ",.0f", "gridcolor": CHART_GRID},
+            xaxis={"rangeslider": {"visible": True}, "gridcolor": CHART_GRID},
         )
     )
     st.plotly_chart(fig, width="stretch")
@@ -159,7 +160,7 @@ def _render_funding_price_charts(
                 y=pos_y,
                 mode="lines",
                 fill="tozeroy",
-                line={"color": _TEAL, "width": 1},
+                line={"color": CHART_TEAL, "width": 1},
                 fillcolor="rgba(0,212,170,0.2)",
                 name="Positive",
                 hovertemplate="%{y:.5f}%<extra></extra>",
@@ -171,7 +172,7 @@ def _render_funding_price_charts(
                 y=neg_y,
                 mode="lines",
                 fill="tozeroy",
-                line={"color": _RED, "width": 1},
+                line={"color": CHART_RED, "width": 1},
                 fillcolor="rgba(255,75,75,0.2)",
                 name="Negative",
                 hovertemplate="%{y:.5f}%<extra></extra>",
@@ -192,7 +193,7 @@ def _render_funding_price_charts(
                 x=times,
                 y=mark,
                 mode="lines",
-                line={"color": _TEAL, "width": 2},
+                line={"color": CHART_TEAL, "width": 2},
                 name="Mark",
                 hovertemplate=f"Mark: $%{{y:{d3_fmt}}}<extra></extra>",
             )
@@ -202,7 +203,7 @@ def _render_funding_price_charts(
                 x=times,
                 y=oracle,
                 mode="lines",
-                line={"color": _ORANGE, "width": 2, "dash": "dot"},
+                line={"color": CHART_ORANGE, "width": 2, "dash": "dot"},
                 name="Oracle",
                 hovertemplate=f"Oracle: $%{{y:{d3_fmt}}}<extra></extra>",
             )
@@ -213,7 +214,7 @@ def _render_funding_price_charts(
                 yaxis={
                     "tickprefix": "$",
                     "tickformat": d3_fmt,
-                    "gridcolor": _GRID,
+                    "gridcolor": CHART_GRID,
                 },
                 legend={"orientation": "h", "y": 1.1},
             )

@@ -18,6 +18,7 @@ class _MockReader:
     def __init__(self, positions: list[Position] | None = None) -> None:
         self.positions = positions or []
         self.get_user_positions = AsyncMock(return_value=self.positions)
+        self.get_user_twap_slice_fills = AsyncMock(return_value=[])
 
 
 def _trade(

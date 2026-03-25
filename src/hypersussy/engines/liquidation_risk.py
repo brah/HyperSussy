@@ -72,6 +72,9 @@ class LiquidationRiskEngine:
     async def tick(self, timestamp_ms: int) -> list[Alert]:
         """Check tracked whales for liquidation proximity.
 
+        Caches L2 book fetches per coin so each book is retrieved at
+        most once per tick regardless of how many whales hold that coin.
+
         Args:
             timestamp_ms: Current timestamp in milliseconds.
 
@@ -81,6 +84,7 @@ class LiquidationRiskEngine:
         alerts: list[Alert] = []
         cooldown_ms = self._settings.alert_cooldown_s * 1000
         threshold = self._settings.liquidation_distance_threshold
+        book_cache: dict[str, object] = {}
 
         tracked = await self._storage.get_tracked_addresses()
 
@@ -107,8 +111,9 @@ class LiquidationRiskEngine:
                 if timestamp_ms - self._last_alert_ms.get(key, 0) < cooldown_ms:
                     continue
 
-                # Fetch L2 book to estimate impact
-                impact_ratio = await self._estimate_impact(pos.coin, abs(pos.size))
+                impact_ratio = await self._estimate_impact(
+                    pos.coin, abs(pos.size), book_cache
+                )
 
                 alerts.append(
                     _liquidation_alert(
@@ -127,25 +132,36 @@ class LiquidationRiskEngine:
 
         return alerts
 
-    async def _estimate_impact(self, coin: str, position_size: float) -> float:
+    async def _estimate_impact(
+        self,
+        coin: str,
+        position_size: float,
+        book_cache: dict[str, object],
+    ) -> float:
         """Estimate market impact of liquidating a position.
 
-        Compares position size to nearby order book depth.
+        Uses *book_cache* to avoid fetching the same coin's L2 book
+        multiple times within a single tick.
 
         Args:
             coin: Asset name.
             position_size: Absolute position size.
+            book_cache: Mutable cache of coin -> L2Book for this tick.
 
         Returns:
             Ratio of position size to available book depth.
             Higher values indicate more impact risk.
         """
-        try:
-            book = await self._reader.get_l2_book(coin)
-            return _compute_impact_ratio(book, position_size)
-        except Exception:
-            logger.warning("Failed to fetch L2 book for %s", coin)
+        if coin not in book_cache:
+            try:
+                book_cache[coin] = await self._reader.get_l2_book(coin)
+            except Exception:
+                logger.warning("Failed to fetch L2 book for %s", coin)
+                book_cache[coin] = None  # sentinel to avoid retrying
+        book = book_cache[coin]
+        if book is None:
             return 0.0
+        return _compute_impact_ratio(book, position_size)  # type: ignore[arg-type]
 
 
 def _compute_impact_ratio(book: L2Book, position_size: float) -> float:

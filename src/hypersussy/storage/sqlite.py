@@ -240,6 +240,24 @@ class SqliteStorage:
             for r in rows
         ]
 
+    async def get_total_volume(self, coin: str, since_ms: int) -> float:
+        """Get total trade volume for a coin since a timestamp.
+
+        Args:
+            coin: Asset name.
+            since_ms: Start timestamp.
+
+        Returns:
+            Total notional volume in USD.
+        """
+        cursor = await self._conn.execute(
+            """SELECT COALESCE(SUM(price * size), 0.0)
+               FROM trades WHERE coin = ? AND timestamp_ms >= ?""",
+            (coin, since_ms),
+        )
+        row = await cursor.fetchone()
+        return float(row[0]) if row else 0.0
+
     # -- Tracked addresses --
 
     async def upsert_tracked_address(

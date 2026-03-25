@@ -143,11 +143,7 @@ class OiConcentrationEngine:
         if not top_addresses:
             return None
 
-        # Get total volume for concentration calculation
-        all_addresses = await self._storage.get_top_addresses_by_volume(
-            coin, cutoff, limit=1000
-        )
-        total_volume = sum(vol for _, vol in all_addresses)
+        total_volume = await self._storage.get_total_volume(coin, cutoff)
         if total_volume == 0:
             return None
 

@@ -10,8 +10,6 @@ from __future__ import annotations
 import sqlite3
 import time
 
-import orjson
-
 
 class DashboardReader:
     """Read-only SQLite interface for dashboard pages.
@@ -42,9 +40,7 @@ class DashboardReader:
             A writable sqlite3 connection with busy_timeout set.
         """
         if self._write_conn is None:
-            self._write_conn = sqlite3.connect(
-                self._db_path, check_same_thread=False
-            )
+            self._write_conn = sqlite3.connect(self._db_path, check_same_thread=False)
             self._write_conn.execute("PRAGMA busy_timeout=5000")
         return self._write_conn
 
@@ -57,9 +53,7 @@ class DashboardReader:
             address: The 0x address to remove.
         """
         conn = self._get_write_conn()
-        conn.execute(
-            "DELETE FROM tracked_addresses WHERE address = ?", (address,)
-        )
+        conn.execute("DELETE FROM tracked_addresses WHERE address = ?", (address,))
         conn.commit()
 
     def insert_tracked_address(self, address: str, label: str) -> None:
@@ -95,13 +89,13 @@ class DashboardReader:
 
         Returns:
             List of alert dicts.  Includes an ``address`` key extracted
-            from metadata when present.
+            from metadata via ``json_extract`` at the SQL level.
         """
         cur = self._conn.execute(
             """
             SELECT alert_id, alert_type, severity, coin,
                    title, description, timestamp_ms, exchange,
-                   metadata_json
+                   json_extract(metadata_json, '$.address') AS address
             FROM alerts
             WHERE timestamp_ms >= ?
             ORDER BY timestamp_ms DESC
@@ -109,14 +103,7 @@ class DashboardReader:
             """,
             (since_ms, limit),
         )
-        results: list[dict[str, object]] = []
-        for row in cur.fetchall():
-            d = dict(row)
-            raw = d.pop("metadata_json", None)
-            meta = orjson.loads(raw) if raw else {}
-            d["address"] = meta.get("address")
-            results.append(d)
-        return results
+        return [dict(row) for row in cur.fetchall()]
 
     # -- Snapshots --
 
@@ -270,6 +257,15 @@ class DashboardReader:
             (limit,),
         )
         return [dict(row) for row in cur.fetchall()]
+
+    def get_tracked_address_count(self) -> int:
+        """Return the total number of tracked whale addresses.
+
+        Returns:
+            Count of rows in tracked_addresses table.
+        """
+        cur = self._conn.execute("SELECT COUNT(*) FROM tracked_addresses")
+        return int(cur.fetchone()[0])
 
     def get_whale_positions(
         self,

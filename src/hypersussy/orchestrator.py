@@ -18,8 +18,8 @@ from hypersussy.engines.base import DetectionEngine
 from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.exchange.hyperliquid.websocket import HyperLiquidStream
 from hypersussy.models import Trade
-from hypersussy.storage.base import StorageProtocol
 from hypersussy.protocols import DataBus
+from hypersussy.storage.base import StorageProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -160,7 +160,7 @@ class Orchestrator:
                         await self._alert_manager.process_alert(alert)
                 except Exception:
                     logger.exception("Error in engine tick: %s", engine.name)
-            await asyncio.sleep(self._settings.meta_poll_interval_s)
+            await asyncio.sleep(self._settings.engine_tick_interval_s)
 
     async def _trade_stream_batch(self, coins: list[str]) -> None:
         """Stream trades for a batch of coins on one WS connection.

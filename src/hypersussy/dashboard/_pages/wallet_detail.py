@@ -11,7 +11,7 @@ from hypersussy.dashboard.db_reader import DashboardReader
 from hypersussy.dashboard.formatting import (
     build_positions_df,
     format_price,
-    severity_color,
+    render_alert_line,
 )
 
 
@@ -124,15 +124,13 @@ def _render_alerts(db_reader: DashboardReader, address: str) -> None:
         return
 
     for r in alert_rows:
-        severity = str(r["severity"])
-        color = severity_color(severity)
-        ts = time.strftime(
-            "%H:%M:%S", time.localtime(int(r["timestamp_ms"]) / 1000)
-        )
         st.markdown(
-            f'<span style="color:{color};font-weight:bold">'
-            f"[{severity.upper()}]</span> "
-            f'`{r["coin"]}` | {r["alert_type"]} | '
-            f'**{r["title"]}** | _{ts}_',
+            render_alert_line(
+                severity=str(r["severity"]),
+                coin=str(r["coin"]),
+                title=str(r["title"]),
+                timestamp_ms=int(r["timestamp_ms"]),
+                alert_type=str(r["alert_type"]),
+            ),
             unsafe_allow_html=True,
         )

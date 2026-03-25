@@ -9,13 +9,18 @@ import streamlit as st
 
 from hypersussy.dashboard.db_reader import DashboardReader
 from hypersussy.dashboard.formatting import (
+    CHART_FONT_COLOR,
+    CHART_GREY,
+    CHART_GRID,
+    CHART_PAPER_BG,
+    CHART_PLOT_BG,
+    CHART_TEAL,
     build_positions_df,
-    severity_color,
+    render_alert_line,
+    sort_alerts_by_severity,
     wallet_link_html,
 )
 
-_TEAL = "#00d4aa"
-_GREY = "#4a4e69"
 _HOURS_OPTIONS = [1, 4, 24]
 _COL_VOLUME = "Volume (USD)"
 
@@ -105,9 +110,7 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
 
         last_active = int(selected["last_active_ms"] or 0)
         if last_active:
-            ts = time.strftime(
-                "%Y-%m-%d %H:%M:%S", time.localtime(last_active / 1000)
-            )
+            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_active / 1000))
             st.caption(f"Last active: {ts}")
 
         tab_pos, tab_alerts = st.tabs(["Positions", "Alert History"])
@@ -117,9 +120,7 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
             if not positions:
                 st.info("No open positions found.")
             else:
-                df = build_positions_df(
-                    positions, db_reader.get_latest_oi_per_coin()
-                )
+                df = build_positions_df(positions, db_reader.get_latest_oi_per_coin())
                 st.dataframe(
                     df,
                     width="stretch",
@@ -128,9 +129,7 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
                         "Notional (USD)": st.column_config.NumberColumn(
                             format="$%,.0f"
                         ),
-                        "Unr. PnL": st.column_config.NumberColumn(
-                            format="$%+,.0f"
-                        ),
+                        "Unr. PnL": st.column_config.NumberColumn(format="$%+,.0f"),
                     },
                 )
 
@@ -139,28 +138,15 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
             if not alert_rows:
                 st.info("No alerts triggered by this address yet.")
             else:
-                sev_rank = {
-                    "critical": 0,
-                    "high": 1,
-                    "medium": 2,
-                    "low": 3,
-                }
-                sorted_rows = sorted(
-                    alert_rows,
-                    key=lambda r: sev_rank.get(str(r["severity"]), 9),
-                )
-                for r in sorted_rows:
-                    severity = str(r["severity"])
-                    color = severity_color(severity)
-                    ts = time.strftime(
-                        "%H:%M:%S",
-                        time.localtime(int(r["timestamp_ms"]) / 1000),
-                    )
+                for r in sort_alerts_by_severity(alert_rows):
                     st.markdown(
-                        f'<span style="color:{color};font-weight:bold">'
-                        f"[{severity.upper()}]</span> "
-                        f'`{r["coin"]}` | {r["alert_type"]} | '
-                        f'**{r["title"]}** | _{ts}_',
+                        render_alert_line(
+                            severity=str(r["severity"]),
+                            coin=str(r["coin"]),
+                            title=str(r["title"]),
+                            timestamp_ms=int(r["timestamp_ms"]),
+                            alert_type=str(r["alert_type"]),
+                        ),
                         unsafe_allow_html=True,
                     )
 
@@ -176,9 +162,7 @@ def _render_top_traders(db_reader: DashboardReader) -> None:
 
     col_coin, col_hours = st.columns(2)
     with col_coin:
-        selected_coin = st.selectbox(
-            "Coin", options=coins, key="top_traders_coin"
-        )
+        selected_coin = st.selectbox("Coin", options=coins, key="top_traders_coin")
     with col_hours:
         hours = st.selectbox(
             "Lookback",
@@ -206,7 +190,7 @@ def _render_top_traders(db_reader: DashboardReader) -> None:
     sorted_rows = sorted(top10, key=lambda r: float(r["volume_usd"]))
     addresses = [str(r["address"]) for r in sorted_rows]
     volumes = [float(r["volume_usd"]) for r in sorted_rows]
-    colours = [_TEAL if a in tracked_set else _GREY for a in addresses]
+    colours = [CHART_TEAL if a in tracked_set else CHART_GREY for a in addresses]
     short_labels = [f"...{a[-10:]}" for a in addresses]
     hover = [
         f"<b>{a}</b><br>Volume: ${v:,.0f}"
@@ -228,27 +212,28 @@ def _render_top_traders(db_reader: DashboardReader) -> None:
         yaxis_title=None,
         margin={"l": 10, "r": 10, "t": 10, "b": 10},
         height=320,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-        font_color="#fafafa",
+        plot_bgcolor=CHART_PLOT_BG,
+        paper_bgcolor=CHART_PAPER_BG,
+        font_color=CHART_FONT_COLOR,
         xaxis={
             "tickprefix": "$",
             "tickformat": ",.0f",
-            "gridcolor": "#2a2d35",
+            "gridcolor": CHART_GRID,
         },
-        yaxis={"gridcolor": "#2a2d35"},
+        yaxis={"gridcolor": CHART_GRID},
     )
     st.plotly_chart(fig, width="stretch")
 
     # Ranked summary table with wallet hotlinks
-    table_html_parts = [
-        "<table style='width:100%;border-collapse:collapse;"
-        "font-size:0.9em;color:#fafafa'>"
-        + "<tr style='border-bottom:1px solid #2a2d35'>"
-        + "<th>Rank</th><th>Address</th>"
-        + "<th>Volume (USD)</th><th>% of Top 10</th>"
-        + "<th>Tracked</th></tr>"
-    ]
+    table_header = (
+        f"<table style='width:100%;border-collapse:collapse;"
+        f"font-size:0.9em;color:{CHART_FONT_COLOR}'>"
+        f"<tr style='border-bottom:1px solid {CHART_GRID}'>"
+        "<th>Rank</th><th>Address</th>"
+        "<th>Volume (USD)</th><th>% of Top 10</th>"
+        "<th>Tracked</th></tr>"
+    )
+    table_html_parts = [table_header]
     for i, r in enumerate(top10):
         addr = str(r["address"])
         vol = float(r["volume_usd"])

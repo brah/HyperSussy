@@ -7,6 +7,7 @@ positions to detect large or changing holdings.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections import deque
@@ -15,7 +16,7 @@ from hyperliquid.utils.error import ClientError
 
 from hypersussy.config import HyperSussySettings
 from hypersussy.exchange.base import ExchangeReader
-from hypersussy.models import Alert, AssetSnapshot, Trade
+from hypersussy.models import Alert, AssetSnapshot, Position, Trade
 from hypersussy.storage.base import StorageProtocol
 
 logger = logging.getLogger(__name__)
@@ -183,8 +184,9 @@ class WhaleTrackerEngine:
     ) -> list[Alert]:
         """Poll positions for tracked whales due for refresh.
 
-        Only polls addresses still present in ``db_tracked`` so that
-        UI removals take effect immediately.
+        Fetches positions and TWAP fills concurrently across up to 10
+        addresses using ``asyncio.gather``, then processes results
+        sequentially to update shared state.
 
         Args:
             timestamp_ms: Current timestamp in milliseconds.
@@ -193,7 +195,6 @@ class WhaleTrackerEngine:
         Returns:
             Alerts for notable position changes.
         """
-        alerts: list[Alert] = []
         now_s = timestamp_ms / 1000.0
         cooldown_ms = self._settings.alert_cooldown_s * 1000
 
@@ -204,114 +205,141 @@ class WhaleTrackerEngine:
             >= self._settings.position_poll_interval_s
         ]
 
-        for addr in to_poll[:10]:
-            try:
-                positions = await self._reader.get_user_positions(addr)
-                self._last_polled[addr] = now_s
+        batch = to_poll[:10]
+        if not batch:
+            return []
 
-                if positions:
-                    await self._storage.insert_positions(positions)
+        # Fetch positions + TWAP fills concurrently
+        results = await asyncio.gather(
+            *(self._fetch_addr_data(addr) for addr in batch),
+            return_exceptions=True,
+        )
 
-                current = {p.coin: p.notional_usd for p in positions}
-                prev = dict(self._last_positions.get(addr, []))
-
-                for pos in positions:
-                    # Check position / OI ratio
-                    coin_oi = self._coin_oi.get(pos.coin, 0.0)
-                    if coin_oi > 0:
-                        oi_pct = abs(pos.notional_usd) / coin_oi
-                        if oi_pct >= self._settings.large_position_oi_pct:
-                            key = f"{addr}:{pos.coin}"
-                            if (
-                                timestamp_ms - self._last_alert_ms.get(key, 0)
-                                >= cooldown_ms
-                            ):
-                                alerts.append(
-                                    _position_alert(
-                                        addr,
-                                        pos.coin,
-                                        pos.notional_usd,
-                                        oi_pct,
-                                        timestamp_ms,
-                                    )
-                                )
-                                self._last_alert_ms[key] = timestamp_ms
-
-                    # Check position size change — skip on first poll (prev = 0)
-                    if addr in self._polled_once:
-                        prev_notional = prev.get(pos.coin, 0.0)
-                        change_usd = abs(pos.notional_usd - prev_notional)
-                        if change_usd >= self._settings.large_position_change_usd:
-                            key = f"{addr}:{pos.coin}:change"
-                            if (
-                                timestamp_ms - self._last_alert_ms.get(key, 0)
-                                >= cooldown_ms
-                            ):
-                                alerts.append(
-                                    _change_alert(
-                                        addr,
-                                        pos.coin,
-                                        prev_notional,
-                                        pos.notional_usd,
-                                        change_usd,
-                                        timestamp_ms,
-                                    )
-                                )
-                                self._last_alert_ms[key] = timestamp_ms
-
-                self._last_positions[addr] = list(current.items())
-                self._polled_once.add(addr)
-
-                # Poll real TWAP executions from the HL API
-                twap_alerts = await self._check_twap_fills(
-                    addr, timestamp_ms, cooldown_ms
-                )
-                alerts.extend(twap_alerts)
-            except ClientError as exc:
-                if exc.status_code == 429:
+        alerts: list[Alert] = []
+        for addr, result in zip(batch, results, strict=True):
+            if isinstance(result, ClientError):
+                if result.status_code == 429:
                     logger.warning(
                         "Rate-limited polling positions for %s — backing off", addr
                     )
                     self._last_polled[addr] = now_s
                 else:
                     logger.exception("Client error polling positions for %s", addr)
-            except Exception:
+                continue
+            if isinstance(result, BaseException):
                 logger.exception("Failed to poll positions for %s", addr)
+                continue
+
+            positions, twap_fills = result
+            self._last_polled[addr] = now_s
+
+            if positions:
+                await self._storage.insert_positions(positions)
+
+            current = {p.coin: p.notional_usd for p in positions}
+            prev = dict(self._last_positions.get(addr, []))
+
+            for pos in positions:
+                coin_oi = self._coin_oi.get(pos.coin, 0.0)
+                if coin_oi > 0:
+                    oi_pct = abs(pos.notional_usd) / coin_oi
+                    if oi_pct >= self._settings.large_position_oi_pct:
+                        key = f"{addr}:{pos.coin}"
+                        if (
+                            timestamp_ms - self._last_alert_ms.get(key, 0)
+                            >= cooldown_ms
+                        ):
+                            alerts.append(
+                                _position_alert(
+                                    addr,
+                                    pos.coin,
+                                    pos.notional_usd,
+                                    oi_pct,
+                                    timestamp_ms,
+                                )
+                            )
+                            self._last_alert_ms[key] = timestamp_ms
+
+                if addr in self._polled_once:
+                    prev_notional = prev.get(pos.coin, 0.0)
+                    change_usd = abs(pos.notional_usd - prev_notional)
+                    if change_usd >= self._settings.large_position_change_usd:
+                        key = f"{addr}:{pos.coin}:change"
+                        if (
+                            timestamp_ms - self._last_alert_ms.get(key, 0)
+                            >= cooldown_ms
+                        ):
+                            alerts.append(
+                                _change_alert(
+                                    addr,
+                                    pos.coin,
+                                    prev_notional,
+                                    pos.notional_usd,
+                                    change_usd,
+                                    timestamp_ms,
+                                )
+                            )
+                            self._last_alert_ms[key] = timestamp_ms
+
+            self._last_positions[addr] = list(current.items())
+            self._polled_once.add(addr)
+
+            twap_alerts = self._process_twap_fills(
+                addr, twap_fills, timestamp_ms, cooldown_ms
+            )
+            alerts.extend(twap_alerts)
 
         return alerts
 
-    async def _check_twap_fills(
-        self,
-        addr: str,
-        timestamp_ms: int,
-        cooldown_ms: int,
-    ) -> list[Alert]:
-        """Detect active TWAP executions via the HL API for a tracked address.
-
-        Queries the last 2000 TWAP slice fills for the address, groups them
-        by twapId, and alerts on any TWAP whose most recent fill is within
-        the position poll interval (i.e., still actively executing).
+    async def _fetch_addr_data(
+        self, addr: str
+    ) -> tuple[list[Position], list[dict[str, object]]]:
+        """Fetch positions and TWAP fills for an address concurrently.
 
         Args:
             addr: Tracked whale address.
+
+        Returns:
+            Tuple of (positions, twap_fills).
+        """
+        positions, twap_fills = await asyncio.gather(
+            self._reader.get_user_positions(addr),
+            self._reader.get_user_twap_slice_fills(addr),
+        )
+        return positions, twap_fills  # type: ignore[return-value]
+
+    def _process_twap_fills(
+        self,
+        addr: str,
+        fills: list[dict[str, object]],
+        timestamp_ms: int,
+        cooldown_ms: int,
+    ) -> list[Alert]:
+        """Process pre-fetched TWAP slice fills into alerts.
+
+        Groups fills by twapId and alerts on any TWAP whose most
+        recent fill is within the active window.
+
+        Args:
+            addr: Tracked whale address.
+            fills: Raw TWAP slice fill entries from the API.
             timestamp_ms: Current timestamp in milliseconds.
             cooldown_ms: Alert cooldown in milliseconds.
 
         Returns:
             Alerts for each newly detected active TWAP.
         """
-        fills = await self._reader.get_user_twap_slice_fills(addr)
         if not fills:
             return []
 
         # Group by twapId — each entry has {"fill": {...}, "twapId": int}
         twap_latest: dict[int, dict[str, object]] = {}
         for entry in fills:
-            twap_id = int(entry["twapId"])  # type: ignore[arg-type]
+            twap_id = int(entry["twapId"])  # type: ignore[call-overload]
             fill = entry["fill"]  # type: ignore[index]
             fill_time = int(fill["time"])  # type: ignore[index,call-overload]
             prev = twap_latest.get(twap_id)
-            if prev is None or fill_time > int(prev["time"]):  # type: ignore[arg-type]
+            if prev is None or fill_time > int(prev["time"]):  # type: ignore[call-overload]
                 twap_latest[twap_id] = fill  # type: ignore[assignment]
 
         alerts: list[Alert] = []
@@ -320,7 +348,7 @@ class WhaleTrackerEngine:
         for twap_id, latest_fill in twap_latest.items():
             fill_time = int(latest_fill["time"])  # type: ignore[call-overload]
             if timestamp_ms - fill_time > active_window_ms:
-                continue  # TWAP has been idle — not active
+                continue
 
             key = f"{addr}:twap:{twap_id}"
             if timestamp_ms - self._last_alert_ms.get(key, 0) < cooldown_ms:

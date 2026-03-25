@@ -10,6 +10,8 @@ import sys
 
 import structlog
 
+logger = logging.getLogger(__name__)
+
 
 def _configure_logging(level: str, log_file: str | None = None) -> None:
     """Set up structlog with JSON output.
@@ -55,7 +57,6 @@ def _build_components(settings: object) -> tuple:  # type: ignore[type-arg]
     from hypersussy.engines.liquidation_risk import LiquidationRiskEngine
     from hypersussy.engines.oi_concentration import OiConcentrationEngine
     from hypersussy.engines.pre_move import PreMoveEngine
-    from hypersussy.engines.twap_detector import TwapDetectorEngine
     from hypersussy.engines.whale_tracker import WhaleTrackerEngine
     from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
     from hypersussy.exchange.hyperliquid.websocket import HyperLiquidStream, WsThrottle
@@ -81,8 +82,6 @@ def _build_components(settings: object) -> tuple:  # type: ignore[type-arg]
         engines.append(OiConcentrationEngine(storage=storage, settings=s))
     if s.engine_whale_tracker:
         engines.append(WhaleTrackerEngine(storage=storage, reader=reader, settings=s))
-    if s.engine_twap_detector:
-        engines.append(TwapDetectorEngine(settings=s))
     if s.engine_pre_move:
         engines.append(PreMoveEngine(settings=s))
     if s.engine_funding_anomaly:
@@ -158,10 +157,7 @@ def _run_streamlit() -> None:
 
     streamlit_exe = shutil.which("streamlit")
     if streamlit_exe is None:
-        print(
-            "streamlit not found. Run: uv sync --extra dashboard",
-            file=sys.stderr,
-        )
+        logger.error("streamlit not found. Run: uv sync --extra dashboard")
         sys.exit(1)
 
     app_path = str(files("hypersussy.dashboard").joinpath("app.py"))

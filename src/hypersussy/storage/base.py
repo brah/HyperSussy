@@ -185,6 +185,18 @@ class StorageProtocol(Protocol):
         """
         ...
 
+    async def get_total_volume(self, coin: str, since_ms: int) -> float:
+        """Get total trade volume for a coin since a timestamp.
+
+        Args:
+            coin: Asset name.
+            since_ms: Start timestamp.
+
+        Returns:
+            Total notional volume in USD.
+        """
+        ...
+
     # -- Candles --
 
     async def insert_candles(self, candles: list[CandleBar]) -> None:

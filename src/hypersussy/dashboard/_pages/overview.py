@@ -8,7 +8,7 @@ import polars as pl
 import streamlit as st
 
 from hypersussy.dashboard.db_reader import DashboardReader
-from hypersussy.dashboard.formatting import format_price, severity_color
+from hypersussy.dashboard.formatting import format_price, render_alert_line
 from hypersussy.dashboard.state import SharedState
 
 _COL_24H_VOL = "24h Volume"
@@ -50,9 +50,10 @@ def render_overview(
 
     @st.fragment(run_every=refresh_s)
     def _live() -> None:
+        snapshots = state.get_snapshots()
         _render_status_banner(state)
-        _render_metrics(state, db_reader)
-        _render_market_table(state)
+        _render_metrics(snapshots, db_reader)
+        _render_market_table(snapshots)
         _render_recent_alerts(state)
 
     _live()
@@ -63,22 +64,27 @@ def _render_status_banner(state: SharedState) -> None:
     if state.is_running:
         st.success("Orchestrator running — data is live")
     else:
-        st.warning(
-            "Orchestrator not running. Start with `hypersussy --streamlit`."
-        )
+        st.warning("Orchestrator not running. Start with `hypersussy --streamlit`.")
 
 
-def _render_metrics(state: SharedState, db_reader: DashboardReader) -> None:
-    """Display top-level metric cards."""
-    snapshots = state.get_snapshots()
+def _render_metrics(
+    snapshots: dict[str, object],
+    db_reader: DashboardReader,
+) -> None:
+    """Display top-level metric cards.
+
+    Args:
+        snapshots: Current asset snapshots keyed by coin.
+        db_reader: Read-only SQLite reader.
+    """
     now_ms = int(time.time() * 1000)
     since_1h_ms = now_ms - 3_600_000
 
-    total_oi = sum(s.open_interest_usd for s in snapshots.values())
-    total_vol = sum(s.day_volume_usd for s in snapshots.values())
+    total_oi = sum(s.open_interest_usd for s in snapshots.values())  # type: ignore[union-attr]
+    total_vol = sum(s.day_volume_usd for s in snapshots.values())  # type: ignore[union-attr]
     alert_counts = db_reader.get_alert_counts_by_type(since_ms=since_1h_ms)
     total_alerts_1h = sum(alert_counts.values())
-    tracked = len(db_reader.get_tracked_addresses(limit=1000))
+    tracked = db_reader.get_tracked_address_count()
 
     cols = st.columns(5)
     cols[0].metric("Total OI", _format_usd(total_oi))
@@ -88,12 +94,12 @@ def _render_metrics(state: SharedState, db_reader: DashboardReader) -> None:
     cols[4].metric("Whales Tracked", tracked)
 
 
-def _render_market_table(state: SharedState) -> None:
+def _render_market_table(snapshots: dict[str, object]) -> None:
     """Render the live market data table sorted by OI descending.
 
-    Only shows coins with a non-zero mark price (active markets).
+    Args:
+        snapshots: Current asset snapshots keyed by coin.
     """
-    snapshots = state.get_snapshots()
     if not snapshots:
         st.info("Waiting for first market data poll (~10s)...")
         return
@@ -143,14 +149,12 @@ def _render_recent_alerts(state: SharedState) -> None:
 
     st.subheader("Recent Alerts")
     for alert in alerts:
-        severity = alert.severity
-        color = severity_color(severity)
-
-        ts = time.strftime(
-            "%H:%M:%S", time.localtime(alert.timestamp_ms / 1000)
-        )
         st.markdown(
-            f'<span style="color:{color}">**[{severity.upper()}]**</span> '
-            f"`{alert.coin}` — **{alert.title}** _{ts}_",
+            render_alert_line(
+                severity=alert.severity,
+                coin=alert.coin,
+                title=alert.title,
+                timestamp_ms=alert.timestamp_ms,
+            ),
             unsafe_allow_html=True,
         )

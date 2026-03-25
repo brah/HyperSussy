@@ -8,7 +8,7 @@ import polars as pl
 import streamlit as st
 
 from hypersussy.dashboard.db_reader import DashboardReader
-from hypersussy.dashboard.formatting import severity_color, wallet_link_html
+from hypersussy.dashboard.formatting import render_alert_line, sort_alerts_by_severity
 
 _ALL_SEVERITIES = ["critical", "high", "medium", "low"]
 _ALL_TYPES = [
@@ -20,7 +20,6 @@ _ALL_TYPES = [
     "funding_anomaly",
     "liquidation_risk",
 ]
-_SEV_RANK: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
 
 def render_alerts(
@@ -85,26 +84,18 @@ def _render_filters_and_feed(db_reader: DashboardReader) -> None:
         st.info("No alerts match the current filters.")
         return
 
-    # Sort by severity (critical first), then timestamp descending
-    rows = sorted(
-        rows,
-        key=lambda r: (_SEV_RANK.get(str(r["severity"]), 9), -int(r["timestamp_ms"])),
-    )
+    rows = sort_alerts_by_severity(rows)
 
-    # Colour-coded feed
     for r in rows:
-        severity = str(r["severity"])
-        color = severity_color(severity)
-        ts = time.strftime(
-            "%H:%M:%S", time.localtime(int(r["timestamp_ms"]) / 1000)
-        )
-        address = r.get("address")
-        addr_part = f" | {wallet_link_html(str(address))}" if address else ""
         st.markdown(
-            f'<span style="color:{color};font-weight:bold">'
-            f"[{severity.upper()}]</span> "
-            f'`{r["coin"]}` | {r["alert_type"]} | '
-            f'**{r["title"]}** | _{ts}_{addr_part}',
+            render_alert_line(
+                severity=str(r["severity"]),
+                coin=str(r["coin"]),
+                title=str(r["title"]),
+                timestamp_ms=int(r["timestamp_ms"]),
+                alert_type=str(r["alert_type"]),
+                address=str(r["address"]) if r.get("address") else None,
+            ),
             unsafe_allow_html=True,
         )
 

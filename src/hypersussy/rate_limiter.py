@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import deque
 
 
 class WeightRateLimiter:
     """Token-bucket rate limiter tracking API weight consumption.
+
+    Uses a deque with a running weight total for O(1) prune and
+    weight queries instead of O(N) list scans.
 
     Args:
         max_weight: Maximum weight allowed per window.
@@ -21,21 +25,22 @@ class WeightRateLimiter:
     ) -> None:
         self._max_weight = max_weight
         self._window_seconds = window_seconds
-        self._requests: list[tuple[float, int]] = []
+        self._requests: deque[tuple[float, int]] = deque()
+        self._current_weight: int = 0
         self._lock = asyncio.Lock()
 
     def _prune(self, now: float) -> None:
         """Remove expired entries outside the sliding window."""
         cutoff = now - self._window_seconds
-        # Binary search would be faster but list is small (<1200 entries)
         while self._requests and self._requests[0][0] < cutoff:
-            self._requests.pop(0)
+            _, w = self._requests.popleft()
+            self._current_weight -= w
 
     @property
     def used_weight(self) -> int:
         """Current weight used in the sliding window."""
         self._prune(time.monotonic())
-        return sum(w for _, w in self._requests)
+        return self._current_weight
 
     @property
     def available_weight(self) -> int:
@@ -59,12 +64,12 @@ class WeightRateLimiter:
             async with self._lock:
                 now = time.monotonic()
                 self._prune(now)
-                current = sum(w for _, w in self._requests)
-                if current + weight <= self._max_weight:
+                if self._current_weight + weight <= self._max_weight:
                     self._requests.append((now, weight))
+                    self._current_weight += weight
                     return
                 # Calculate wait time until enough weight frees up
-                needed = current + weight - self._max_weight
+                needed = self._current_weight + weight - self._max_weight
                 freed = 0
                 wait_until = now
                 for ts, w in self._requests:

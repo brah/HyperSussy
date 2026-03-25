@@ -32,7 +32,6 @@ class HyperSussySettings(BaseSettings):
     # Engine toggles
     engine_oi_concentration: bool = True
     engine_whale_tracker: bool = True
-    engine_twap_detector: bool = False  # replaced by API-based polling in whale_tracker
     engine_pre_move: bool = True
     engine_funding_anomaly: bool = True
     engine_liquidation_risk: bool = True
@@ -54,13 +53,6 @@ class HyperSussySettings(BaseSettings):
     position_poll_interval_s: float = 30.0
     large_position_oi_pct: float = 0.20
     large_position_change_usd: float = 1_000_000.0
-
-    # TWAP Detector engine
-    twap_min_fills: int = 10
-    twap_max_time_cv: float = 0.5
-    twap_max_size_cv: float = 0.5
-    twap_window_ms: int = 1_800_000
-    twap_min_notional_usd: float = 100_000.0
 
     # Pre-Move engine
     pre_move_threshold_pct: float = 0.02
@@ -90,6 +82,7 @@ class HyperSussySettings(BaseSettings):
 
     # Polling intervals
     meta_poll_interval_s: float = 10.0
+    engine_tick_interval_s: float = 10.0
     asset_list_refresh_s: float = 300.0
 
     # Logging

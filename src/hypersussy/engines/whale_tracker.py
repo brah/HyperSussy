@@ -11,13 +11,19 @@ import asyncio
 import logging
 import uuid
 from collections import deque
-from typing import cast
 
 from hyperliquid.utils.error import ClientError
 
 from hypersussy.config import HyperSussySettings
 from hypersussy.exchange.base import ExchangeReader
-from hypersussy.models import Alert, AssetSnapshot, Position, Trade
+from hypersussy.models import (
+    Alert,
+    AssetSnapshot,
+    Position,
+    Trade,
+    TwapFillEntry,
+    TwapSliceFill,
+)
 from hypersussy.storage.base import StorageProtocol
 
 logger = logging.getLogger(__name__)
@@ -353,7 +359,7 @@ class WhaleTrackerEngine:
 
     async def _fetch_addr_data(
         self, addr: str
-    ) -> tuple[list[Position], list[dict[str, object]]]:
+    ) -> tuple[list[Position], list[TwapSliceFill]]:
         """Fetch positions and TWAP fills for an address concurrently.
 
         Args:
@@ -374,7 +380,7 @@ class WhaleTrackerEngine:
     def _process_twap_fills(
         self,
         addr: str,
-        fills: list[dict[str, object]],
+        fills: list[TwapSliceFill],
         timestamp_ms: int,
         cooldown_ms: int,
     ) -> list[Alert]:
@@ -395,21 +401,21 @@ class WhaleTrackerEngine:
         if not fills:
             return []
 
-        # Group by twapId — each entry has {"fill": {...}, "twapId": int}
-        twap_latest: dict[int, dict[str, object]] = {}
+        # Group by twapId, keeping only the latest fill per TWAP
+        twap_latest: dict[int, TwapFillEntry] = {}
         for entry in fills:
-            twap_id = int(entry["twapId"])  # type: ignore[call-overload]
-            fill = cast("dict[str, object]", entry["fill"])
-            fill_time = int(fill["time"])  # type: ignore[call-overload]
+            twap_id = entry["twapId"]
+            fill = entry["fill"]
+            fill_time = fill["time"]
             prev = twap_latest.get(twap_id)
-            if prev is None or fill_time > int(prev["time"]):  # type: ignore[call-overload]
+            if prev is None or fill_time > prev["time"]:
                 twap_latest[twap_id] = fill
 
         alerts: list[Alert] = []
         active_window_ms = int(self._settings.position_poll_interval_s * 1000) * 3
 
         for twap_id, latest_fill in twap_latest.items():
-            fill_time = int(latest_fill["time"])  # type: ignore[call-overload]
+            fill_time = latest_fill["time"]
             if timestamp_ms - fill_time > active_window_ms:
                 continue
 
@@ -417,10 +423,10 @@ class WhaleTrackerEngine:
             if timestamp_ms - self._last_alert_ms.get(key, 0) < cooldown_ms:
                 continue
 
-            coin = str(latest_fill.get("coin", ""))
-            is_buy = latest_fill.get("side") == "B"
-            sz = float(latest_fill.get("sz", 0))  # type: ignore[arg-type]
-            px = float(latest_fill.get("px", 0))  # type: ignore[arg-type]
+            coin = latest_fill["coin"]
+            is_buy = latest_fill["side"] == "B"
+            sz = float(latest_fill["sz"])
+            px = float(latest_fill["px"])
 
             alerts.append(
                 _twap_active_alert(

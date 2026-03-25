@@ -9,8 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import sqlite3
 import time
 from collections.abc import Sequence
+
+import requests
+from hyperliquid.utils.error import ClientError, ServerError
 
 from hypersussy.alerts.manager import AlertManager
 from hypersussy.config import HyperSussySettings
@@ -29,6 +33,19 @@ logger = logging.getLogger(__name__)
 _MAX_TRADE_WS_CONNECTIONS = 8
 # HL position WS: subscribe up to this many users per connection.
 _MAX_POSITION_WS_USERS = 1000
+
+# Exceptions from REST calls, storage, and engine logic that the
+# orchestrator must survive without crashing.
+_RECOVERABLE: tuple[type[Exception], ...] = (
+    ClientError,
+    ServerError,
+    requests.RequestException,
+    sqlite3.Error,
+    OSError,
+    ValueError,
+    KeyError,
+    TypeError,
+)
 
 
 class Orchestrator:
@@ -133,7 +150,7 @@ class Orchestrator:
             await asyncio.sleep(self._settings.asset_list_refresh_s)
             try:
                 await self._refresh_coins()
-            except Exception:
+            except _RECOVERABLE:
                 logger.exception("Failed to refresh coin list")
 
     async def _poll_meta_loop(self) -> None:
@@ -150,7 +167,7 @@ class Orchestrator:
                         alerts = await engine.on_asset_update(snapshot)
                         for alert in alerts:
                             await self._alert_manager.process_alert(alert)
-            except Exception:
+            except _RECOVERABLE:
                 logger.exception("Error in meta polling loop")
 
             await asyncio.sleep(self._settings.meta_poll_interval_s)
@@ -164,7 +181,7 @@ class Orchestrator:
                     alerts = await engine.tick(now_ms)
                     for alert in alerts:
                         await self._alert_manager.process_alert(alert)
-                except Exception:
+                except _RECOVERABLE:
                     logger.exception("Error in engine tick: %s", engine.name)
             await asyncio.sleep(self._settings.engine_tick_interval_s)
 
@@ -222,11 +239,11 @@ class Orchestrator:
                             )
                             for alert in pos_alerts:
                                 await self._alert_manager.process_alert(alert)
-                        except Exception:
+                        except _RECOVERABLE:
                             logger.exception(
                                 "Error in on_position_update for %s", address
                             )
-            except Exception:
+            except _RECOVERABLE:
                 logger.exception("Position stream loop error; restarting")
                 await asyncio.sleep(2)
 
@@ -238,7 +255,7 @@ class Orchestrator:
         """
         try:
             await self._storage.insert_trades([trade])
-        except Exception:
+        except _RECOVERABLE:
             logger.exception("Failed to store trade")
 
         for engine in self._engines:
@@ -246,7 +263,7 @@ class Orchestrator:
                 alerts = await engine.on_trade(trade)
                 for alert in alerts:
                     await self._alert_manager.process_alert(alert)
-            except Exception:
+            except _RECOVERABLE:
                 logger.exception(
                     "Error dispatching trade to engine %s",
                     engine.name,

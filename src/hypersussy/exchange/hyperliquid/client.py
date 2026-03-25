@@ -12,7 +12,9 @@ import logging
 from functools import partial
 from typing import Any
 
+import requests
 from hyperliquid.info import Info
+from hyperliquid.utils.error import ClientError, ServerError
 
 from hypersussy.exchange.hyperliquid.parsers import (
     parse_candles,
@@ -29,6 +31,7 @@ from hypersussy.models import (
     L2Book,
     Position,
     Trade,
+    TwapSliceFill,
 )
 from hypersussy.rate_limiter import WeightRateLimiter
 
@@ -134,7 +137,12 @@ class HyperLiquidReader:
             )
             try:
                 snapshots.extend(await self._fetch_dex_snapshots(dex))
-            except Exception:
+            except (
+                ClientError,
+                ServerError,
+                requests.RequestException,
+                OSError,
+            ):
                 logger.exception("Failed to fetch dex snapshots for %r", dex)
         logger.debug(
             "get_asset_snapshots: done — %d snapshots across %d dex(es)",
@@ -296,7 +304,7 @@ class HyperLiquidReader:
     async def get_user_twap_slice_fills(
         self,
         address: str,
-    ) -> list[dict[str, object]]:
+    ) -> list[TwapSliceFill]:
         """Fetch the most recent TWAP slice fills for a user.
 
         Args:

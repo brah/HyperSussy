@@ -8,7 +8,12 @@ book depth.
 from __future__ import annotations
 
 import logging
+import sqlite3
 import uuid
+from dataclasses import dataclass
+
+import requests
+from hyperliquid.utils.error import ClientError, ServerError
 
 from hypersussy.config import HyperSussySettings
 from hypersussy.exchange.base import ExchangeReader
@@ -84,14 +89,14 @@ class LiquidationRiskEngine:
         alerts: list[Alert] = []
         cooldown_ms = self._settings.alert_cooldown_s * 1000
         threshold = self._settings.liquidation_distance_threshold
-        book_cache: dict[str, object] = {}
+        book_cache: dict[str, L2Book | None] = {}
 
         tracked = await self._storage.get_tracked_addresses()
 
         for address in tracked[:50]:
             try:
                 positions = await self._storage.get_latest_positions(address)
-            except Exception:
+            except sqlite3.Error:
                 logger.exception("Failed to get positions for %s", address)
                 continue
 
@@ -117,15 +122,17 @@ class LiquidationRiskEngine:
 
                 alerts.append(
                     _liquidation_alert(
-                        address,
-                        pos.coin,
-                        pos.size,
-                        pos.notional_usd,
-                        mark,
-                        pos.liquidation_price,
-                        distance,
-                        impact_ratio,
-                        timestamp_ms,
+                        _LiquidationContext(
+                            address=address,
+                            coin=pos.coin,
+                            size=pos.size,
+                            notional_usd=pos.notional_usd,
+                            mark_price=mark,
+                            liq_price=pos.liquidation_price,
+                            distance=distance,
+                            impact_ratio=impact_ratio,
+                            timestamp_ms=timestamp_ms,
+                        )
                     )
                 )
                 self._last_alert_ms[key] = timestamp_ms
@@ -136,7 +143,7 @@ class LiquidationRiskEngine:
         self,
         coin: str,
         position_size: float,
-        book_cache: dict[str, object],
+        book_cache: dict[str, L2Book | None],
     ) -> float:
         """Estimate market impact of liquidating a position.
 
@@ -155,13 +162,13 @@ class LiquidationRiskEngine:
         if coin not in book_cache:
             try:
                 book_cache[coin] = await self._reader.get_l2_book(coin)
-            except Exception:
+            except (ClientError, ServerError, requests.RequestException, OSError):
                 logger.warning("Failed to fetch L2 book for %s", coin)
                 book_cache[coin] = None  # sentinel to avoid retrying
         book = book_cache[coin]
         if book is None:
             return 0.0
-        return _compute_impact_ratio(book, position_size)  # type: ignore[arg-type]
+        return _compute_impact_ratio(book, position_size)
 
 
 def _compute_impact_ratio(book: L2Book, position_size: float) -> float:
@@ -201,54 +208,52 @@ def _classify_severity(distance: float, impact_ratio: float) -> str:
     return "low"
 
 
-def _liquidation_alert(
-    address: str,
-    coin: str,
-    size: float,
-    notional_usd: float,
-    mark_price: float,
-    liq_price: float,
-    distance: float,
-    impact_ratio: float,
-    timestamp_ms: int,
-) -> Alert:
+@dataclass(frozen=True, slots=True)
+class _LiquidationContext:
+    """Data needed to generate a liquidation risk alert."""
+
+    address: str
+    coin: str
+    size: float
+    notional_usd: float
+    mark_price: float
+    liq_price: float
+    distance: float
+    impact_ratio: float
+    timestamp_ms: int
+
+
+def _liquidation_alert(ctx: _LiquidationContext) -> Alert:
     """Create a liquidation risk alert.
 
     Args:
-        address: Whale address.
-        coin: Asset name.
-        size: Position size (signed).
-        notional_usd: Position notional value.
-        mark_price: Current mark price.
-        liq_price: Liquidation price.
-        distance: Distance to liquidation as fraction.
-        impact_ratio: Market impact estimate.
-        timestamp_ms: Alert timestamp.
+        ctx: Bundled liquidation context data.
 
     Returns:
         A liquidation_risk alert.
     """
-    side = "long" if size > 0 else "short"
+    side = "long" if ctx.size > 0 else "short"
     return Alert(
         alert_id=str(uuid.uuid4()),
         alert_type="liquidation_risk",
-        severity=_classify_severity(distance, impact_ratio),
-        coin=coin,
-        title=(f"{coin}: whale {side} {distance:.1%} from liquidation"),
+        severity=_classify_severity(ctx.distance, ctx.impact_ratio),
+        coin=ctx.coin,
+        title=(f"{ctx.coin}: whale {side} {ctx.distance:.1%} from liquidation"),
         description=(
-            f"Address {address[:10]}... holds a ${abs(notional_usd):,.0f} "
-            f"{side} on {coin}. Mark={mark_price:.2f}, "
-            f"liq={liq_price:.2f} ({distance:.1%} away). "
-            f"Impact ratio={impact_ratio:.2f}."
+            f"Address {ctx.address[:10]}... holds a "
+            f"${abs(ctx.notional_usd):,.0f} "
+            f"{side} on {ctx.coin}. Mark={ctx.mark_price:.2f}, "
+            f"liq={ctx.liq_price:.2f} ({ctx.distance:.1%} away). "
+            f"Impact ratio={ctx.impact_ratio:.2f}."
         ),
-        timestamp_ms=timestamp_ms,
+        timestamp_ms=ctx.timestamp_ms,
         metadata={
-            "address": address,
-            "size": size,
-            "notional_usd": notional_usd,
-            "mark_price": mark_price,
-            "liquidation_price": liq_price,
-            "distance": distance,
-            "impact_ratio": impact_ratio,
+            "address": ctx.address,
+            "size": ctx.size,
+            "notional_usd": ctx.notional_usd,
+            "mark_price": ctx.mark_price,
+            "liquidation_price": ctx.liq_price,
+            "distance": ctx.distance,
+            "impact_ratio": ctx.impact_ratio,
         },
     )

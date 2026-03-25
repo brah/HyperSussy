@@ -26,6 +26,7 @@ dev = [
     "ruff>=0.8.0",
     "pytest-cov>=6.0",
     "aioresponses>=0.7.0",
+    "types-requests>=2.32.0",
 ]
 notebooks = [
     "ipykernel>=6.0",

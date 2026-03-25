@@ -8,6 +8,7 @@ int milliseconds matching the API convention.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TypedDict
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +94,24 @@ class FundingRate:
     timestamp_ms: int
     funding_rate: float
     premium: float
+
+
+class TwapFillEntry(TypedDict):
+    """A single fill within a TWAP slice from the HL API."""
+
+    coin: str
+    side: str  # "B" (buy) or "A" (sell/ask)
+    px: str
+    sz: str
+    time: int
+    tid: int
+
+
+class TwapSliceFill(TypedDict):
+    """Top-level TWAP slice fill from the HL API."""
+
+    fill: TwapFillEntry
+    twapId: int
 
 
 @dataclass(frozen=True, slots=True)

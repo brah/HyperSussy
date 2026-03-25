@@ -91,6 +91,7 @@ class TestWhaleTrackerEngine:
         s.whale_volume_threshold_usd = 100_000.0
         s.whale_volume_lookback_ms = 3_600_000
         s.large_position_oi_pct = 0.05
+        s.large_position_min_oi_usd = 0.0
         s.large_position_change_usd = 50_000.0
         s.position_poll_interval_s = 0.0  # Always poll in tests
         s.alert_cooldown_s = 0

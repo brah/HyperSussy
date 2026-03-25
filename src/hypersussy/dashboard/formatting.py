@@ -134,7 +134,10 @@ def sort_alerts_by_severity(
     """
     return sorted(
         rows,
-        key=lambda r: (SEV_RANK.get(str(r["severity"]), 9), -int(r[ts_key])),  # type: ignore[arg-type]
+        key=lambda r: (
+            SEV_RANK.get(str(r["severity"]), 9),
+            -int(r[ts_key]),  # type: ignore[call-overload]
+        ),
     )
 
 

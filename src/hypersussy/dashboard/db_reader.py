@@ -28,7 +28,8 @@ class DashboardReader:
             f"file:{db_path}?mode=ro",
             uri=True,
             check_same_thread=False,
-            isolation_level=None,  # autocommit — never hold implicit read transactions
+            # autocommit: never hold implicit read txns
+            isolation_level=None,
         )
         self._conn.row_factory = sqlite3.Row
         self._write_conn: sqlite3.Connection | None = None

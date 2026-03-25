@@ -17,6 +17,7 @@ from hypersussy.models import (
     L2Book,
     Position,
     Trade,
+    TwapSliceFill,
 )
 
 
@@ -120,7 +121,7 @@ class ExchangeReader(Protocol):
     async def get_user_twap_slice_fills(
         self,
         address: str,
-    ) -> list[dict[str, object]]:
+    ) -> list[TwapSliceFill]:
         """Fetch the most recent TWAP slice fills for a user.
 
         Args:

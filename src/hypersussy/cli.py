@@ -7,8 +7,19 @@ import logging
 import os
 import signal
 import sys
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    from hypersussy.config import HyperSussySettings
+    from hypersussy.engines.base import DetectionEngine
+    from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
+    from hypersussy.exchange.hyperliquid.websocket import (
+        HyperLiquidStream,
+    )
+    from hypersussy.rate_limiter import WeightRateLimiter
+    from hypersussy.storage.sqlite import SqliteStorage
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +31,8 @@ def _configure_logging(level: str, log_file: str | None = None) -> None:
         level: Log level string (e.g. "INFO", "DEBUG").
         log_file: Optional path to write logs to. If None, writes to stdout.
     """
+    # Handle must persist for structlog factory lifetime; context
+    # manager is not appropriate here.
     file_handle = open(log_file, "a") if log_file else None  # noqa: SIM115
     structlog.configure(
         processors=[
@@ -42,58 +55,69 @@ def _configure_logging(level: str, log_file: str | None = None) -> None:
     )
 
 
-def _build_components(settings: object) -> tuple:  # type: ignore[type-arg]
+def _build_components(
+    settings: HyperSussySettings,
+) -> tuple[
+    HyperLiquidReader,
+    HyperLiquidStream,
+    SqliteStorage,
+    list[DetectionEngine],
+    WeightRateLimiter,
+]:
     """Import and instantiate all core components from settings.
 
     Args:
-        settings: HyperSussySettings instance.
+        settings: Application settings.
 
     Returns:
         Tuple of (reader, stream, storage, engines, rate_limiter).
     """
-    from hypersussy.config import HyperSussySettings
-    from hypersussy.engines.base import DetectionEngine
     from hypersussy.engines.funding_anomaly import FundingAnomalyEngine
     from hypersussy.engines.liquidation_risk import LiquidationRiskEngine
     from hypersussy.engines.oi_concentration import OiConcentrationEngine
     from hypersussy.engines.pre_move import PreMoveEngine
     from hypersussy.engines.whale_tracker import WhaleTrackerEngine
-    from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
-    from hypersussy.exchange.hyperliquid.websocket import HyperLiquidStream, WsThrottle
-    from hypersussy.rate_limiter import WeightRateLimiter
-    from hypersussy.storage.sqlite import SqliteStorage
-
-    s: HyperSussySettings = settings  # type: ignore[assignment]
-
-    rate_limiter = WeightRateLimiter(
-        max_weight=s.rate_limit_weight,
-        window_seconds=s.rate_limit_window_s,
+    from hypersussy.exchange.hyperliquid.client import HyperLiquidReader as _Reader
+    from hypersussy.exchange.hyperliquid.websocket import (
+        HyperLiquidStream as _Stream,
     )
-    reader = HyperLiquidReader(
-        base_url=s.hl_api_url,
+    from hypersussy.exchange.hyperliquid.websocket import (
+        WsThrottle,
+    )
+    from hypersussy.rate_limiter import WeightRateLimiter as _RateLimiter
+    from hypersussy.storage.sqlite import SqliteStorage as _Storage
+
+    rate_limiter = _RateLimiter(
+        max_weight=settings.rate_limit_weight,
+        window_seconds=settings.rate_limit_window_s,
+    )
+    reader = _Reader(
+        base_url=settings.hl_api_url,
         rate_limiter=rate_limiter,
-        include_hip3=s.include_hip3,
-        hip3_dex_filter=s.hip3_dex_filter,
+        include_hip3=settings.include_hip3,
+        hip3_dex_filter=settings.hip3_dex_filter,
     )
     throttle = WsThrottle(
-        connect_delay_s=s.ws_connect_delay_s,
-        subscribe_delay_s=s.ws_subscribe_delay_s,
+        connect_delay_s=settings.ws_connect_delay_s,
+        subscribe_delay_s=settings.ws_subscribe_delay_s,
     )
-    stream = HyperLiquidStream(ws_url=s.hl_ws_url, throttle=throttle)
-    storage = SqliteStorage(db_path=s.db_path)
+    stream = _Stream(ws_url=settings.hl_ws_url, throttle=throttle)
+    storage = _Storage(db_path=settings.db_path)
 
     engines: list[DetectionEngine] = []
-    if s.engine_oi_concentration:
-        engines.append(OiConcentrationEngine(storage=storage, settings=s))
-    if s.engine_whale_tracker:
-        engines.append(WhaleTrackerEngine(storage=storage, reader=reader, settings=s))
-    if s.engine_pre_move:
-        engines.append(PreMoveEngine(settings=s))
-    if s.engine_funding_anomaly:
-        engines.append(FundingAnomalyEngine(settings=s))
-    if s.engine_liquidation_risk:
+    if settings.engine_oi_concentration:
+        engines.append(OiConcentrationEngine(storage=storage, settings=settings))
+    if settings.engine_whale_tracker:
         engines.append(
-            LiquidationRiskEngine(storage=storage, reader=reader, settings=s)
+            WhaleTrackerEngine(storage=storage, reader=reader, settings=settings)
+        )
+    if settings.engine_pre_move:
+        engines.append(PreMoveEngine(settings=settings))
+    if settings.engine_funding_anomaly:
+        engines.append(FundingAnomalyEngine(settings=settings))
+    if settings.engine_liquidation_risk:
+        engines.append(
+            LiquidationRiskEngine(storage=storage, reader=reader, settings=settings)
         )
 
     return reader, stream, storage, engines, rate_limiter

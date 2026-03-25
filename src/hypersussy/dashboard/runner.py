@@ -10,9 +10,12 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sqlite3
 import threading
 
+import requests
 import structlog
+from hyperliquid.utils.error import ClientError, ServerError
 
 from hypersussy.config import HyperSussySettings
 from hypersussy.dashboard.state import SharedState
@@ -103,7 +106,17 @@ class BackgroundRunner:
             loop.run_until_complete(self._async_main())
         except asyncio.CancelledError:
             pass  # normal shutdown path via stop()
-        except Exception:  # noqa: BLE001
+        except (
+            ClientError,
+            ServerError,
+            requests.RequestException,
+            sqlite3.Error,
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+            RuntimeError,
+        ):
             logger.exception("BackgroundRunner crashed")
         finally:
             loop.close()
@@ -114,7 +127,7 @@ class BackgroundRunner:
         """Wire and run all components inside the background event loop."""
         from hypersussy.alerts.manager import AlertManager
         from hypersussy.alerts.sinks.log_sink import LogSink
-        from hypersussy.cli import _build_components  # type: ignore[attr-defined]
+        from hypersussy.cli import _build_components
         from hypersussy.dashboard.sink import StreamlitSink
         from hypersussy.orchestrator import Orchestrator
 

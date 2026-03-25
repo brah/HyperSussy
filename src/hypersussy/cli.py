@@ -156,11 +156,15 @@ def _run_streamlit() -> None:
     from importlib.resources import files
 
     app_path = str(files("hypersussy.dashboard").joinpath("app.py"))
-    result = subprocess.run(
+    proc = subprocess.Popen(
         ["streamlit", "run", app_path, "--server.headless", "true"],
-        check=False,
     )
-    sys.exit(result.returncode)
+    try:
+        proc.wait()
+    except KeyboardInterrupt:
+        proc.terminate()
+        proc.wait()
+    sys.exit(proc.returncode)
 
 
 def main() -> None:

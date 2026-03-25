@@ -152,12 +152,21 @@ def _run_streamlit() -> None:
     Delegates entirely to `streamlit run` so Streamlit manages its own
     server lifecycle and event loop, avoiding conflicts with asyncio.
     """
+    import shutil
     import subprocess
     from importlib.resources import files
 
+    streamlit_exe = shutil.which("streamlit")
+    if streamlit_exe is None:
+        print(
+            "streamlit not found. Run: uv sync --extra dashboard",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     app_path = str(files("hypersussy.dashboard").joinpath("app.py"))
     proc = subprocess.Popen(
-        ["streamlit", "run", app_path, "--server.headless", "true"],
+        [streamlit_exe, "run", app_path, "--server.headless", "true"],
     )
     try:
         proc.wait()

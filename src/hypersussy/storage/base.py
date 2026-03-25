@@ -113,6 +113,14 @@ class StorageProtocol(Protocol):
         """
         ...
 
+    async def delete_tracked_address(self, address: str) -> None:
+        """Remove a tracked whale address.
+
+        Args:
+            address: The 0x address to remove.
+        """
+        ...
+
     # -- Positions --
 
     async def insert_positions(self, positions: list[Position]) -> None:

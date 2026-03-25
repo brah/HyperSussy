@@ -7,6 +7,7 @@ import polars as pl
 import streamlit as st
 
 from hypersussy.dashboard.db_reader import DashboardReader
+from hypersussy.dashboard.formatting import price_d3_format
 
 _TEAL = "#00d4aa"
 _RED = "#ff4b4b"
@@ -181,6 +182,10 @@ def _render_funding_price_charts(
         st.plotly_chart(fig_f, width="stretch")
 
     with col_price:
+        # Determine format from representative price
+        rep_price = next((v for v in mark if v > 0), 0.0)
+        d3_fmt = price_d3_format(rep_price)
+
         fig_p = go.Figure()
         fig_p.add_trace(
             go.Scatter(
@@ -189,7 +194,7 @@ def _render_funding_price_charts(
                 mode="lines",
                 line={"color": _TEAL, "width": 2},
                 name="Mark",
-                hovertemplate="Mark: $%{y:,.4f}<extra></extra>",
+                hovertemplate=f"Mark: $%{{y:{d3_fmt}}}<extra></extra>",
             )
         )
         fig_p.add_trace(
@@ -199,13 +204,17 @@ def _render_funding_price_charts(
                 mode="lines",
                 line={"color": _ORANGE, "width": 2, "dash": "dot"},
                 name="Oracle",
-                hovertemplate="Oracle: $%{y:,.4f}<extra></extra>",
+                hovertemplate=f"Oracle: $%{{y:{d3_fmt}}}<extra></extra>",
             )
         )
         fig_p.update_layout(
             **_base_layout(
                 title="Mark vs Oracle Price",
-                yaxis={"tickprefix": "$", "tickformat": ",.4f", "gridcolor": _GRID},
+                yaxis={
+                    "tickprefix": "$",
+                    "tickformat": d3_fmt,
+                    "gridcolor": _GRID,
+                },
                 legend={"orientation": "h", "y": 1.1},
             )
         )

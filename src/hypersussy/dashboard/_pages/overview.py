@@ -8,8 +8,8 @@ import polars as pl
 import streamlit as st
 
 from hypersussy.dashboard.db_reader import DashboardReader
+from hypersussy.dashboard.formatting import format_price, severity_color
 from hypersussy.dashboard.state import SharedState
-
 
 _COL_24H_VOL = "24h Volume"
 
@@ -101,7 +101,7 @@ def _render_market_table(state: SharedState) -> None:
     rows = [
         {
             "Coin": s.coin,
-            "Mark Price": s.mark_price,
+            "Mark Price": format_price(s.mark_price),
             "OI (USD)": s.open_interest_usd,
             "Funding Rate": s.funding_rate,
             "Premium": s.premium,
@@ -126,7 +126,6 @@ def _render_market_table(state: SharedState) -> None:
         df,
         width="stretch",
         column_config={
-            "Mark Price": st.column_config.NumberColumn(format="$%,.4f"),
             "OI (USD)": st.column_config.NumberColumn(format="$%,.0f"),
             "Funding Rate": st.column_config.NumberColumn(format="%+.4f%%"),
             "Premium": st.column_config.NumberColumn(format="%.4f%%"),
@@ -145,12 +144,7 @@ def _render_recent_alerts(state: SharedState) -> None:
     st.subheader("Recent Alerts")
     for alert in alerts:
         severity = alert.severity
-        color = {
-            "critical": "#ff4b4b",
-            "high": "#ffa500",
-            "medium": "#ffd700",
-            "low": "#21c354",
-        }.get(severity, "#cccccc")
+        color = severity_color(severity)
 
         ts = time.strftime(
             "%H:%M:%S", time.localtime(alert.timestamp_ms / 1000)

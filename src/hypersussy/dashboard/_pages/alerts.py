@@ -8,6 +8,7 @@ import polars as pl
 import streamlit as st
 
 from hypersussy.dashboard.db_reader import DashboardReader
+from hypersussy.dashboard.formatting import severity_color, wallet_link_html
 
 _ALL_SEVERITIES = ["critical", "high", "medium", "low"]
 _ALL_TYPES = [
@@ -20,12 +21,6 @@ _ALL_TYPES = [
     "liquidation_risk",
 ]
 _SEV_RANK: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-_SEV_BADGE: dict[str, str] = {
-    "critical": "[CRIT]",
-    "high": "[HIGH]",
-    "medium": "[ MED]",
-    "low": "[ LOW]",
-}
 
 
 def render_alerts(
@@ -45,14 +40,14 @@ def render_alerts(
 
     @st.fragment(run_every=refresh_s)
     def _live() -> None:
-        _render_filters_and_table(db_reader)
+        _render_filters_and_feed(db_reader)
         _render_hourly_chart(db_reader)
 
     _live()
 
 
-def _render_filters_and_table(db_reader: DashboardReader) -> None:
-    """Render filter controls and the filtered alert dataframe."""
+def _render_filters_and_feed(db_reader: DashboardReader) -> None:
+    """Render filter controls and the colour-coded alert feed."""
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -96,24 +91,22 @@ def _render_filters_and_table(db_reader: DashboardReader) -> None:
         key=lambda r: (_SEV_RANK.get(str(r["severity"]), 9), -int(r["timestamp_ms"])),
     )
 
-    df = pl.DataFrame(
-        [
-            {
-                "Level": _SEV_BADGE.get(str(r["severity"]), str(r["severity"])),
-                "Time": time.strftime(
-                    "%Y-%m-%d %H:%M:%S",
-                    time.localtime(int(r["timestamp_ms"]) / 1000),
-                ),
-                "Coin": r["coin"],
-                "Type": r["alert_type"],
-                "Title": r["title"],
-                "Description": r["description"],
-            }
-            for r in rows
-        ]
-    )
-
-    st.dataframe(df, width="stretch", hide_index=True)
+    # Colour-coded feed
+    for r in rows:
+        severity = str(r["severity"])
+        color = severity_color(severity)
+        ts = time.strftime(
+            "%H:%M:%S", time.localtime(int(r["timestamp_ms"]) / 1000)
+        )
+        address = r.get("address")
+        addr_part = f" | {wallet_link_html(str(address))}" if address else ""
+        st.markdown(
+            f'<span style="color:{color};font-weight:bold">'
+            f"[{severity.upper()}]</span> "
+            f'`{r["coin"]}` | {r["alert_type"]} | '
+            f'**{r["title"]}** | _{ts}_{addr_part}',
+            unsafe_allow_html=True,
+        )
 
     with st.expander("Alert counts by type"):
         counts = db_reader.get_alert_counts_by_type(since_ms=since_ms)

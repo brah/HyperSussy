@@ -11,6 +11,8 @@ import logging
 import uuid
 from collections import deque
 
+from hyperliquid.utils.error import ClientError
+
 from hypersussy.config import HyperSussySettings
 from hypersussy.exchange.base import ExchangeReader
 from hypersussy.models import Alert, AssetSnapshot, Trade
@@ -125,6 +127,9 @@ class WhaleTrackerEngine:
     async def tick(self, timestamp_ms: int) -> list[Alert]:
         """Prune volume window, poll whale positions, detect changes.
 
+        Syncs the in-memory tracked set with the database each tick so
+        that manual additions and UI removals take effect promptly.
+
         Args:
             timestamp_ms: Current timestamp in milliseconds.
 
@@ -133,7 +138,10 @@ class WhaleTrackerEngine:
         """
         self._prune_volume(timestamp_ms)
         self._cap_tracked()
-        return await self._poll_positions(timestamp_ms)
+        # Sync with DB: pick up manual adds, respect UI removals
+        db_tracked = set(await self._storage.get_tracked_addresses())
+        self._tracked = self._tracked | db_tracked
+        return await self._poll_positions(timestamp_ms, db_tracked)
 
     def _prune_volume(self, timestamp_ms: int) -> None:
         """Remove expired entries from the sliding volume window.
@@ -170,11 +178,17 @@ class WhaleTrackerEngine:
         )
         self._tracked = set(sorted_addrs[: self._settings.max_tracked_addresses])
 
-    async def _poll_positions(self, timestamp_ms: int) -> list[Alert]:
+    async def _poll_positions(
+        self, timestamp_ms: int, db_tracked: set[str]
+    ) -> list[Alert]:
         """Poll positions for tracked whales due for refresh.
+
+        Only polls addresses still present in ``db_tracked`` so that
+        UI removals take effect immediately.
 
         Args:
             timestamp_ms: Current timestamp in milliseconds.
+            db_tracked: Addresses currently in the database.
 
         Returns:
             Alerts for notable position changes.
@@ -185,7 +199,7 @@ class WhaleTrackerEngine:
 
         to_poll = [
             addr
-            for addr in self._tracked
+            for addr in db_tracked
             if now_s - self._last_polled.get(addr, 0.0)
             >= self._settings.position_poll_interval_s
         ]
@@ -253,6 +267,14 @@ class WhaleTrackerEngine:
                     addr, timestamp_ms, cooldown_ms
                 )
                 alerts.extend(twap_alerts)
+            except ClientError as exc:
+                if exc.status_code == 429:
+                    logger.warning(
+                        "Rate-limited polling positions for %s — backing off", addr
+                    )
+                    self._last_polled[addr] = now_s
+                else:
+                    logger.exception("Client error polling positions for %s", addr)
             except Exception:
                 logger.exception("Failed to poll positions for %s", addr)
 
@@ -355,7 +377,7 @@ def _position_alert(
         alert_type="whale_position",
         severity=severity,
         coin=coin,
-        title=f"{coin}: whale holds {oi_pct:.1%} of OI",
+        title=f"{coin}: whale holds {oi_pct:.1%} of OI (${abs(notional_usd):,.0f})",
         description=(
             f"Address {address[:10]}... holds ${abs(notional_usd):,.0f} "
             f"notional ({oi_pct:.1%} of open interest) on {coin}."

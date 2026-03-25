@@ -285,6 +285,17 @@ class SqliteStorage:
         )
         return [row[0] for row in await cursor.fetchall()]
 
+    async def delete_tracked_address(self, address: str) -> None:
+        """Remove a tracked whale address.
+
+        Args:
+            address: The 0x address to remove.
+        """
+        await self._conn.execute(
+            "DELETE FROM tracked_addresses WHERE address = ?", (address,)
+        )
+        await self._conn.commit()
+
     # -- Positions --
 
     async def insert_positions(self, positions: list[Position]) -> None:

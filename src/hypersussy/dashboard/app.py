@@ -60,9 +60,15 @@ def main() -> None:
 
     # Sidebar navigation
     st.sidebar.title("HyperSussy")
+
+    def _clear_wallet_params() -> None:
+        """Clear wallet query params when the sidebar page changes."""
+        st.query_params.clear()
+
     page = st.sidebar.radio(
         "Page",
         options=["Overview", "Alerts", "Whale Tracker", "Charts"],
+        on_change=_clear_wallet_params,
     )
     refresh_s = int(
         st.sidebar.select_slider(
@@ -72,7 +78,28 @@ def main() -> None:
         )
     )
 
-    if page == "Overview":
+    # Sidebar wallet lookup
+    with st.sidebar.expander("Go to wallet"):
+        addr_input = st.text_input(
+            "Wallet address (0x...)",
+            key="sidebar_wallet_input",
+            placeholder="0x...",
+        )
+        if st.button("Go", key="sidebar_wallet_go"):
+            addr = addr_input.strip()
+            if addr.startswith("0x") and len(addr) == 42:
+                st.query_params["page"] = "wallet"
+                st.query_params["address"] = addr
+                st.rerun()
+            else:
+                st.error("Invalid address — must be 0x + 40 hex chars.")
+
+    # Query-param deep-link: ?page=wallet&address=0x...
+    if st.query_params.get("page") == "wallet":
+        from hypersussy.dashboard._pages.wallet_detail import render_wallet_detail
+
+        render_wallet_detail(db_reader, refresh_s)
+    elif page == "Overview":
         from hypersussy.dashboard._pages.overview import render_overview
 
         render_overview(state, db_reader, refresh_s)

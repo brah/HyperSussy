@@ -10,18 +10,22 @@ from __future__ import annotations
 import sqlite3
 import time
 
+import orjson
+
 
 class DashboardReader:
     """Read-only SQLite interface for dashboard pages.
 
-    Uses a URI connection with mode=ro so no writes are possible.
-    WAL mode set by the writer means concurrent reads are safe.
+    Uses a URI connection with mode=ro so no writes are possible on the
+    primary connection.  A separate writable connection is lazily created
+    for mutation operations (add / remove tracked addresses).
 
     Args:
         db_path: Path to the SQLite database file.
     """
 
     def __init__(self, db_path: str) -> None:
+        self._db_path = db_path
         self._conn = sqlite3.connect(
             f"file:{db_path}?mode=ro",
             uri=True,
@@ -29,6 +33,54 @@ class DashboardReader:
             isolation_level=None,  # autocommit — never hold implicit read transactions
         )
         self._conn.row_factory = sqlite3.Row
+        self._write_conn: sqlite3.Connection | None = None
+
+    def _get_write_conn(self) -> sqlite3.Connection:
+        """Lazily open a writable connection for mutation operations.
+
+        Returns:
+            A writable sqlite3 connection with busy_timeout set.
+        """
+        if self._write_conn is None:
+            self._write_conn = sqlite3.connect(
+                self._db_path, check_same_thread=False
+            )
+            self._write_conn.execute("PRAGMA busy_timeout=5000")
+        return self._write_conn
+
+    # -- Mutations --
+
+    def delete_tracked_address(self, address: str) -> None:
+        """Remove a tracked whale address.
+
+        Args:
+            address: The 0x address to remove.
+        """
+        conn = self._get_write_conn()
+        conn.execute(
+            "DELETE FROM tracked_addresses WHERE address = ?", (address,)
+        )
+        conn.commit()
+
+    def insert_tracked_address(self, address: str, label: str) -> None:
+        """Manually add a whale address for tracking.
+
+        Args:
+            address: The 0x address.
+            label: Human-readable label.
+        """
+        now_ms = int(time.time() * 1000)
+        conn = self._get_write_conn()
+        conn.execute(
+            """INSERT OR IGNORE INTO tracked_addresses
+               (address, label, source, first_seen_ms,
+                total_volume_usd, last_active_ms, is_manual)
+               VALUES (?, ?, 'manual', ?, 0.0, ?, 1)""",
+            (address, label, now_ms, now_ms),
+        )
+        conn.commit()
+
+    # -- Alerts --
 
     def get_alerts_all(
         self,
@@ -42,13 +94,14 @@ class DashboardReader:
             since_ms: Only return alerts after this timestamp (ms).
 
         Returns:
-            List of alert dicts with keys: alert_id, alert_type, severity,
-            coin, title, description, timestamp_ms, exchange.
+            List of alert dicts.  Includes an ``address`` key extracted
+            from metadata when present.
         """
         cur = self._conn.execute(
             """
             SELECT alert_id, alert_type, severity, coin,
-                   title, description, timestamp_ms, exchange
+                   title, description, timestamp_ms, exchange,
+                   metadata_json
             FROM alerts
             WHERE timestamp_ms >= ?
             ORDER BY timestamp_ms DESC
@@ -56,7 +109,16 @@ class DashboardReader:
             """,
             (since_ms, limit),
         )
-        return [dict(row) for row in cur.fetchall()]
+        results: list[dict[str, object]] = []
+        for row in cur.fetchall():
+            d = dict(row)
+            raw = d.pop("metadata_json", None)
+            meta = orjson.loads(raw) if raw else {}
+            d["address"] = meta.get("address")
+            results.append(d)
+        return results
+
+    # -- Snapshots --
 
     def get_oi_history(
         self,
@@ -112,6 +174,8 @@ class DashboardReader:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    # -- Trades --
+
     def get_top_whales(
         self,
         coin: str,
@@ -152,6 +216,36 @@ class DashboardReader:
             (coin, since_ms, coin, since_ms),
         )
         return [dict(row) for row in cur.fetchall()]
+
+    def get_trades_by_address(
+        self,
+        address: str,
+        hours: int = 24,
+    ) -> list[dict[str, object]]:
+        """Fetch recent trades involving an address.
+
+        Args:
+            address: The 0x address (matched as buyer or seller).
+            hours: Lookback window in hours.
+
+        Returns:
+            List of trade dicts ordered newest-first, up to 200 rows.
+        """
+        since_ms = int((time.time() - hours * 3600) * 1000)
+        cur = self._conn.execute(
+            """
+            SELECT tid, coin, price, size, side, timestamp_ms,
+                   buyer, seller
+            FROM trades
+            WHERE (buyer = ? OR seller = ?) AND timestamp_ms >= ?
+            ORDER BY timestamp_ms DESC
+            LIMIT 200
+            """,
+            (address, address, since_ms),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    # -- Tracked addresses --
 
     def get_tracked_addresses(
         self,
@@ -208,6 +302,8 @@ class DashboardReader:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    # -- Alert aggregations --
+
     def get_alert_counts_by_type(
         self,
         since_ms: int = 0,
@@ -261,6 +357,26 @@ class DashboardReader:
         )
         return [dict(row) for row in cur.fetchall()]
 
+    def get_latest_oi_per_coin(self) -> dict[str, float]:
+        """Latest open interest (base units) per coin from asset_snapshots.
+
+        Returns:
+            Mapping of coin symbol to most recent open_interest value.
+        """
+        cur = self._conn.execute(
+            """
+            SELECT s.coin, s.open_interest
+            FROM asset_snapshots s
+            INNER JOIN (
+                SELECT coin, MAX(timestamp_ms) AS max_ts
+                FROM asset_snapshots
+                GROUP BY coin
+            ) latest ON s.coin = latest.coin
+                     AND s.timestamp_ms = latest.max_ts
+            """
+        )
+        return {row["coin"]: float(row["open_interest"]) for row in cur.fetchall()}
+
     def get_distinct_coins(self) -> list[str]:
         """Return distinct coin symbols present in asset_snapshots.
 
@@ -273,5 +389,7 @@ class DashboardReader:
         return [row["coin"] for row in cur.fetchall()]
 
     def close(self) -> None:
-        """Close the database connection."""
+        """Close all database connections."""
         self._conn.close()
+        if self._write_conn is not None:
+            self._write_conn.close()

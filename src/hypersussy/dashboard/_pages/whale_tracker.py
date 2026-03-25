@@ -5,10 +5,14 @@ from __future__ import annotations
 import time
 
 import plotly.graph_objects as go
-import polars as pl
 import streamlit as st
 
 from hypersussy.dashboard.db_reader import DashboardReader
+from hypersussy.dashboard.formatting import (
+    build_positions_df,
+    severity_color,
+    wallet_link_html,
+)
 
 _TEAL = "#00d4aa"
 _GREY = "#4a4e69"
@@ -40,10 +44,29 @@ def render_whale_tracker(db_reader: DashboardReader, refresh_s: int) -> None:
 
 def _render_address_panel(db_reader: DashboardReader) -> None:
     """Two-column layout: address list and selected address detail."""
+    # Manual whale add form
+    with st.expander("Add whale manually"):  # noqa: SIM117
+        with st.form("add_whale_form", clear_on_submit=True):
+            new_addr = st.text_input("Address (0x...)")
+            new_label = st.text_input("Label (optional)", value="")
+            submitted = st.form_submit_button("Add")
+            if submitted:
+                addr = new_addr.strip()
+                if addr.startswith("0x") and len(addr) == 42:
+                    db_reader.insert_tracked_address(
+                        addr, new_label.strip() or "MANUAL"
+                    )
+                    st.rerun()
+                else:
+                    st.error("Address must be a 42-character 0x hex string.")
+
     addresses = db_reader.get_tracked_addresses(limit=100)
 
     if not addresses:
-        st.info("No tracked whale addresses yet. Threshold: $5M volume or 5% of coin OI in 1h.")
+        st.info(
+            "No tracked whale addresses yet. "
+            "Threshold: $5M volume or 5% of coin OI in 1h."
+        )
         return
 
     col_list, col_detail = st.columns([1, 2])
@@ -51,7 +74,7 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
     with col_list:
         st.subheader("Tracked Whales")
         addr_labels = [
-            f"{row['label'] or 'WHALE'} — ${row['total_volume_usd']:>,.0f}"
+            f"{row['label'] or 'WHALE'} -- ${row['total_volume_usd']:>,.0f}"
             for row in addresses
         ]
         selected_idx = st.radio(
@@ -69,9 +92,22 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
         st.subheader(label)
         st.caption(selected_address)
 
+        col_actions = st.columns([1, 1, 2])
+        with col_actions[0]:
+            if st.button("View wallet", key=f"view_{selected_address}"):
+                st.query_params["page"] = "wallet"
+                st.query_params["address"] = selected_address
+                st.rerun()
+        with col_actions[1]:
+            if st.button("Remove", key=f"del_{selected_address}"):
+                db_reader.delete_tracked_address(selected_address)
+                st.rerun()
+
         last_active = int(selected["last_active_ms"] or 0)
         if last_active:
-            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_active / 1000))
+            ts = time.strftime(
+                "%Y-%m-%d %H:%M:%S", time.localtime(last_active / 1000)
+            )
             st.caption(f"Last active: {ts}")
 
         tab_pos, tab_alerts = st.tabs(["Positions", "Alert History"])
@@ -81,18 +117,8 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
             if not positions:
                 st.info("No open positions found.")
             else:
-                df = pl.DataFrame(
-                    [
-                        {
-                            "Coin": p["coin"],
-                            "Size": p["size"],
-                            "Notional (USD)": p["notional_usd"],
-                            "Unr. PnL": p["unrealized_pnl"],
-                            "Liq. Price": p["liquidation_price"],
-                            "Mark Price": p["mark_price"],
-                        }
-                        for p in positions
-                    ]
+                df = build_positions_df(
+                    positions, db_reader.get_latest_oi_per_coin()
                 )
                 st.dataframe(
                     df,
@@ -102,9 +128,9 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
                         "Notional (USD)": st.column_config.NumberColumn(
                             format="$%,.0f"
                         ),
-                        "Unr. PnL": st.column_config.NumberColumn(format="$%+,.0f"),
-                        "Mark Price": st.column_config.NumberColumn(format="$%,.4f"),
-                        "Liq. Price": st.column_config.NumberColumn(format="$%,.4f"),
+                        "Unr. PnL": st.column_config.NumberColumn(
+                            format="$%+,.0f"
+                        ),
                     },
                 )
 
@@ -113,33 +139,30 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
             if not alert_rows:
                 st.info("No alerts triggered by this address yet.")
             else:
-                _SEV_RANK = {"critical": 0, "high": 1, "medium": 2, "low": 3}
-                _SEV_BADGE = {
-                    "critical": "[CRIT]",
-                    "high": "[HIGH]",
-                    "medium": "[ MED]",
-                    "low": "[ LOW]",
+                sev_rank = {
+                    "critical": 0,
+                    "high": 1,
+                    "medium": 2,
+                    "low": 3,
                 }
                 sorted_rows = sorted(
                     alert_rows,
-                    key=lambda r: _SEV_RANK.get(str(r["severity"]), 9),
+                    key=lambda r: sev_rank.get(str(r["severity"]), 9),
                 )
-                df_alerts = pl.DataFrame(
-                    [
-                        {
-                            "Level": _SEV_BADGE.get(str(r["severity"]), str(r["severity"])),
-                            "Time": time.strftime(
-                                "%Y-%m-%d %H:%M",
-                                time.localtime(int(r["timestamp_ms"]) / 1000),
-                            ),
-                            "Type": r["alert_type"],
-                            "Coin": r["coin"],
-                            "Title": r["title"],
-                        }
-                        for r in sorted_rows
-                    ]
-                )
-                st.dataframe(df_alerts, width="stretch", hide_index=True)
+                for r in sorted_rows:
+                    severity = str(r["severity"])
+                    color = severity_color(severity)
+                    ts = time.strftime(
+                        "%H:%M:%S",
+                        time.localtime(int(r["timestamp_ms"]) / 1000),
+                    )
+                    st.markdown(
+                        f'<span style="color:{color};font-weight:bold">'
+                        f"[{severity.upper()}]</span> "
+                        f'`{r["coin"]}` | {r["alert_type"]} | '
+                        f'**{r["title"]}** | _{ts}_',
+                        unsafe_allow_html=True,
+                    )
 
 
 def _render_top_traders(db_reader: DashboardReader) -> None:
@@ -153,7 +176,9 @@ def _render_top_traders(db_reader: DashboardReader) -> None:
 
     col_coin, col_hours = st.columns(2)
     with col_coin:
-        selected_coin = st.selectbox("Coin", options=coins, key="top_traders_coin")
+        selected_coin = st.selectbox(
+            "Coin", options=coins, key="top_traders_coin"
+        )
     with col_hours:
         hours = st.selectbox(
             "Lookback",
@@ -177,7 +202,7 @@ def _render_top_traders(db_reader: DashboardReader) -> None:
     top10 = rows[:10]
     total_vol = sum(float(r["volume_usd"]) for r in top10) or 1.0
 
-    # Horizontal Plotly bar chart — sorted ascending so largest is at top
+    # Horizontal Plotly bar chart -- sorted ascending so largest is at top
     sorted_rows = sorted(top10, key=lambda r: float(r["volume_usd"]))
     addresses = [str(r["address"]) for r in sorted_rows]
     volumes = [float(r["volume_usd"]) for r in sorted_rows]
@@ -206,34 +231,38 @@ def _render_top_traders(db_reader: DashboardReader) -> None:
         plot_bgcolor="rgba(0,0,0,0)",
         paper_bgcolor="rgba(0,0,0,0)",
         font_color="#fafafa",
-        xaxis={"tickprefix": "$", "tickformat": ",.0f", "gridcolor": "#2a2d35"},
+        xaxis={
+            "tickprefix": "$",
+            "tickformat": ",.0f",
+            "gridcolor": "#2a2d35",
+        },
         yaxis={"gridcolor": "#2a2d35"},
     )
     st.plotly_chart(fig, width="stretch")
 
-    # Ranked summary table
-    df = pl.DataFrame(
-        [
-            {
-                "Rank": i + 1,
-                "Address": str(r["address"]),
-                _COL_VOLUME: float(r["volume_usd"]),
-                "% of Top 10": float(r["volume_usd"]) / total_vol * 100,
-                "Tracked": str(r["address"]) in tracked_set,
-            }
-            for i, r in enumerate(top10)
-        ]
-    )
-    st.dataframe(
-        df,
-        width="stretch",
-        hide_index=True,
-        column_config={
-            _COL_VOLUME: st.column_config.ProgressColumn(
-                format="$%,.0f",
-                min_value=0,
-                max_value=total_vol,
-            ),
-            "% of Top 10": st.column_config.NumberColumn(format="%.1f%%"),
-        },
-    )
+    # Ranked summary table with wallet hotlinks
+    table_html_parts = [
+        "<table style='width:100%;border-collapse:collapse;"
+        "font-size:0.9em;color:#fafafa'>"
+        + "<tr style='border-bottom:1px solid #2a2d35'>"
+        + "<th>Rank</th><th>Address</th>"
+        + "<th>Volume (USD)</th><th>% of Top 10</th>"
+        + "<th>Tracked</th></tr>"
+    ]
+    for i, r in enumerate(top10):
+        addr = str(r["address"])
+        vol = float(r["volume_usd"])
+        pct = vol / total_vol * 100
+        tracked = addr in tracked_set
+        link = wallet_link_html(addr)
+        tracked_mark = "Y" if tracked else ""
+        table_html_parts.append(
+            f"<tr style='border-bottom:1px solid #1a1d24'>"
+            f"<td>{i + 1}</td>"
+            f"<td>{link}</td>"
+            f"<td>${vol:,.0f}</td>"
+            f"<td>{pct:.1f}%</td>"
+            f"<td>{tracked_mark}</td></tr>"
+        )
+    table_html_parts.append("</table>")
+    st.markdown("".join(table_html_parts), unsafe_allow_html=True)

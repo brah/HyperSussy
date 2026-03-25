@@ -50,12 +50,13 @@ class HyperSussySettings(BaseSettings):
     oi_min_usd: float = 100_000.0
 
     # Whale Tracker engine
-    whale_volume_threshold_usd: float = 5_000_000.0
-    whale_discovery_oi_pct: float = 0.05  # promote if address trades >= 5% of coin OI
+    whale_volume_threshold_usd: float = 15_000_000.0
+    whale_discovery_oi_pct: float = 0.15  # promote if address trades >= 15% of coin OI
     whale_volume_lookback_ms: int = 3_600_000
     max_tracked_addresses: int = 200
     position_poll_interval_s: float = 150.0
     large_position_oi_pct: float = 0.20
+    large_position_min_oi_usd: float = 1_500_000.0
     large_position_change_usd: float = 1_000_000.0
 
     # Pre-Move engine

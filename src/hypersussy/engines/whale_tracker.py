@@ -315,7 +315,7 @@ class WhaleTrackerEngine:
 
         for pos in positions:
             coin_oi = self._coin_oi.get(pos.coin, 0.0)
-            if coin_oi > 0:
+            if coin_oi >= self._settings.large_position_min_oi_usd:
                 oi_pct = abs(pos.notional_usd) / coin_oi
                 if oi_pct >= self._settings.large_position_oi_pct:
                     key = f"{address}:{pos.coin}"

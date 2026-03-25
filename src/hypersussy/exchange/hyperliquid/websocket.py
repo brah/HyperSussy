@@ -298,13 +298,36 @@ class HyperLiquidStream:
         delay = _RECONNECT_DELAY_S
         while True:
             try:
+                logger.debug(
+                    "stream_clearinghouse_states: connecting (throttle delay=%.1fs)",
+                    self._throttle.connect_delay_s,
+                )
                 ws = await self._connect()
+                logger.debug(
+                    "stream_clearinghouse_states: connected — subscribing %d users",
+                    len(users),
+                )
                 ping_task = asyncio.create_task(self._ping_loop(ws))
                 try:
+                    # Send user subscribes directly, bypassing the shared
+                    # throttle lock. User-position subscriptions are state
+                    # registrations; holding the shared lock for N × 50 ms
+                    # blocks trade-stream coin subscribes on other connections.
                     for user in users:
-                        await self._subscribe(
-                            ws, {"type": "clearinghouseState", "user": user}
+                        msg = orjson.dumps(
+                            {
+                                "method": "subscribe",
+                                "subscription": {
+                                    "type": "clearinghouseState",
+                                    "user": user,
+                                },
+                            }
                         )
+                        await ws.send(msg.decode("utf-8"))
+                    logger.debug(
+                        "stream_clearinghouse_states: %d subs sent — listening",
+                        len(users),
+                    )
                     delay = _RECONNECT_DELAY_S
                     async for raw_msg in ws:
                         data = self._parse_ws_message(raw_msg)

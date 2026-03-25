@@ -77,10 +77,15 @@ class HyperLiquidReader:
         Returns:
             The SDK method's return value.
         """
+        logger.debug("_run_sync: waiting for concurrency semaphore (weight=%d)", weight)
         async with self._concurrency:
+            logger.debug("_run_sync: semaphore acquired, awaiting rate limiter")
             await self._limiter.acquire(weight)
+            logger.debug("_run_sync: dispatching to executor")
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, func)
+            result = await loop.run_in_executor(None, func)
+            logger.debug("_run_sync: executor returned")
+            return result
 
     async def refresh_hip3_dexes(self) -> list[str]:
         """Fetch and cache the list of active HIP-3 builder dex names.
@@ -113,15 +118,29 @@ class HyperLiquidReader:
             Snapshot for every listed perpetual asset.
         """
         if self._include_hip3 and not self._hip3_dex_names:
+            logger.debug("get_asset_snapshots: refreshing HIP-3 dex list")
             await self.refresh_hip3_dexes()
 
         dexes = [""] + (self._hip3_dex_names if self._include_hip3 else [])
+        logger.debug("get_asset_snapshots: fetching %d dex(es)", len(dexes))
         snapshots: list[AssetSnapshot] = []
-        for dex in dexes:
+        for i, dex in enumerate(dexes):
+            label = dex or "native"
+            logger.debug(
+                "get_asset_snapshots: fetching dex %d/%d (%s)",
+                i + 1,
+                len(dexes),
+                label,
+            )
             try:
                 snapshots.extend(await self._fetch_dex_snapshots(dex))
             except Exception:
                 logger.exception("Failed to fetch dex snapshots for %r", dex)
+        logger.debug(
+            "get_asset_snapshots: done — %d snapshots across %d dex(es)",
+            len(snapshots),
+            len(dexes),
+        )
         return snapshots
 
     async def _fetch_dex_snapshots(self, dex: str) -> list[AssetSnapshot]:

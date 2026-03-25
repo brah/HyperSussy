@@ -72,7 +72,9 @@ class Orchestrator:
         logger.info("Orchestrator starting...")
 
         # Fetch initial asset list
+        logger.debug("Orchestrator: fetching initial coin list...")
         await self._refresh_coins()
+        logger.debug("Orchestrator: coin list ready — %d coins", len(self._coins))
 
         tasks = [
             asyncio.create_task(self._poll_meta_loop(), name="poll_meta"),
@@ -193,9 +195,13 @@ class Orchestrator:
         """
         whale_engines = [e for e in self._engines if isinstance(e, WhaleTrackerEngine)]
         if not whale_engines:
+            logger.debug("_position_stream_loop: no whale engines — exiting")
             return
+        logger.debug("_position_stream_loop: %d whale engine(s)", len(whale_engines))
         while self._running:
+            logger.debug("_position_stream_loop: fetching tracked addresses")
             tracked = await self._storage.get_tracked_addresses()
+            logger.debug("_position_stream_loop: %d tracked addresses", len(tracked))
             if not tracked:
                 await asyncio.sleep(10.0)
                 continue

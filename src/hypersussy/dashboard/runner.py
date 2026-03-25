@@ -94,9 +94,11 @@ class BackgroundRunner:
 
     def _run_forever(self) -> None:
         """Thread target: create event loop, run orchestrator, clean up."""
+        logger.debug("BackgroundRunner: thread started, creating event loop")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._loop = loop
+        logger.debug("BackgroundRunner: running _async_main")
         try:
             loop.run_until_complete(self._async_main())
         except asyncio.CancelledError:
@@ -123,8 +125,11 @@ class BackgroundRunner:
         log_file = os.path.join(db_dir or "data", "hypersussy-dashboard.log")
         _configure_structlog(self._settings.log_level, log_file)
 
+        logger.debug("BackgroundRunner: building components")
         reader, stream, storage, engines, _ = _build_components(self._settings)
+        logger.debug("BackgroundRunner: initialising storage")
         await storage.init()
+        logger.debug("BackgroundRunner: storage ready")
 
         sinks = [LogSink(), StreamlitSink(self._state)]
         alert_manager = AlertManager(

@@ -26,6 +26,7 @@ class DashboardReader:
             f"file:{db_path}?mode=ro",
             uri=True,
             check_same_thread=False,
+            isolation_level=None,  # autocommit — never hold implicit read transactions
         )
         self._conn.row_factory = sqlite3.Row
 

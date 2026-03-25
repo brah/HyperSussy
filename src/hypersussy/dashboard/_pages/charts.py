@@ -116,7 +116,7 @@ def _render_oi_chart(db_reader: DashboardReader, coin: str, hours: int) -> None:
             xaxis={"rangeslider": {"visible": True}, "gridcolor": _GRID},
         )
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
 
 def _render_funding_price_charts(
@@ -178,7 +178,7 @@ def _render_funding_price_charts(
         )
         fig_f.add_hline(y=0, line_dash="dot", line_color="#666666", line_width=1)
         fig_f.update_layout(**_base_layout(title="Funding Rate", showlegend=False))
-        st.plotly_chart(fig_f, use_container_width=True)
+        st.plotly_chart(fig_f, width="stretch")
 
     with col_price:
         fig_p = go.Figure()
@@ -209,4 +209,4 @@ def _render_funding_price_charts(
                 legend={"orientation": "h", "y": 1.1},
             )
         )
-        st.plotly_chart(fig_p, use_container_width=True)
+        st.plotly_chart(fig_p, width="stretch")

@@ -209,7 +209,7 @@ def _render_top_traders(db_reader: DashboardReader) -> None:
         xaxis={"tickprefix": "$", "tickformat": ",.0f", "gridcolor": "#2a2d35"},
         yaxis={"gridcolor": "#2a2d35"},
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Ranked summary table
     df = pl.DataFrame(

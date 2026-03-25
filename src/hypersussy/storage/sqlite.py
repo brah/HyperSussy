@@ -37,6 +37,7 @@ class SqliteStorage:
         self._db = await aiosqlite.connect(self._db_path)
         await self._db.execute("PRAGMA journal_mode=WAL")
         await self._db.execute("PRAGMA synchronous=NORMAL")
+        await self._db.execute("PRAGMA busy_timeout=5000")
         schema_sql = (
             importlib.resources.files("hypersussy.storage")
             .joinpath("schema.sql")

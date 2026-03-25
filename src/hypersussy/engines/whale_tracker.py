@@ -11,6 +11,7 @@ import asyncio
 import logging
 import uuid
 from collections import deque
+from typing import cast
 
 from hyperliquid.utils.error import ClientError
 
@@ -54,6 +55,9 @@ class WhaleTrackerEngine:
         self._last_polled: dict[str, float] = {}
         # Latest OI per coin for position/OI ratio
         self._coin_oi: dict[str, float] = {}
+        # HIP-3 dex prefixes observed per address in the trade stream.
+        # Used to restrict position polling to relevant dexes only.
+        self._whale_active_dexes: dict[str, set[str]] = {}
         # Cooldown: key -> last alert timestamp_ms
         self._last_alert_ms: dict[str, int] = {}
         # Last seen TWAP fill tid per (address, twapId) to avoid re-alerting
@@ -78,9 +82,12 @@ class WhaleTrackerEngine:
             (trade.timestamp_ms, trade.buyer, trade.seller, trade.coin, notional)
         )
         coin_oi = self._coin_oi.get(trade.coin, 0.0)
+        dex_prefix = trade.coin.split(":", 1)[0] if ":" in trade.coin else ""
         for addr in (trade.buyer, trade.seller):
             if not addr:
                 continue
+            if dex_prefix:
+                self._whale_active_dexes.setdefault(addr, set()).add(dex_prefix)
             self._address_volume[addr] = self._address_volume.get(addr, 0.0) + notional
             key = (addr, trade.coin)
             self._address_coin_volume[key] = (
@@ -142,6 +149,13 @@ class WhaleTrackerEngine:
         # Sync with DB: pick up manual adds, respect UI removals
         db_tracked = set(await self._storage.get_tracked_addresses())
         self._tracked = self._tracked | db_tracked
+        # Bound _whale_active_dexes to the current tracked set so untracked
+        # addresses discovered in the trade stream don't accumulate forever.
+        self._whale_active_dexes = {
+            addr: dexes
+            for addr, dexes in self._whale_active_dexes.items()
+            if addr in self._tracked
+        }
         return await self._poll_positions(timestamp_ms, db_tracked)
 
     def _prune_volume(self, timestamp_ms: int) -> None:
@@ -236,58 +250,104 @@ class WhaleTrackerEngine:
             if positions:
                 await self._storage.insert_positions(positions)
 
-            current = {p.coin: p.notional_usd for p in positions}
-            prev = dict(self._last_positions.get(addr, []))
+            pos_alerts = self._generate_position_alerts(addr, positions, timestamp_ms)
+            alerts.extend(pos_alerts)
 
-            for pos in positions:
-                coin_oi = self._coin_oi.get(pos.coin, 0.0)
-                if coin_oi > 0:
-                    oi_pct = abs(pos.notional_usd) / coin_oi
-                    if oi_pct >= self._settings.large_position_oi_pct:
-                        key = f"{addr}:{pos.coin}"
-                        if (
-                            timestamp_ms - self._last_alert_ms.get(key, 0)
-                            >= cooldown_ms
-                        ):
-                            alerts.append(
-                                _position_alert(
-                                    addr,
-                                    pos.coin,
-                                    pos.notional_usd,
-                                    oi_pct,
-                                    timestamp_ms,
-                                )
-                            )
-                            self._last_alert_ms[key] = timestamp_ms
-
-                if addr in self._polled_once:
-                    prev_notional = prev.get(pos.coin, 0.0)
-                    change_usd = abs(pos.notional_usd - prev_notional)
-                    if change_usd >= self._settings.large_position_change_usd:
-                        key = f"{addr}:{pos.coin}:change"
-                        if (
-                            timestamp_ms - self._last_alert_ms.get(key, 0)
-                            >= cooldown_ms
-                        ):
-                            alerts.append(
-                                _change_alert(
-                                    addr,
-                                    pos.coin,
-                                    prev_notional,
-                                    pos.notional_usd,
-                                    change_usd,
-                                    timestamp_ms,
-                                )
-                            )
-                            self._last_alert_ms[key] = timestamp_ms
-
-            self._last_positions[addr] = list(current.items())
+            self._last_positions[addr] = [(p.coin, p.notional_usd) for p in positions]
             self._polled_once.add(addr)
 
             twap_alerts = self._process_twap_fills(
                 addr, twap_fills, timestamp_ms, cooldown_ms
             )
             alerts.extend(twap_alerts)
+
+        return alerts
+
+    async def on_position_update(
+        self,
+        address: str,
+        positions: list[Position],
+        timestamp_ms: int,
+    ) -> list[Alert]:
+        """Process a WebSocket-pushed position update for an address.
+
+        Generates the same large-position and change-detection alerts as
+        the REST polling path, without touching ``_last_polled`` so the
+        safety-net poll cadence remains independent.
+
+        Args:
+            address: Whale address that received the update.
+            positions: Current open positions from the WS push.
+            timestamp_ms: Current timestamp in milliseconds.
+
+        Returns:
+            Alerts for notable position states or changes.
+        """
+        if positions:
+            await self._storage.insert_positions(positions)
+
+        alerts = self._generate_position_alerts(address, positions, timestamp_ms)
+        self._last_positions[address] = [(p.coin, p.notional_usd) for p in positions]
+        self._polled_once.add(address)
+        return alerts
+
+    def _generate_position_alerts(
+        self,
+        address: str,
+        positions: list[Position],
+        timestamp_ms: int,
+    ) -> list[Alert]:
+        """Generate large-position and change alerts from a position list.
+
+        Shared by both the REST poll path and the WS push path.
+
+        Args:
+            address: Whale address.
+            positions: Current open positions.
+            timestamp_ms: Current timestamp in milliseconds.
+
+        Returns:
+            Generated alerts.
+        """
+        cooldown_ms = self._settings.alert_cooldown_s * 1000
+        prev = dict(self._last_positions.get(address, []))
+        alerts: list[Alert] = []
+
+        for pos in positions:
+            coin_oi = self._coin_oi.get(pos.coin, 0.0)
+            if coin_oi > 0:
+                oi_pct = abs(pos.notional_usd) / coin_oi
+                if oi_pct >= self._settings.large_position_oi_pct:
+                    key = f"{address}:{pos.coin}"
+                    if timestamp_ms - self._last_alert_ms.get(key, 0) >= cooldown_ms:
+                        alerts.append(
+                            _position_alert(
+                                address,
+                                pos.coin,
+                                pos.notional_usd,
+                                oi_pct,
+                                timestamp_ms,
+                            )
+                        )
+                        self._last_alert_ms[key] = timestamp_ms
+
+            if address in self._polled_once:
+                prev_notional = prev.get(pos.coin, 0.0)
+                change_usd = abs(pos.notional_usd - prev_notional)
+                if change_usd >= self._settings.large_position_change_usd:
+                    key = f"{address}:{pos.coin}:change"
+                    if timestamp_ms - self._last_alert_ms.get(key, 0) >= cooldown_ms:
+                        alerts.append(
+                            _change_alert(
+                                address,
+                                pos.coin,
+                                prev_notional,
+                                pos.notional_usd,
+                                change_usd,
+                                timestamp_ms,
+                            )
+                        )
+                        self._last_alert_ms[key] = timestamp_ms
 
         return alerts
 
@@ -303,10 +363,13 @@ class WhaleTrackerEngine:
             Tuple of (positions, twap_fills).
         """
         positions, twap_fills = await asyncio.gather(
-            self._reader.get_user_positions(addr),
+            self._reader.get_user_positions(
+                addr,
+                active_dexes=self._whale_active_dexes.get(addr),
+            ),
             self._reader.get_user_twap_slice_fills(addr),
         )
-        return positions, twap_fills  # type: ignore[return-value]
+        return positions, twap_fills
 
     def _process_twap_fills(
         self,
@@ -336,11 +399,11 @@ class WhaleTrackerEngine:
         twap_latest: dict[int, dict[str, object]] = {}
         for entry in fills:
             twap_id = int(entry["twapId"])  # type: ignore[call-overload]
-            fill = entry["fill"]  # type: ignore[index]
-            fill_time = int(fill["time"])  # type: ignore[index,call-overload]
+            fill = cast("dict[str, object]", entry["fill"])
+            fill_time = int(fill["time"])  # type: ignore[call-overload]
             prev = twap_latest.get(twap_id)
             if prev is None or fill_time > int(prev["time"]):  # type: ignore[call-overload]
-                twap_latest[twap_id] = fill  # type: ignore[assignment]
+                twap_latest[twap_id] = fill
 
         alerts: list[Alert] = []
         active_window_ms = int(self._settings.position_poll_interval_s * 1000) * 3

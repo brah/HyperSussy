@@ -18,10 +18,11 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 from hypersussy.exchange.hyperliquid.parsers import (
+    parse_user_state,
     parse_ws_all_mids,
     parse_ws_trades,
 )
-from hypersussy.models import L2Book, Trade
+from hypersussy.models import L2Book, Position, Trade
 
 logger = logging.getLogger(__name__)
 
@@ -277,6 +278,64 @@ class HyperLiquidStream:
         sub = {"type": "allMids"}
         async for msg in self._iter_messages(sub):
             yield parse_ws_all_mids(msg)
+
+    async def stream_clearinghouse_states(
+        self,
+        users: list[str],
+    ) -> AsyncIterator[tuple[str, list[Position]]]:
+        """Yield real-time position updates for tracked whale addresses.
+
+        Opens a single WebSocket connection and subscribes to
+        ``clearinghouseState`` for each user.  Reconnects automatically
+        with exponential back-off on any connection failure.
+
+        Args:
+            users: List of 0x wallet addresses to subscribe to.
+
+        Yields:
+            Tuple of (address, positions) on each push update.
+        """
+        delay = _RECONNECT_DELAY_S
+        while True:
+            try:
+                ws = await self._connect()
+                ping_task = asyncio.create_task(self._ping_loop(ws))
+                try:
+                    for user in users:
+                        await self._subscribe(
+                            ws, {"type": "clearinghouseState", "user": user}
+                        )
+                    delay = _RECONNECT_DELAY_S
+                    async for raw_msg in ws:
+                        data = self._parse_ws_message(raw_msg)
+                        if data is None:
+                            continue
+                        channel = data.get("channel")
+                        if channel in ("pong", "subscriptionResponse"):
+                            continue
+                        if channel != "clearinghouseState":
+                            continue
+                        user_addr: str = data.get("subscription", {}).get("user", "")
+                        if not user_addr:
+                            continue
+                        positions = parse_user_state(data.get("data", {}), user_addr)
+                        yield user_addr, positions
+                finally:
+                    ping_task.cancel()
+                    await ws.close()
+            except (
+                websockets.ConnectionClosed,
+                websockets.InvalidURI,
+                OSError,
+            ) as exc:
+                logger.warning(
+                    "Position WS disconnected (%d users): %s. Reconnecting in %ds...",
+                    len(users),
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, _MAX_RECONNECT_DELAY_S)
 
     async def stream_l2_book(self, coin: str) -> AsyncIterator[L2Book]:
         """Yield L2 book updates for a coin.

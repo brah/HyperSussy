@@ -107,9 +107,7 @@ class TestRefreshHip3Dexes:
     @pytest.mark.asyncio
     async def test_respects_dex_filter(self) -> None:
         """Only includes dexes matching the filter."""
-        reader = HyperLiquidReader(
-            include_hip3=True, hip3_dex_filter=["xyz"]
-        )
+        reader = HyperLiquidReader(include_hip3=True, hip3_dex_filter=["xyz"])
         reader._info = MagicMock()
         reader._info.perp_dexs.return_value = _make_dex_response()
 

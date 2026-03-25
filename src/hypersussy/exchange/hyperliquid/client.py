@@ -141,18 +141,30 @@ class HyperLiquidReader:
         )
         return parse_meta_and_asset_ctxs(raw)
 
-    async def get_user_positions(self, address: str) -> list[Position]:
-        """Fetch open positions for a given address across all dexes.
+    async def get_user_positions(
+        self,
+        address: str,
+        active_dexes: set[str] | None = None,
+    ) -> list[Position]:
+        """Fetch open positions for a given address across relevant dexes.
 
         Args:
             address: The 0x user address.
+            active_dexes: HIP-3 dex prefixes the address has traded on.
+                ``None`` queries all known dexes. An empty set queries
+                native only. A non-empty set queries native + intersection
+                with known dexes to filter stale/unrecognized prefixes.
 
         Returns:
             All open positions for the user.
         """
-        dexes = [""]
-        if self._include_hip3:
-            dexes.extend(self._hip3_dex_names)
+        if not self._include_hip3:
+            dexes: list[str] = [""]
+        elif active_dexes is None:
+            dexes = [""] + self._hip3_dex_names
+        else:
+            hip3_to_query = sorted(active_dexes & set(self._hip3_dex_names))
+            dexes = [""] + hip3_to_query
 
         results = await asyncio.gather(
             *(self._fetch_user_positions(address, dex) for dex in dexes),
@@ -167,9 +179,7 @@ class HyperLiquidReader:
             positions.extend(result)
         return positions
 
-    async def _fetch_user_positions(
-        self, address: str, dex: str
-    ) -> list[Position]:
+    async def _fetch_user_positions(self, address: str, dex: str) -> list[Position]:
         """Fetch positions for a user on a single dex.
 
         Args:

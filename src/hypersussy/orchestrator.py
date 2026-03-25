@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from hypersussy.alerts.manager import AlertManager
 from hypersussy.config import HyperSussySettings
 from hypersussy.engines.base import DetectionEngine
+from hypersussy.engines.whale_tracker import WhaleTrackerEngine
 from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.exchange.hyperliquid.websocket import HyperLiquidStream
 from hypersussy.models import Trade
@@ -24,8 +25,10 @@ from hypersussy.storage.base import StorageProtocol
 logger = logging.getLogger(__name__)
 
 # HyperLiquid enforces max 10 WS connections per IP.
-# Reserve 1 for future allMids/l2Book streams.
-_MAX_TRADE_WS_CONNECTIONS = 9
+# 1 connection is reserved for the position WS stream.
+_MAX_TRADE_WS_CONNECTIONS = 8
+# HL position WS: subscribe up to this many users per connection.
+_MAX_POSITION_WS_USERS = 1000
 
 
 class Orchestrator:
@@ -75,6 +78,7 @@ class Orchestrator:
             asyncio.create_task(self._poll_meta_loop(), name="poll_meta"),
             asyncio.create_task(self._engine_tick_loop(), name="engine_tick"),
             asyncio.create_task(self._refresh_coins_loop(), name="refresh_coins"),
+            asyncio.create_task(self._position_stream_loop(), name="position_ws"),
         ]
 
         # Multiplex trade streams across a limited number of WS connections
@@ -177,6 +181,48 @@ class Orchestrator:
             if not self._running:
                 break
             await self._dispatch_trade(trade)
+
+    async def _position_stream_loop(self) -> None:
+        """Stream real-time position updates for all tracked whale addresses.
+
+        Subscribes to ``clearinghouseState`` for every tracked whale on a
+        single WS connection, yielding parsed positions to
+        ``WhaleTrackerEngine.on_position_update``.  Restarts from storage
+        each time the connection is (re-)established so that newly
+        discovered whales are picked up automatically.
+        """
+        whale_engines = [e for e in self._engines if isinstance(e, WhaleTrackerEngine)]
+        if not whale_engines:
+            return
+        while self._running:
+            tracked = await self._storage.get_tracked_addresses()
+            if not tracked:
+                await asyncio.sleep(10.0)
+                continue
+            users = tracked[:_MAX_POSITION_WS_USERS]
+            logger.info("Starting position WS stream for %d addresses", len(users))
+            try:
+                async for (
+                    address,
+                    positions,
+                ) in self._stream.stream_clearinghouse_states(users):
+                    if not self._running:
+                        break
+                    now_ms = int(time.time() * 1000)
+                    for engine in whale_engines:
+                        try:
+                            pos_alerts = await engine.on_position_update(
+                                address, positions, now_ms
+                            )
+                            for alert in pos_alerts:
+                                await self._alert_manager.process_alert(alert)
+                        except Exception:
+                            logger.exception(
+                                "Error in on_position_update for %s", address
+                            )
+            except Exception:
+                logger.exception("Position stream loop error; restarting")
+                await asyncio.sleep(2)
 
     async def _dispatch_trade(self, trade: Trade) -> None:
         """Fan out a trade to storage and all engines.

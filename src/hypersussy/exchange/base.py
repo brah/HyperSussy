@@ -31,11 +31,19 @@ class ExchangeReader(Protocol):
         """
         ...
 
-    async def get_user_positions(self, address: str) -> list[Position]:
+    async def get_user_positions(
+        self,
+        address: str,
+        active_dexes: set[str] | None = None,
+    ) -> list[Position]:
         """Fetch open positions for a given address.
 
         Args:
             address: The 0x user address.
+            active_dexes: HIP-3 dex prefixes the address has traded on.
+                ``None`` queries all known dexes (safe default for new
+                addresses). An empty set queries native only. A non-empty
+                set queries native + the intersection with known dexes.
 
         Returns:
             All open positions for the user.

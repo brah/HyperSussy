@@ -48,6 +48,7 @@ class HyperSussySettings(BaseSettings):
 
     # Whale Tracker engine
     whale_volume_threshold_usd: float = 5_000_000.0
+    whale_discovery_oi_pct: float = 0.05  # promote if address trades >= 5% of coin OI
     whale_volume_lookback_ms: int = 3_600_000
     max_tracked_addresses: int = 200
     position_poll_interval_s: float = 30.0

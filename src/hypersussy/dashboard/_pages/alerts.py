@@ -19,6 +19,13 @@ _ALL_TYPES = [
     "funding_anomaly",
     "liquidation_risk",
 ]
+_SEV_RANK: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+_SEV_BADGE: dict[str, str] = {
+    "critical": "[CRIT]",
+    "high": "[HIGH]",
+    "medium": "[ MED]",
+    "low": "[ LOW]",
+}
 
 
 def render_alerts(
@@ -83,16 +90,22 @@ def _render_filters_and_table(db_reader: DashboardReader) -> None:
         st.info("No alerts match the current filters.")
         return
 
+    # Sort by severity (critical first), then timestamp descending
+    rows = sorted(
+        rows,
+        key=lambda r: (_SEV_RANK.get(str(r["severity"]), 9), -int(r["timestamp_ms"])),
+    )
+
     df = pl.DataFrame(
         [
             {
+                "Level": _SEV_BADGE.get(str(r["severity"]), str(r["severity"])),
                 "Time": time.strftime(
                     "%Y-%m-%d %H:%M:%S",
                     time.localtime(int(r["timestamp_ms"]) / 1000),
                 ),
                 "Coin": r["coin"],
                 "Type": r["alert_type"],
-                "Severity": r["severity"],
                 "Title": r["title"],
                 "Description": r["description"],
             }
@@ -102,6 +115,14 @@ def _render_filters_and_table(db_reader: DashboardReader) -> None:
 
     st.dataframe(df, width="stretch", hide_index=True)
 
+    with st.expander("Alert counts by type"):
+        counts = db_reader.get_alert_counts_by_type(since_ms=since_ms)
+        if counts:
+            count_df = pl.DataFrame(
+                {"Type": list(counts.keys()), "Count": list(counts.values())}
+            ).sort("Count", descending=True)
+            st.bar_chart(count_df, x="Type", y="Count", width="stretch")
+
 
 def _render_hourly_chart(db_reader: DashboardReader) -> None:
     """Render a bar chart of alert volume per hour over the last 24 hours."""
@@ -110,7 +131,6 @@ def _render_hourly_chart(db_reader: DashboardReader) -> None:
     if not rows:
         return
 
-    # Bucket by hour
     buckets: dict[str, int] = {}
     for row in rows:
         hour_label = time.strftime(

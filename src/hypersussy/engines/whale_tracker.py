@@ -37,13 +37,16 @@ class WhaleTrackerEngine:
         self._storage = storage
         self._reader = reader
         self._settings = settings
-        # Sliding-window volume tracking
+        # Sliding-window volume tracking (global and per-coin)
         self._address_volume: dict[str, float] = {}
-        self._trade_buffer: deque[tuple[int, str, str, float]] = deque()
+        self._address_coin_volume: dict[tuple[str, str], float] = {}
+        self._trade_buffer: deque[tuple[int, str, str, str, float]] = deque()
         # Tracked whales
         self._tracked: set[str] = set()
         # Last known positions per address
         self._last_positions: dict[str, list[tuple[str, float]]] = {}
+        # Addresses that have completed at least one full position poll
+        self._polled_once: set[str] = set()
         # Last poll time per address (seconds)
         self._last_polled: dict[str, float] = {}
         # Latest OI per coin for position/OI ratio
@@ -69,27 +72,40 @@ class WhaleTrackerEngine:
         """
         notional = trade.price * trade.size
         self._trade_buffer.append(
-            (trade.timestamp_ms, trade.buyer, trade.seller, notional)
+            (trade.timestamp_ms, trade.buyer, trade.seller, trade.coin, notional)
         )
+        coin_oi = self._coin_oi.get(trade.coin, 0.0)
         for addr in (trade.buyer, trade.seller):
             if not addr:
                 continue
             self._address_volume[addr] = self._address_volume.get(addr, 0.0) + notional
-            if (
-                addr not in self._tracked
-                and self._address_volume[addr]
-                >= self._settings.whale_volume_threshold_usd
-            ):
+            key = (addr, trade.coin)
+            self._address_coin_volume[key] = (
+                self._address_coin_volume.get(key, 0.0) + notional
+            )
+            if addr in self._tracked:
+                continue
+            usd_ok = (
+                self._address_volume[addr] >= self._settings.whale_volume_threshold_usd
+            )
+            oi_ok = (
+                coin_oi > 0
+                and self._address_coin_volume[key]
+                >= self._settings.whale_discovery_oi_pct * coin_oi
+            )
+            if usd_ok or oi_ok:
+                label = f"{trade.coin} OI WHALE" if oi_ok else f"{trade.coin} WHALE"
                 self._tracked.add(addr)
                 await self._storage.upsert_tracked_address(
                     addr,
-                    f"{trade.coin} WHALE",
+                    label,
                     "discovered",
                     self._address_volume[addr],
                 )
                 logger.info(
-                    "Whale discovered: %s (volume=$%.0f)",
+                    "Whale discovered: %s label=%s (volume=$%.0f)",
                     addr,
+                    label,
                     self._address_volume[addr],
                 )
         return []
@@ -127,7 +143,7 @@ class WhaleTrackerEngine:
         """
         cutoff = timestamp_ms - self._settings.whale_volume_lookback_ms
         while self._trade_buffer and self._trade_buffer[0][0] < cutoff:
-            _, buyer, seller, notional = self._trade_buffer.popleft()
+            _, buyer, seller, coin, notional = self._trade_buffer.popleft()
             for addr in (buyer, seller):
                 if not addr:
                     continue
@@ -136,6 +152,12 @@ class WhaleTrackerEngine:
                     self._address_volume.pop(addr, None)
                 else:
                     self._address_volume[addr] = vol
+                ck = (addr, coin)
+                cvol = self._address_coin_volume.get(ck, 0.0) - notional
+                if cvol <= 0:
+                    self._address_coin_volume.pop(ck, None)
+                else:
+                    self._address_coin_volume[ck] = cvol
 
     def _cap_tracked(self) -> None:
         """Limit tracked addresses to max_tracked_addresses."""
@@ -201,28 +223,30 @@ class WhaleTrackerEngine:
                                 )
                                 self._last_alert_ms[key] = timestamp_ms
 
-                    # Check position size change
-                    prev_notional = prev.get(pos.coin, 0.0)
-                    change_usd = abs(pos.notional_usd - prev_notional)
-                    if change_usd >= self._settings.large_position_change_usd:
-                        key = f"{addr}:{pos.coin}:change"
-                        if (
-                            timestamp_ms - self._last_alert_ms.get(key, 0)
-                            >= cooldown_ms
-                        ):
-                            alerts.append(
-                                _change_alert(
-                                    addr,
-                                    pos.coin,
-                                    prev_notional,
-                                    pos.notional_usd,
-                                    change_usd,
-                                    timestamp_ms,
+                    # Check position size change — skip on first poll (prev = 0)
+                    if addr in self._polled_once:
+                        prev_notional = prev.get(pos.coin, 0.0)
+                        change_usd = abs(pos.notional_usd - prev_notional)
+                        if change_usd >= self._settings.large_position_change_usd:
+                            key = f"{addr}:{pos.coin}:change"
+                            if (
+                                timestamp_ms - self._last_alert_ms.get(key, 0)
+                                >= cooldown_ms
+                            ):
+                                alerts.append(
+                                    _change_alert(
+                                        addr,
+                                        pos.coin,
+                                        prev_notional,
+                                        pos.notional_usd,
+                                        change_usd,
+                                        timestamp_ms,
+                                    )
                                 )
-                            )
-                            self._last_alert_ms[key] = timestamp_ms
+                                self._last_alert_ms[key] = timestamp_ms
 
                 self._last_positions[addr] = list(current.items())
+                self._polled_once.add(addr)
 
                 # Poll real TWAP executions from the HL API
                 twap_alerts = await self._check_twap_fills(

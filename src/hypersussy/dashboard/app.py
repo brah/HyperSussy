@@ -83,7 +83,7 @@ def main() -> None:
     elif page == "Whale Tracker":
         from hypersussy.dashboard._pages.whale_tracker import render_whale_tracker
 
-        render_whale_tracker(db_reader)
+        render_whale_tracker(db_reader, refresh_s)
     elif page == "Charts":
         from hypersussy.dashboard._pages.charts import render_charts
 

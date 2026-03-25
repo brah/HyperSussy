@@ -128,7 +128,7 @@ def _render_market_table(state: SharedState) -> None:
         column_config={
             "Mark Price": st.column_config.NumberColumn(format="$%,.4f"),
             "OI (USD)": st.column_config.NumberColumn(format="$%,.0f"),
-            "Funding Rate": st.column_config.NumberColumn(format="%.4f%%"),
+            "Funding Rate": st.column_config.NumberColumn(format="%+.4f%%"),
             "Premium": st.column_config.NumberColumn(format="%.4f%%"),
             _COL_24H_VOL: st.column_config.NumberColumn(format="$%,.0f"),
         },

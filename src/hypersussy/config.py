@@ -22,6 +22,10 @@ class HyperSussySettings(BaseSettings):
     # Coins: empty list = all listed perps (fetched dynamically)
     watched_coins: list[str] = Field(default_factory=list)
 
+    # HIP-3 builder-deployed perpetuals
+    include_hip3: bool = True
+    hip3_dex_filter: list[str] = Field(default_factory=list)
+
     # Database
     db_path: str = "data/hypersussy.db"
 

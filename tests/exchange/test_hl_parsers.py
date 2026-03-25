@@ -73,6 +73,39 @@ class TestParseMetaAndAssetCtxs:
         assert eth.coin == "ETH"
         assert eth.mid_price is None
 
+    def test_hip3_prefixed_coin_names(self) -> None:
+        """HIP-3 coins with dex:name format are parsed correctly."""
+        raw = (
+            {
+                "universe": [
+                    {
+                        "name": "xyz:GOLD",
+                        "szDecimals": 2,
+                        "maxLeverage": 20,
+                        "marginTableId": 0,
+                    },
+                ]
+            },
+            [
+                {
+                    "dayNtlVlm": "5000000.0",
+                    "funding": "0.0003",
+                    "openInterest": "500.0",
+                    "oraclePx": "4500.0",
+                    "markPx": "4500.0",
+                    "midPx": "4500.5",
+                    "premium": "0.0001",
+                    "prevDayPx": "4400.0",
+                },
+            ],
+        )
+
+        snapshots = parse_meta_and_asset_ctxs(raw)
+        assert len(snapshots) == 1
+        assert snapshots[0].coin == "xyz:GOLD"
+        assert snapshots[0].mark_price == 4500.0
+        assert snapshots[0].open_interest_usd == 500.0 * 4500.0
+
     def test_empty_universe(self) -> None:
         """Empty universe returns empty list."""
         raw = ({"universe": []}, [])

@@ -1,7 +1,8 @@
 """HyperLiquid REST client implementing ExchangeReader.
 
 Wraps the SDK's Info class with rate limiting and domain model
-conversion.
+conversion.  Supports both native (validator) and HIP-3
+(builder-deployed) perpetual markets.
 """
 
 from __future__ import annotations
@@ -33,6 +34,8 @@ from hypersussy.rate_limiter import WeightRateLimiter
 
 logger = logging.getLogger(__name__)
 
+_INFO_PATH = "/info"
+
 
 class HyperLiquidReader:
     """Async wrapper around the HL SDK Info class with rate limiting.
@@ -40,19 +43,32 @@ class HyperLiquidReader:
     Args:
         base_url: HL API base URL.
         rate_limiter: Shared rate limiter instance.
+        include_hip3: Fetch HIP-3 builder-deployed perpetuals.
+        hip3_dex_filter: If non-empty, only include these HIP-3 dexes.
     """
 
     def __init__(
         self,
         base_url: str = "https://api.hyperliquid.xyz",
         rate_limiter: WeightRateLimiter | None = None,
+        include_hip3: bool = True,
+        hip3_dex_filter: list[str] | None = None,
     ) -> None:
         self._info = Info(base_url=base_url, skip_ws=True)
         self._limiter = rate_limiter or WeightRateLimiter()
-        self._loop: asyncio.AbstractEventLoop | None = None
+        self._include_hip3 = include_hip3
+        self._hip3_dex_filter: set[str] = set(hip3_dex_filter or [])
+        self._hip3_dex_names: list[str] = []
+        # Cap concurrent HTTP requests to avoid 429s from burst traffic.
+        # The weight limiter prevents per-minute exhaustion; this prevents
+        # simultaneous bursts that the API rejects regardless of weight.
+        self._concurrency = asyncio.Semaphore(4)
 
     async def _run_sync(self, func: partial[Any], weight: int) -> Any:
         """Run a synchronous SDK call in an executor with rate limiting.
+
+        Acquires both the concurrency semaphore (max 4 in-flight) and the
+        weight-based rate limiter before dispatching to a thread executor.
 
         Args:
             func: Partial-applied SDK method.
@@ -61,21 +77,72 @@ class HyperLiquidReader:
         Returns:
             The SDK method's return value.
         """
-        await self._limiter.acquire(weight)
-        loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, func)
+        async with self._concurrency:
+            await self._limiter.acquire(weight)
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, func)
+
+    async def refresh_hip3_dexes(self) -> list[str]:
+        """Fetch and cache the list of active HIP-3 builder dex names.
+
+        Returns:
+            List of dex name strings (e.g. ["xyz", "flx", "km"]).
+        """
+        raw = await self._run_sync(partial(self._info.perp_dexs), weight=2)
+        names: list[str] = []
+        for entry in raw:
+            if entry is None:
+                continue
+            name = entry.get("name", "")
+            if not name:
+                continue
+            if self._hip3_dex_filter and name not in self._hip3_dex_filter:
+                continue
+            names.append(name)
+        self._hip3_dex_names = names
+        logger.info("HIP-3 dexes: %d active (%s)", len(names), ", ".join(names))
+        return names
 
     async def get_asset_snapshots(self) -> list[AssetSnapshot]:
         """Fetch all perpetual assets with OI, volume, prices, funding.
 
+        Includes both native and HIP-3 builder-deployed markets when
+        ``include_hip3`` is enabled.
+
         Returns:
             Snapshot for every listed perpetual asset.
         """
-        raw = await self._run_sync(partial(self._info.meta_and_asset_ctxs), weight=2)
+        if self._include_hip3 and not self._hip3_dex_names:
+            await self.refresh_hip3_dexes()
+
+        dexes = [""] + (self._hip3_dex_names if self._include_hip3 else [])
+        snapshots: list[AssetSnapshot] = []
+        for dex in dexes:
+            try:
+                snapshots.extend(await self._fetch_dex_snapshots(dex))
+            except Exception:
+                logger.exception("Failed to fetch dex snapshots for %r", dex)
+        return snapshots
+
+    async def _fetch_dex_snapshots(self, dex: str) -> list[AssetSnapshot]:
+        """Fetch metaAndAssetCtxs for a single dex.
+
+        Args:
+            dex: Dex name ("" for native, e.g. "xyz" for HIP-3).
+
+        Returns:
+            Parsed asset snapshots for this dex.
+        """
+        payload: dict[str, str] = {"type": "metaAndAssetCtxs"}
+        if dex:
+            payload["dex"] = dex
+        raw = await self._run_sync(
+            partial(self._info.post, _INFO_PATH, payload), weight=2
+        )
         return parse_meta_and_asset_ctxs(raw)
 
     async def get_user_positions(self, address: str) -> list[Position]:
-        """Fetch open positions for a given address.
+        """Fetch open positions for a given address across all dexes.
 
         Args:
             address: The 0x user address.
@@ -83,7 +150,38 @@ class HyperLiquidReader:
         Returns:
             All open positions for the user.
         """
-        raw = await self._run_sync(partial(self._info.user_state, address), weight=2)
+        dexes = [""]
+        if self._include_hip3:
+            dexes.extend(self._hip3_dex_names)
+
+        results = await asyncio.gather(
+            *(self._fetch_user_positions(address, dex) for dex in dexes),
+            return_exceptions=True,
+        )
+
+        positions: list[Position] = []
+        for result in results:
+            if isinstance(result, BaseException):
+                logger.warning("Failed to fetch positions from a dex: %s", result)
+                continue
+            positions.extend(result)
+        return positions
+
+    async def _fetch_user_positions(
+        self, address: str, dex: str
+    ) -> list[Position]:
+        """Fetch positions for a user on a single dex.
+
+        Args:
+            address: The 0x user address.
+            dex: Dex name ("" for native).
+
+        Returns:
+            Positions on this dex.
+        """
+        raw = await self._run_sync(
+            partial(self._info.user_state, address, dex=dex), weight=2
+        )
         return parse_user_state(raw, address)
 
     async def get_user_fills(
@@ -121,13 +219,19 @@ class HyperLiquidReader:
     async def get_l2_book(self, coin: str) -> L2Book:
         """Fetch a 20-level order book snapshot.
 
+        Uses a raw POST to bypass the SDK's ``name_to_coin`` lookup,
+        which only covers dexes loaded at init time.
+
         Args:
-            coin: Asset name (e.g. "BTC", "ETH").
+            coin: Asset name (e.g. "BTC", "xyz:XYZ100").
 
         Returns:
             L2 book with bids and asks.
         """
-        raw = await self._run_sync(partial(self._info.l2_snapshot, coin), weight=2)
+        raw = await self._run_sync(
+            partial(self._info.post, _INFO_PATH, {"type": "l2Book", "coin": coin}),
+            weight=2,
+        )
         return parse_l2_snapshot(raw)
 
     async def get_candles(
@@ -186,16 +290,25 @@ class HyperLiquidReader:
     ) -> list[FundingRate]:
         """Fetch historical funding rate entries.
 
+        Uses a raw POST to bypass the SDK's ``name_to_coin`` lookup,
+        which only covers dexes loaded at init time.
+
         Args:
-            coin: Asset name.
+            coin: Asset name (e.g. "BTC", "xyz:XYZ100").
             start_ms: Start timestamp in milliseconds.
             end_ms: End timestamp in milliseconds (optional).
 
         Returns:
             List of funding rate entries.
         """
+        payload: dict[str, str | int] = {
+            "type": "fundingHistory",
+            "coin": coin,
+            "startTime": start_ms,
+        }
+        if end_ms is not None:
+            payload["endTime"] = end_ms
         raw = await self._run_sync(
-            partial(self._info.funding_history, coin, start_ms, end_ms),
-            weight=20,
+            partial(self._info.post, _INFO_PATH, payload), weight=20
         )
         return parse_funding_history(raw, coin)

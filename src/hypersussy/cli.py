@@ -69,7 +69,12 @@ def _build_components(settings: object) -> tuple:  # type: ignore[type-arg]
         max_weight=s.rate_limit_weight,
         window_seconds=s.rate_limit_window_s,
     )
-    reader = HyperLiquidReader(base_url=s.hl_api_url, rate_limiter=rate_limiter)
+    reader = HyperLiquidReader(
+        base_url=s.hl_api_url,
+        rate_limiter=rate_limiter,
+        include_hip3=s.include_hip3,
+        hip3_dex_filter=s.hip3_dex_filter,
+    )
     throttle = WsThrottle(
         connect_delay_s=s.ws_connect_delay_s,
         subscribe_delay_s=s.ws_subscribe_delay_s,

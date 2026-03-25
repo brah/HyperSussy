@@ -73,19 +73,19 @@ def main() -> None:
     )
 
     if page == "Overview":
-        from hypersussy.dashboard.pages.overview import render_overview
+        from hypersussy.dashboard._pages.overview import render_overview
 
         render_overview(state, db_reader, refresh_s)
     elif page == "Alerts":
-        from hypersussy.dashboard.pages.alerts import render_alerts
+        from hypersussy.dashboard._pages.alerts import render_alerts
 
         render_alerts(db_reader, refresh_s)
     elif page == "Whale Tracker":
-        from hypersussy.dashboard.pages.whale_tracker import render_whale_tracker
+        from hypersussy.dashboard._pages.whale_tracker import render_whale_tracker
 
         render_whale_tracker(db_reader)
     elif page == "Charts":
-        from hypersussy.dashboard.pages.charts import render_charts
+        from hypersussy.dashboard._pages.charts import render_charts
 
         render_charts(db_reader)
 

@@ -32,7 +32,7 @@ class HyperSussySettings(BaseSettings):
     # Engine toggles
     engine_oi_concentration: bool = True
     engine_whale_tracker: bool = True
-    engine_twap_detector: bool = True
+    engine_twap_detector: bool = False  # replaced by API-based polling in whale_tracker
     engine_pre_move: bool = True
     engine_funding_anomaly: bool = True
     engine_liquidation_risk: bool = True

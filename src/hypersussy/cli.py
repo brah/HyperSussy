@@ -146,55 +146,6 @@ async def _run() -> None:
         log.info("HyperSussy stopped")
 
 
-async def _run_tui() -> None:
-    """Wire up all components and start the TUI."""
-    from hypersussy.alerts.base import AlertSink
-    from hypersussy.alerts.manager import AlertManager
-    from hypersussy.alerts.sinks.log_sink import LogSink
-    from hypersussy.alerts.sinks.tui_sink import TuiSink
-    from hypersussy.config import HyperSussySettings
-    from hypersussy.orchestrator import Orchestrator
-    from hypersussy.tui.app import HyperSussyApp
-
-    settings = HyperSussySettings()
-
-    # In TUI mode write logs to file — Textual owns stdout
-    db_dir = os.path.dirname(settings.db_path)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-    log_file = os.path.join(db_dir or "data", "hypersussy.log")
-    _configure_logging(settings.log_level, log_file=log_file)
-
-    log = structlog.get_logger("hypersussy.cli")
-    log.info("Starting HyperSussy (TUI mode)", log_level=settings.log_level)
-
-    reader, stream, storage, engines, _ = _build_components(settings)
-    await storage.init()
-
-    # App is constructed first so we have the DataBus reference for TuiSink.
-    # The orchestrator is injected via set_orchestrator() before run_async().
-    app = HyperSussyApp()
-
-    sinks: list[AlertSink] = [LogSink(), TuiSink(app)]
-    alert_manager = AlertManager(storage=storage, sinks=sinks, settings=settings)
-    orchestrator = Orchestrator(
-        reader=reader,
-        stream=stream,
-        storage=storage,
-        engines=engines,
-        alert_manager=alert_manager,
-        settings=settings,
-        data_bus=app,
-    )
-    app.set_orchestrator(orchestrator)
-
-    try:
-        await app.run_async()
-    finally:
-        await storage.close()
-        log.info("HyperSussy stopped")
-
-
 def _run_streamlit() -> None:
     """Launch the Streamlit dashboard via subprocess.
 
@@ -216,10 +167,8 @@ def main() -> None:
     """Synchronous entry point for the CLI."""
     if "--streamlit" in sys.argv:
         _run_streamlit()
-    elif "--no-tui" in sys.argv:
-        asyncio.run(_run())
     else:
-        asyncio.run(_run_tui())
+        asyncio.run(_run())
 
 
 if __name__ == "__main__":

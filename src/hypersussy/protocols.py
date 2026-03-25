@@ -10,9 +10,8 @@ from hypersussy.models import Alert, AssetSnapshot
 class DataBus(Protocol):
     """Interface for pushing live data into a display layer.
 
-    Implemented by HyperSussyApp (TUI) and SharedState (Streamlit dashboard).
-    Passed into Orchestrator and alert sinks so they can emit events without
-    importing framework-specific types.
+    Implemented by SharedState (Streamlit dashboard). Passed into Orchestrator
+    so it can emit live events without importing framework-specific types.
     """
 
     def push_snapshot(self, snapshot: AssetSnapshot) -> None:

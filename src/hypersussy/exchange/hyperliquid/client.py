@@ -160,6 +160,24 @@ class HyperLiquidReader:
         )
         return parse_candles(raw, coin, interval)
 
+    async def get_user_twap_slice_fills(
+        self,
+        address: str,
+    ) -> list[dict[str, object]]:
+        """Fetch the most recent TWAP slice fills for a user.
+
+        Args:
+            address: The 0x user address.
+
+        Returns:
+            Up to 2000 most recent TWAP slice fill dicts, each containing
+            a ``fill`` sub-dict and a ``twapId`` field.
+        """
+        raw = await self._run_sync(
+            partial(self._info.user_twap_slice_fills, address), weight=2
+        )
+        return list(raw) if raw else []
+
     async def get_recent_funding(
         self,
         coin: str,

@@ -50,6 +50,8 @@ class WhaleTrackerEngine:
         self._coin_oi: dict[str, float] = {}
         # Cooldown: key -> last alert timestamp_ms
         self._last_alert_ms: dict[str, int] = {}
+        # Last seen TWAP fill tid per (address, twapId) to avoid re-alerting
+        self._seen_twap_tids: dict[str, set[int]] = {}
 
     @property
     def name(self) -> str:
@@ -92,7 +94,7 @@ class WhaleTrackerEngine:
                 )
         return []
 
-    async def on_asset_update(self, snapshot: AssetSnapshot) -> list[Alert]:
+    async def on_asset_update(self, snapshot: AssetSnapshot) -> list[Alert]:  # noqa: RUF029
         """Track latest OI per coin for position/OI ratio.
 
         Args:
@@ -221,8 +223,80 @@ class WhaleTrackerEngine:
                             self._last_alert_ms[key] = timestamp_ms
 
                 self._last_positions[addr] = list(current.items())
+
+                # Poll real TWAP executions from the HL API
+                twap_alerts = await self._check_twap_fills(
+                    addr, timestamp_ms, cooldown_ms
+                )
+                alerts.extend(twap_alerts)
             except Exception:
                 logger.exception("Failed to poll positions for %s", addr)
+
+        return alerts
+
+    async def _check_twap_fills(
+        self,
+        addr: str,
+        timestamp_ms: int,
+        cooldown_ms: int,
+    ) -> list[Alert]:
+        """Detect active TWAP executions via the HL API for a tracked address.
+
+        Queries the last 2000 TWAP slice fills for the address, groups them
+        by twapId, and alerts on any TWAP whose most recent fill is within
+        the position poll interval (i.e., still actively executing).
+
+        Args:
+            addr: Tracked whale address.
+            timestamp_ms: Current timestamp in milliseconds.
+            cooldown_ms: Alert cooldown in milliseconds.
+
+        Returns:
+            Alerts for each newly detected active TWAP.
+        """
+        fills = await self._reader.get_user_twap_slice_fills(addr)
+        if not fills:
+            return []
+
+        # Group by twapId — each entry has {"fill": {...}, "twapId": int}
+        twap_latest: dict[int, dict[str, object]] = {}
+        for entry in fills:
+            twap_id = int(entry["twapId"])  # type: ignore[arg-type]
+            fill = entry["fill"]  # type: ignore[index]
+            fill_time = int(fill["time"])  # type: ignore[index,call-overload]
+            prev = twap_latest.get(twap_id)
+            if prev is None or fill_time > int(prev["time"]):  # type: ignore[arg-type]
+                twap_latest[twap_id] = fill  # type: ignore[assignment]
+
+        alerts: list[Alert] = []
+        active_window_ms = int(self._settings.position_poll_interval_s * 1000) * 3
+
+        for twap_id, latest_fill in twap_latest.items():
+            fill_time = int(latest_fill["time"])  # type: ignore[call-overload]
+            if timestamp_ms - fill_time > active_window_ms:
+                continue  # TWAP has been idle — not active
+
+            key = f"{addr}:twap:{twap_id}"
+            if timestamp_ms - self._last_alert_ms.get(key, 0) < cooldown_ms:
+                continue
+
+            coin = str(latest_fill.get("coin", ""))
+            is_buy = latest_fill.get("side") == "B"
+            sz = float(latest_fill.get("sz", 0))  # type: ignore[arg-type]
+            px = float(latest_fill.get("px", 0))  # type: ignore[arg-type]
+
+            alerts.append(
+                _twap_active_alert(
+                    addr,
+                    coin,
+                    twap_id,
+                    "buy" if is_buy else "sell",
+                    sz,
+                    px,
+                    timestamp_ms,
+                )
+            )
+            self._last_alert_ms[key] = timestamp_ms
 
         return alerts
 
@@ -246,7 +320,12 @@ def _position_alert(
     Returns:
         A whale_position alert.
     """
-    severity = "critical" if oi_pct > 0.15 else "high" if oi_pct > 0.10 else "medium"
+    if oi_pct > 0.15:
+        severity = "critical"
+    elif oi_pct > 0.10:
+        severity = "high"
+    else:
+        severity = "medium"
     return Alert(
         alert_id=str(uuid.uuid4()),
         alert_type="whale_position",
@@ -306,5 +385,49 @@ def _change_alert(
             "prev_notional_usd": prev_notional,
             "current_notional_usd": current_notional,
             "change_usd": change_usd,
+        },
+    )
+
+
+def _twap_active_alert(
+    address: str,
+    coin: str,
+    twap_id: int,
+    direction: str,
+    slice_sz: float,
+    slice_px: float,
+    timestamp_ms: int,
+) -> Alert:
+    """Create an alert for a confirmed active TWAP execution.
+
+    Args:
+        address: Whale address executing the TWAP.
+        coin: Asset name.
+        twap_id: HyperLiquid TWAP order ID.
+        direction: "buy" or "sell".
+        slice_sz: Size of the most recent TWAP slice fill.
+        slice_px: Price of the most recent TWAP slice fill.
+        timestamp_ms: Alert timestamp.
+
+    Returns:
+        A twap_detected alert backed by HL API data.
+    """
+    return Alert(
+        alert_id=str(uuid.uuid4()),
+        alert_type="twap_detected",
+        severity="medium",
+        coin=coin,
+        title=f"{coin}: active TWAP {direction} detected (id={twap_id})",
+        description=(
+            f"Address {address[:10]}... is executing a TWAP {direction} on {coin}. "
+            f"Latest slice: {slice_sz:.4f} @ ${slice_px:,.4f} (twapId={twap_id})."
+        ),
+        timestamp_ms=timestamp_ms,
+        metadata={
+            "address": address,
+            "twap_id": float(twap_id),
+            "direction": direction,
+            "slice_sz": slice_sz,
+            "slice_px": slice_px,
         },
     )

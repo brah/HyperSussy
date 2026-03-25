@@ -109,6 +109,21 @@ class ExchangeReader(Protocol):
         """
         ...
 
+    async def get_user_twap_slice_fills(
+        self,
+        address: str,
+    ) -> list[dict[str, object]]:
+        """Fetch the most recent TWAP slice fills for a user.
+
+        Args:
+            address: The 0x user address.
+
+        Returns:
+            Up to 2000 most recent TWAP slice fill dicts, each containing
+            a ``fill`` sub-dict and a ``twapId`` field.
+        """
+        ...
+
 
 class ExchangeStream(Protocol):
     """Real-time streaming from a perpetual DEX."""

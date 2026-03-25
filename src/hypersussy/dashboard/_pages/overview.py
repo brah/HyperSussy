@@ -11,6 +11,9 @@ from hypersussy.dashboard.db_reader import DashboardReader
 from hypersussy.dashboard.state import SharedState
 
 
+_COL_24H_VOL = "24h Volume"
+
+
 def _format_usd(value: float) -> str:
     """Format a USD value with B/M suffix.
 
@@ -79,7 +82,7 @@ def _render_metrics(state: SharedState, db_reader: DashboardReader) -> None:
 
     cols = st.columns(5)
     cols[0].metric("Total OI", _format_usd(total_oi))
-    cols[1].metric("24h Volume", _format_usd(total_vol))
+    cols[1].metric(_COL_24H_VOL, _format_usd(total_vol))
     cols[2].metric("Coins Tracked", len(snapshots))
     cols[3].metric("Alerts (1h)", total_alerts_1h)
     cols[4].metric("Whales Tracked", tracked)
@@ -102,14 +105,14 @@ def _render_market_table(state: SharedState) -> None:
             "OI (USD)": s.open_interest_usd,
             "Funding Rate": s.funding_rate,
             "Premium": s.premium,
-            "24h Volume": s.day_volume_usd,
+            _COL_24H_VOL: s.day_volume_usd,
         }
         for s in sorted(
             snapshots.values(),
             key=lambda x: x.open_interest_usd,
             reverse=True,
         )
-        if s.mark_price > 0
+        if s.mark_price > 0 and (s.open_interest_usd > 0 or s.day_volume_usd > 0)
     ]
 
     if not rows:
@@ -127,7 +130,7 @@ def _render_market_table(state: SharedState) -> None:
             "OI (USD)": st.column_config.NumberColumn(format="$%,.0f"),
             "Funding Rate": st.column_config.NumberColumn(format="%.4f%%"),
             "Premium": st.column_config.NumberColumn(format="%.4f%%"),
-            "24h Volume": st.column_config.NumberColumn(format="$%,.0f"),
+            _COL_24H_VOL: st.column_config.NumberColumn(format="$%,.0f"),
         },
         hide_index=True,
     )

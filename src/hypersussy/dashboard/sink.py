@@ -9,8 +9,7 @@ from hypersussy.models import Alert
 class StreamlitSink:
     """Alert sink that pushes alerts into SharedState for Streamlit consumption.
 
-    Implements the AlertSink protocol. Replaces TuiSink in the Streamlit
-    execution path.
+    Implements the AlertSink protocol.
 
     Args:
         state: The shared state object to push alerts into.

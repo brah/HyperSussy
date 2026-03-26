@@ -46,14 +46,20 @@ class TestComputeImpactRatio:
     """Tests for _compute_impact_ratio."""
 
     def test_normal_ratio(self) -> None:
-        """Impact ratio is position / total depth."""
+        """Impact ratio is position / same-side executable depth."""
         book = _book("BTC", 10.0, 10.0)
-        assert _compute_impact_ratio(book, 5.0) == pytest.approx(0.25)
+        assert _compute_impact_ratio(book, 5.0) == pytest.approx(0.5)
 
     def test_empty_book(self) -> None:
         """Empty book returns inf."""
         book = L2Book(coin="BTC", timestamp_ms=1000, bids=(), asks=())
         assert _compute_impact_ratio(book, 1.0) == float("inf")
+
+    def test_uses_executable_side_only(self) -> None:
+        """Longs should use bids, shorts should use asks."""
+        book = _book("BTC", bid_depth=2.0, ask_depth=20.0)
+        assert _compute_impact_ratio(book, 4.0) == pytest.approx(2.0)
+        assert _compute_impact_ratio(book, -4.0) == pytest.approx(0.2)
 
 
 class TestLiquidationRiskEngine:

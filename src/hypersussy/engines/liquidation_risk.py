@@ -117,7 +117,7 @@ class LiquidationRiskEngine:
                     continue
 
                 impact_ratio = await self._estimate_impact(
-                    pos.coin, abs(pos.size), book_cache
+                    pos.coin, pos.size, book_cache
                 )
 
                 alerts.append(
@@ -172,21 +172,20 @@ class LiquidationRiskEngine:
 
 
 def _compute_impact_ratio(book: L2Book, position_size: float) -> float:
-    """Compute ratio of position size to nearby book depth.
+    """Compute ratio of position size to executable book depth.
 
     Args:
         book: Order book snapshot.
-        position_size: Absolute position size to liquidate.
+        position_size: Signed position size to liquidate.
 
     Returns:
-        Impact ratio (position / book_depth).
+        Impact ratio (abs(position) / same-side book_depth).
     """
-    total_depth = sum(size for _, size in book.bids) + sum(
-        size for _, size in book.asks
-    )
-    if total_depth == 0:
+    levels = book.bids if position_size > 0 else book.asks
+    total_depth = sum(size for _, size in levels)
+    if total_depth == 0 or position_size == 0:
         return float("inf")
-    return position_size / total_depth
+    return abs(position_size) / total_depth
 
 
 def _classify_severity(distance: float, impact_ratio: float) -> str:

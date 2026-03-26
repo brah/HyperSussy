@@ -29,6 +29,7 @@ def _make_alert(
     alert_id: str = "test-1",
     coin: str = "BTC",
     ts: int = 5000,
+    metadata: dict[str, float | str | list[str]] | None = None,
 ) -> Alert:
     """Helper to create a test alert.
 
@@ -48,6 +49,7 @@ def _make_alert(
         title="Test Alert",
         description="Test",
         timestamp_ms=ts,
+        metadata=metadata or {},
     )
 
 
@@ -94,6 +96,25 @@ class TestAlertManager:
         manager = AlertManager(storage=storage, sinks=[sink], settings=settings)
         await manager.process_alert(_make_alert("a1", coin="BTC", ts=5000))
         result = await manager.process_alert(_make_alert("a2", coin="ETH", ts=6000))
+        assert result is True
+        assert len(sink.alerts) == 2
+
+    @pytest.mark.asyncio
+    async def test_same_coin_different_addresses_not_deduped(
+        self,
+        storage: SqliteStorage,
+        settings: HyperSussySettings,
+    ) -> None:
+        """Address-scoped alerts should not suppress different wallets."""
+        settings.alert_cooldown_s = 3600
+        sink = _MockSink()
+        manager = AlertManager(storage=storage, sinks=[sink], settings=settings)
+        await manager.process_alert(
+            _make_alert("a1", ts=5000, metadata={"address": "0xaaa"})
+        )
+        result = await manager.process_alert(
+            _make_alert("a2", ts=6000, metadata={"address": "0xbbb"})
+        )
         assert result is True
         assert len(sink.alerts) == 2
 

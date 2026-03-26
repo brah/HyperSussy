@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from hypersussy.models import Alert, AssetSnapshot
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class LiveSnapshot:
     """Condensed, mutable market snapshot held in SharedState.
 

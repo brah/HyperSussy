@@ -41,9 +41,27 @@ class DashboardReader:
             A writable sqlite3 connection with busy_timeout set.
         """
         if self._write_conn is None:
-            self._write_conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            self._write_conn = sqlite3.connect(
+                self._db_path,
+                check_same_thread=False,
+                isolation_level=None,
+            )
             self._write_conn.execute("PRAGMA busy_timeout=5000")
         return self._write_conn
+
+    @staticmethod
+    def _hours_to_since_ms(hours: int) -> int:
+        """Convert a lookback window in hours to a Unix-ms lower bound."""
+        return int((time.time() - hours * 3600) * 1000)
+
+    def _fetch_dicts(
+        self,
+        query: str,
+        params: tuple[object, ...] = (),
+    ) -> list[dict[str, object]]:
+        """Execute a query and return rows as plain dicts."""
+        cur = self._conn.execute(query, params)
+        return [dict(row) for row in cur.fetchall()]
 
     # -- Mutations --
 
@@ -92,7 +110,7 @@ class DashboardReader:
             List of alert dicts.  Includes an ``address`` key extracted
             from metadata via ``json_extract`` at the SQL level.
         """
-        cur = self._conn.execute(
+        return self._fetch_dicts(
             """
             SELECT alert_id, alert_type, severity, coin,
                    title, description, timestamp_ms, exchange,
@@ -104,7 +122,6 @@ class DashboardReader:
             """,
             (since_ms, limit),
         )
-        return [dict(row) for row in cur.fetchall()]
 
     # -- Snapshots --
 
@@ -123,8 +140,8 @@ class DashboardReader:
             List of dicts with keys: timestamp_ms, open_interest_usd,
             mark_price, funding_rate.
         """
-        since_ms = int((time.time() - hours * 3600) * 1000)
-        cur = self._conn.execute(
+        since_ms = self._hours_to_since_ms(hours)
+        return self._fetch_dicts(
             """
             SELECT timestamp_ms, open_interest_usd, mark_price, funding_rate
             FROM asset_snapshots
@@ -133,7 +150,6 @@ class DashboardReader:
             """,
             (coin, since_ms),
         )
-        return [dict(row) for row in cur.fetchall()]
 
     def get_funding_history(
         self,
@@ -150,8 +166,8 @@ class DashboardReader:
             List of dicts with keys: timestamp_ms, funding_rate, premium,
             mark_price, oracle_price.
         """
-        since_ms = int((time.time() - hours * 3600) * 1000)
-        cur = self._conn.execute(
+        since_ms = self._hours_to_since_ms(hours)
+        return self._fetch_dicts(
             """
             SELECT timestamp_ms, funding_rate, premium, mark_price, oracle_price
             FROM asset_snapshots
@@ -160,7 +176,6 @@ class DashboardReader:
             """,
             (coin, since_ms),
         )
-        return [dict(row) for row in cur.fetchall()]
 
     # -- Trades --
 
@@ -179,8 +194,8 @@ class DashboardReader:
             List of dicts with keys: address, volume_usd, ordered by
             volume_usd descending.
         """
-        since_ms = int((time.time() - hours * 3600) * 1000)
-        cur = self._conn.execute(
+        since_ms = self._hours_to_since_ms(hours)
+        return self._fetch_dicts(
             """
             SELECT address, SUM(volume_usd) AS volume_usd
             FROM (
@@ -203,7 +218,6 @@ class DashboardReader:
             """,
             (coin, since_ms, coin, since_ms),
         )
-        return [dict(row) for row in cur.fetchall()]
 
     def get_trades_by_address(
         self,
@@ -219,8 +233,8 @@ class DashboardReader:
         Returns:
             List of trade dicts ordered newest-first, up to 200 rows.
         """
-        since_ms = int((time.time() - hours * 3600) * 1000)
-        cur = self._conn.execute(
+        since_ms = self._hours_to_since_ms(hours)
+        return self._fetch_dicts(
             """
             SELECT tid, coin, price, size, side, timestamp_ms,
                    buyer, seller
@@ -231,7 +245,6 @@ class DashboardReader:
             """,
             (address, address, since_ms),
         )
-        return [dict(row) for row in cur.fetchall()]
 
     # -- Tracked addresses --
 
@@ -248,7 +261,7 @@ class DashboardReader:
             List of dicts with keys: address, label, total_volume_usd,
             last_active_ms, source.
         """
-        cur = self._conn.execute(
+        return self._fetch_dicts(
             """
             SELECT address, label, total_volume_usd, last_active_ms, source
             FROM tracked_addresses
@@ -257,7 +270,6 @@ class DashboardReader:
             """,
             (limit,),
         )
-        return [dict(row) for row in cur.fetchall()]
 
     def get_tracked_address_count(self) -> int:
         """Return the total number of tracked whale addresses.
@@ -281,7 +293,7 @@ class DashboardReader:
             List of dicts with keys: coin, size, notional_usd,
             unrealized_pnl, liquidation_price, mark_price, timestamp_ms.
         """
-        cur = self._conn.execute(
+        return self._fetch_dicts(
             """
             SELECT p.coin, p.size, p.notional_usd, p.unrealized_pnl,
                    p.liquidation_price, p.mark_price, p.timestamp_ms
@@ -297,7 +309,6 @@ class DashboardReader:
             """,
             (address, address),
         )
-        return [dict(row) for row in cur.fetchall()]
 
     # -- Alert aggregations --
 
@@ -342,7 +353,7 @@ class DashboardReader:
             List of dicts with keys: alert_type, severity, coin, title,
             timestamp_ms; ordered newest-first.
         """
-        cur = self._conn.execute(
+        return self._fetch_dicts(
             """
             SELECT alert_type, severity, coin, title, timestamp_ms
             FROM alerts
@@ -352,7 +363,6 @@ class DashboardReader:
             """,
             (address, limit),
         )
-        return [dict(row) for row in cur.fetchall()]
 
     def get_latest_oi_per_coin(self) -> dict[str, float]:
         """Latest open interest (base units) per coin from asset_snapshots.

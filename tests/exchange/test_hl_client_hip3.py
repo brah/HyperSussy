@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -241,6 +241,9 @@ class TestHip3ConfigDefaults:
 
     def test_reader_default_params(self) -> None:
         """Reader defaults match config defaults."""
-        reader = HyperLiquidReader()
+        with patch("hypersussy.exchange.hyperliquid.client.Info") as info_cls:
+            reader = HyperLiquidReader()
+
+        info_cls.assert_not_called()
         assert reader._include_hip3 is True
         assert reader._hip3_dex_filter == set()

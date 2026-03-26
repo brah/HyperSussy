@@ -14,7 +14,6 @@ import sqlite3
 import threading
 
 import requests
-import structlog
 from hyperliquid.utils.error import ClientError, ServerError
 
 from hypersussy.config import HyperSussySettings
@@ -127,7 +126,7 @@ class BackgroundRunner:
         """Wire and run all components inside the background event loop."""
         from hypersussy.alerts.manager import AlertManager
         from hypersussy.alerts.sinks.log_sink import LogSink
-        from hypersussy.cli import _build_components
+        from hypersussy.cli import _build_components, _configure_logging
         from hypersussy.dashboard.sink import StreamlitSink
         from hypersussy.orchestrator import Orchestrator
 
@@ -136,7 +135,7 @@ class BackgroundRunner:
             os.makedirs(db_dir, exist_ok=True)
 
         log_file = os.path.join(db_dir or "data", "hypersussy-dashboard.log")
-        _configure_structlog(self._settings.log_level, log_file)
+        _configure_logging(self._settings.log_level, log_file)
 
         logger.debug("BackgroundRunner: building components")
         reader, stream, storage, engines, _ = _build_components(self._settings)
@@ -166,29 +165,3 @@ class BackgroundRunner:
             await orchestrator.run()
         finally:
             await storage.close()
-
-
-def _configure_structlog(level: str, log_file: str) -> None:
-    """Configure structlog to write JSON to a log file.
-
-    Args:
-        level: Log level string (e.g. "INFO").
-        log_file: Path to the output log file.
-    """
-    import logging as _logging
-
-    file_handle = open(log_file, "a")  # noqa: SIM115
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer(),
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            _logging.getLevelName(level)
-        ),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=file_handle),
-        cache_logger_on_first_use=True,
-    )

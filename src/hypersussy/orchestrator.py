@@ -29,10 +29,12 @@ from hypersussy.storage.base import StorageProtocol
 logger = logging.getLogger(__name__)
 
 # HyperLiquid enforces max 10 WS connections per IP.
-# 1 connection is reserved for the position WS stream.
-_MAX_TRADE_WS_CONNECTIONS = 8
+# 1 connection reserved for position WS, 1 for asset ctx WS.
+_MAX_TRADE_WS_CONNECTIONS = 7
 # HL position WS: subscribe up to this many users per connection.
 _MAX_POSITION_WS_USERS = 1000
+# Periodic reconciliation cadence for dynamic market stream subscriptions.
+_STREAM_RECONCILE_S = 1.0
 
 # Exceptions from REST calls, storage, and engine logic that the
 # orchestrator must survive without crashing.
@@ -78,6 +80,7 @@ class Orchestrator:
         self._settings = settings
         self._data_bus = data_bus
         self._coins: list[str] = []
+        self._native_coins: list[str] = []
         self._running = False
 
     async def run(self) -> None:
@@ -88,37 +91,30 @@ class Orchestrator:
         self._running = True
         logger.info("Orchestrator starting...")
 
-        # Fetch initial asset list
-        logger.debug("Orchestrator: fetching initial coin list...")
         await self._refresh_coins()
-        logger.debug("Orchestrator: coin list ready — %d coins", len(self._coins))
+        trade_batches = self._trade_batches(self._coins)
 
         tasks = [
             asyncio.create_task(self._poll_meta_loop(), name="poll_meta"),
             asyncio.create_task(self._engine_tick_loop(), name="engine_tick"),
             asyncio.create_task(self._refresh_coins_loop(), name="refresh_coins"),
             asyncio.create_task(self._position_stream_loop(), name="position_ws"),
+            asyncio.create_task(
+                self._trade_stream_supervisor_loop(),
+                name="trade_ws_supervisor",
+            ),
+            asyncio.create_task(
+                self._asset_ctx_stream_supervisor_loop(),
+                name="asset_ctx_supervisor",
+            ),
         ]
 
-        # Multiplex trade streams across a limited number of WS connections
-        n_conns = min(_MAX_TRADE_WS_CONNECTIONS, len(self._coins))
-        if n_conns > 0:
-            batch_size = math.ceil(len(self._coins) / n_conns)
-            for i in range(n_conns):
-                batch = self._coins[i * batch_size : (i + 1) * batch_size]
-                if not batch:
-                    break
-                tasks.append(
-                    asyncio.create_task(
-                        self._trade_stream_batch(batch),
-                        name=f"trades_ws_{i}",
-                    )
-                )
-
         logger.info(
-            "Orchestrator running with %d coins across %d WS connections, %d engines",
+            "Orchestrator running with %d coins (%d native via WS)"
+            " across %d WS connections, %d engines",
             len(self._coins),
-            n_conns,
+            len(self._native_coins),
+            len(trade_batches),
             len(self._engines),
         )
 
@@ -126,6 +122,7 @@ class Orchestrator:
             await asyncio.gather(*tasks)
         except asyncio.CancelledError:
             logger.info("Orchestrator shutting down...")
+            raise
         finally:
             self._running = False
 
@@ -136,13 +133,22 @@ class Orchestrator:
     async def _refresh_coins(self) -> None:
         """Fetch the current list of perpetual assets."""
         snapshots = await self._reader.get_asset_snapshots()
+        all_coins = [s.coin for s in snapshots]
         if self._settings.watched_coins:
-            self._coins = [
-                s.coin for s in snapshots if s.coin in self._settings.watched_coins
-            ]
-        else:
-            self._coins = [s.coin for s in snapshots]
-        logger.info("Tracking %d coins", len(self._coins))
+            all_coins = [c for c in all_coins if c in self._settings.watched_coins]
+
+        native_coins = [c for c in all_coins if ":" not in c]
+        changed = all_coins != self._coins or native_coins != self._native_coins
+        self._coins = all_coins
+        self._native_coins = native_coins
+        logger.info(
+            "Tracking %d coins (%d native, %d HIP-3)",
+            len(self._coins),
+            len(self._native_coins),
+            len(self._coins) - len(self._native_coins),
+        )
+        if changed:
+            logger.info("Coin universe changed; live stream subscriptions will refresh")
 
     async def _refresh_coins_loop(self) -> None:
         """Periodically refresh the asset list for new listings."""
@@ -154,13 +160,20 @@ class Orchestrator:
                 logger.exception("Failed to refresh coin list")
 
     async def _poll_meta_loop(self) -> None:
-        """Poll metaAndAssetCtxs and dispatch to engines."""
+        """Poll metaAndAssetCtxs for bulk storage and HIP-3 engine dispatch.
+
+        Native coin engine dispatch is handled in real time by
+        ``_asset_ctx_stream_loop``; this loop dispatches only HIP-3
+        coins (identified by the ``dex:COIN`` naming convention) and
+        stores all snapshots to SQLite at each poll interval.
+        """
         while self._running:
             try:
                 snapshots = await self._reader.get_asset_snapshots()
                 await self._storage.insert_asset_snapshots(snapshots)
-
                 for snapshot in snapshots:
+                    if ":" not in snapshot.coin:
+                        continue  # native coins dispatched via WS stream
                     if self._data_bus is not None:
                         self._data_bus.push_snapshot(snapshot)
                     for engine in self._engines:
@@ -171,6 +184,32 @@ class Orchestrator:
                 logger.exception("Error in meta polling loop")
 
             await asyncio.sleep(self._settings.meta_poll_interval_s)
+
+    async def _asset_ctx_stream_loop(self, coins: list[str]) -> None:
+        """Stream activeAssetCtx updates for native perpetual coins.
+
+        Dispatches each snapshot to engines and the data bus in real time.
+        Storage is handled separately by ``_poll_meta_loop``.
+
+        Args:
+            coins: Native perpetual asset names (no ``:`` in name).
+        """
+        logger.info("Starting asset ctx WS stream for %d native coins", len(coins))
+        async for snapshot in self._stream.stream_asset_ctxs(coins):
+            if not self._running:
+                break
+            if self._data_bus is not None:
+                self._data_bus.push_snapshot(snapshot)
+            for engine in self._engines:
+                try:
+                    alerts = await engine.on_asset_update(snapshot)
+                    for alert in alerts:
+                        await self._alert_manager.process_alert(alert)
+                except _RECOVERABLE:
+                    logger.exception(
+                        "Error in on_asset_update (asset ctx stream) for %s",
+                        snapshot.coin,
+                    )
 
     async def _engine_tick_loop(self) -> None:
         """Periodically call tick() on all engines."""
@@ -201,18 +240,118 @@ class Orchestrator:
                 break
             await self._dispatch_trade(trade)
 
+    @staticmethod
+    async def _cancel_tasks(tasks: list[asyncio.Task[None]]) -> None:
+        """Cancel and await a set of background tasks."""
+        if not tasks:
+            return
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    @staticmethod
+    def _log_failed_stream_tasks(
+        tasks: list[asyncio.Task[None]],
+        stream_name: str,
+    ) -> bool:
+        """Log failures from completed stream tasks and signal a restart."""
+        needs_restart = False
+        for task in tasks:
+            if not task.done():
+                continue
+            needs_restart = True
+            if task.cancelled():
+                continue
+            exc = task.exception()
+            if exc is not None:
+                logger.error("%s task crashed; restarting", stream_name, exc_info=exc)
+        return needs_restart
+
+    @staticmethod
+    def _trade_batches(coins: Sequence[str]) -> list[list[str]]:
+        """Split tracked coins across the allowed number of trade WS connections."""
+        if not coins:
+            return []
+        n_conns = min(_MAX_TRADE_WS_CONNECTIONS, len(coins))
+        batch_size = math.ceil(len(coins) / n_conns)
+        return [list(coins[i : i + batch_size]) for i in range(0, len(coins), batch_size)]
+
+    async def _trade_stream_supervisor_loop(self) -> None:
+        """Keep trade stream subscriptions aligned with the current coin universe."""
+        active_batches: tuple[tuple[str, ...], ...] = ()
+        tasks: list[asyncio.Task[None]] = []
+        try:
+            while self._running:
+                if self._log_failed_stream_tasks(tasks, "trade stream"):
+                    await self._cancel_tasks(tasks)
+                    tasks = []
+                    active_batches = ()
+
+                desired_batches = tuple(
+                    tuple(batch) for batch in self._trade_batches(self._coins)
+                )
+                if desired_batches != active_batches:
+                    await self._cancel_tasks(tasks)
+                    tasks = [
+                        asyncio.create_task(
+                            self._trade_stream_batch(list(batch)),
+                            name=f"trades_ws_{idx}",
+                        )
+                        for idx, batch in enumerate(desired_batches)
+                    ]
+                    active_batches = desired_batches
+                    logger.info(
+                        "Trade WS subscriptions refreshed across %d connection(s)",
+                        len(desired_batches),
+                    )
+                await asyncio.sleep(_STREAM_RECONCILE_S)
+        finally:
+            await self._cancel_tasks(tasks)
+
+    async def _asset_ctx_stream_supervisor_loop(self) -> None:
+        """Keep native asset-context streaming aligned with native coins."""
+        active_coins: tuple[str, ...] = ()
+        task: asyncio.Task[None] | None = None
+        try:
+            while self._running:
+                task_list = [task] if task is not None else []
+                if self._log_failed_stream_tasks(task_list, "asset ctx stream"):
+                    await self._cancel_tasks(task_list)
+                    task = None
+                    active_coins = ()
+
+                desired_coins = tuple(self._native_coins)
+                if desired_coins != active_coins:
+                    await self._cancel_tasks(task_list)
+                    task = (
+                        asyncio.create_task(
+                            self._asset_ctx_stream_loop(list(desired_coins)),
+                            name="asset_ctx_ws",
+                        )
+                        if desired_coins
+                        else None
+                    )
+                    active_coins = desired_coins
+                    logger.info(
+                        "Asset ctx WS subscriptions refreshed for %d native coin(s)",
+                        len(desired_coins),
+                    )
+                await asyncio.sleep(_STREAM_RECONCILE_S)
+        finally:
+            await self._cancel_tasks([task] if task is not None else [])
+
     async def _position_stream_loop(self) -> None:
         """Stream real-time position updates for all tracked whale addresses.
 
         Subscribes to ``clearinghouseState`` for every tracked whale on a
         single WS connection, yielding parsed positions to
-        ``WhaleTrackerEngine.on_position_update``.  Restarts from storage
+        ``WhaleTrackerEngine.on_position_update``. Restarts from storage
         each time the connection is (re-)established so that newly
         discovered whales are picked up automatically.
         """
         whale_engines = [e for e in self._engines if isinstance(e, WhaleTrackerEngine)]
         if not whale_engines:
-            logger.debug("_position_stream_loop: no whale engines — exiting")
+            logger.debug("_position_stream_loop: no whale engines exiting")
             return
         logger.debug("_position_stream_loop: %d whale engine(s)", len(whale_engines))
         while self._running:
@@ -225,10 +364,9 @@ class Orchestrator:
             users = tracked[:_MAX_POSITION_WS_USERS]
             logger.info("Starting position WS stream for %d addresses", len(users))
             try:
-                async for (
-                    address,
-                    positions,
-                ) in self._stream.stream_clearinghouse_states(users):
+                async for address, positions in self._stream.stream_clearinghouse_states(
+                    users
+                ):
                     if not self._running:
                         break
                     now_ms = int(time.time() * 1000)

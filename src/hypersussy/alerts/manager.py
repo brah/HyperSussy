@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from collections import deque
 from collections.abc import Sequence
@@ -51,8 +52,7 @@ class AlertManager:
         await self._storage.insert_alert(alert)
         self._dispatch_times.append(time.monotonic())
 
-        for sink in self._sinks:
-            await sink.send(alert)
+        await asyncio.gather(*(sink.send(alert) for sink in self._sinks))
 
         return True
 
@@ -70,7 +70,18 @@ class AlertManager:
         recent = await self._storage.get_recent_alerts(
             alert.alert_type, alert.coin, since_ms
         )
-        return len(recent) > 0
+        fingerprint = self._dedupe_fingerprint(alert)
+        return any(self._dedupe_fingerprint(existing) == fingerprint for existing in recent)
+
+    @staticmethod
+    def _dedupe_fingerprint(alert: Alert) -> tuple[str, ...]:
+        """Build a dedupe key for semantically identical alerts."""
+        fingerprint = [alert.alert_type, alert.coin]
+        for key in ("address", "twap_id", "direction"):
+            value = alert.metadata.get(key)
+            if value is not None:
+                fingerprint.append(f"{key}={value}")
+        return tuple(fingerprint)
 
     def _is_throttled(self) -> bool:
         """Check if global alert rate limit is exceeded.
@@ -78,8 +89,8 @@ class AlertManager:
         Returns:
             True if too many alerts have been dispatched recently.
         """
-        now = time.monotonic()
-        cutoff = now - 60.0
-        # Count dispatches in the last minute
-        recent_count = sum(1 for t in self._dispatch_times if t >= cutoff)
-        return recent_count >= self._settings.alert_max_per_minute
+        cutoff = time.monotonic() - 60.0
+        # Prune expired entries from the left (deque is chronological)
+        while self._dispatch_times and self._dispatch_times[0] < cutoff:
+            self._dispatch_times.popleft()
+        return len(self._dispatch_times) >= self._settings.alert_max_per_minute

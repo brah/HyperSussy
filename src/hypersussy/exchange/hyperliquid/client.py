@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from functools import partial
 from typing import Any
 
@@ -57,7 +58,8 @@ class HyperLiquidReader:
         include_hip3: bool = True,
         hip3_dex_filter: list[str] | None = None,
     ) -> None:
-        self._info = Info(base_url=base_url, skip_ws=True)
+        self._base_url = base_url
+        self._info: Info | Any | None = None
         self._limiter = rate_limiter or WeightRateLimiter()
         self._include_hip3 = include_hip3
         self._hip3_dex_filter: set[str] = set(hip3_dex_filter or [])
@@ -67,7 +69,14 @@ class HyperLiquidReader:
         # simultaneous bursts that the API rejects regardless of weight.
         self._concurrency = asyncio.Semaphore(4)
 
-    async def _run_sync(self, func: partial[Any], weight: int) -> Any:
+    @property
+    def _info_client(self) -> Info | Any:
+        """Return the lazily initialized HL SDK client."""
+        if self._info is None:
+            self._info = Info(base_url=self._base_url, skip_ws=True)
+        return self._info
+
+    async def _run_sync(self, func: Callable[[], Any], weight: int) -> Any:
         """Run a synchronous SDK call in an executor with rate limiting.
 
         Acquires both the concurrency semaphore (max 4 in-flight) and the
@@ -96,7 +105,7 @@ class HyperLiquidReader:
         Returns:
             List of dex name strings (e.g. ["xyz", "flx", "km"]).
         """
-        raw = await self._run_sync(partial(self._info.perp_dexs), weight=2)
+        raw = await self._run_sync(partial(self._info_client.perp_dexs), weight=2)
         names: list[str] = []
         for entry in raw:
             if entry is None:
@@ -125,16 +134,8 @@ class HyperLiquidReader:
             await self.refresh_hip3_dexes()
 
         dexes = [""] + (self._hip3_dex_names if self._include_hip3 else [])
-        logger.debug("get_asset_snapshots: fetching %d dex(es)", len(dexes))
         snapshots: list[AssetSnapshot] = []
-        for i, dex in enumerate(dexes):
-            label = dex or "native"
-            logger.debug(
-                "get_asset_snapshots: fetching dex %d/%d (%s)",
-                i + 1,
-                len(dexes),
-                label,
-            )
+        for dex in dexes:
             try:
                 snapshots.extend(await self._fetch_dex_snapshots(dex))
             except (
@@ -142,13 +143,8 @@ class HyperLiquidReader:
                 ServerError,
                 requests.RequestException,
                 OSError,
-            ):
-                logger.exception("Failed to fetch dex snapshots for %r", dex)
-        logger.debug(
-            "get_asset_snapshots: done — %d snapshots across %d dex(es)",
-            len(snapshots),
-            len(dexes),
-        )
+            ) as exc:
+                logger.warning("Failed to fetch dex snapshots for %r: %s", dex, exc)
         return snapshots
 
     async def _fetch_dex_snapshots(self, dex: str) -> list[AssetSnapshot]:
@@ -164,7 +160,7 @@ class HyperLiquidReader:
         if dex:
             payload["dex"] = dex
         raw = await self._run_sync(
-            partial(self._info.post, _INFO_PATH, payload), weight=2
+            partial(self._info_client.post, _INFO_PATH, payload), weight=2
         )
         return parse_meta_and_asset_ctxs(raw)
 
@@ -217,7 +213,7 @@ class HyperLiquidReader:
             Positions on this dex.
         """
         raw = await self._run_sync(
-            partial(self._info.user_state, address, dex=dex), weight=2
+            partial(self._info_client.user_state, address, dex=dex), weight=2
         )
         return parse_user_state(raw, address)
 
@@ -240,7 +236,7 @@ class HyperLiquidReader:
         if start_ms is not None:
             raw = await self._run_sync(
                 partial(
-                    self._info.user_fills_by_time,
+                    self._info_client.user_fills_by_time,
                     address,
                     start_ms,
                     end_ms,
@@ -249,7 +245,7 @@ class HyperLiquidReader:
             )
         else:
             raw = await self._run_sync(
-                partial(self._info.user_fills, address), weight=20
+                partial(self._info_client.user_fills, address), weight=20
             )
         return parse_user_fills(raw, address)
 
@@ -266,7 +262,7 @@ class HyperLiquidReader:
             L2 book with bids and asks.
         """
         raw = await self._run_sync(
-            partial(self._info.post, _INFO_PATH, {"type": "l2Book", "coin": coin}),
+            partial(self._info_client.post, _INFO_PATH, {"type": "l2Book", "coin": coin}),
             weight=2,
         )
         return parse_l2_snapshot(raw)
@@ -291,7 +287,7 @@ class HyperLiquidReader:
         """
         raw = await self._run_sync(
             partial(
-                self._info.candles_snapshot,
+                self._info_client.candles_snapshot,
                 coin,
                 interval,
                 start_ms,
@@ -315,7 +311,7 @@ class HyperLiquidReader:
             a ``fill`` sub-dict and a ``twapId`` field.
         """
         raw = await self._run_sync(
-            partial(self._info.user_twap_slice_fills, address), weight=2
+            partial(self._info_client.user_twap_slice_fills, address), weight=2
         )
         return list(raw) if raw else []
 
@@ -346,6 +342,6 @@ class HyperLiquidReader:
         if end_ms is not None:
             payload["endTime"] = end_ms
         raw = await self._run_sync(
-            partial(self._info.post, _INFO_PATH, payload), weight=20
+            partial(self._info_client.post, _INFO_PATH, payload), weight=20
         )
         return parse_funding_history(raw, coin)

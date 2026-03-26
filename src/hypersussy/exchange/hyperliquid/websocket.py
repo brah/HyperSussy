@@ -18,11 +18,13 @@ import websockets
 from websockets.asyncio.client import ClientConnection
 
 from hypersussy.exchange.hyperliquid.parsers import (
+    parse_l2_snapshot,
     parse_user_state,
+    parse_ws_active_asset_ctx,
     parse_ws_all_mids,
     parse_ws_trades,
 )
-from hypersussy.models import L2Book, Position, Trade
+from hypersussy.models import AssetSnapshot, L2Book, Position, Trade
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +206,49 @@ class HyperLiquidStream:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _MAX_RECONNECT_DELAY_S)
 
+    async def _iter_multiplexed_messages(
+        self,
+        subscriptions: list[dict[str, Any]],
+        expected_channel: str,
+        log_label: str,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Yield messages for multiple subscriptions over one WS connection."""
+        delay = _RECONNECT_DELAY_S
+        while True:
+            try:
+                ws = await self._connect()
+                ping_task = asyncio.create_task(self._ping_loop(ws))
+                try:
+                    for subscription in subscriptions:
+                        await self._subscribe(ws, subscription)
+                    delay = _RECONNECT_DELAY_S
+                    async for raw_msg in ws:
+                        data = self._parse_ws_message(raw_msg)
+                        if data is None:
+                            continue
+                        channel = data.get("channel")
+                        if channel in ("pong", "subscriptionResponse"):
+                            continue
+                        if channel == expected_channel:
+                            yield data
+                finally:
+                    ping_task.cancel()
+                    await ws.close()
+            except (
+                websockets.ConnectionClosed,
+                websockets.InvalidURI,
+                OSError,
+            ) as exc:
+                logger.warning(
+                    "%s disconnected (%d subs): %s. Reconnecting in %ds...",
+                    log_label,
+                    len(subscriptions),
+                    exc,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, _MAX_RECONNECT_DELAY_S)
+
     async def stream_trades(self, coin: str) -> AsyncIterator[Trade]:
         """Yield trades in real time for a coin.
 
@@ -231,41 +276,14 @@ class HyperLiquidStream:
         Yields:
             Each trade as it occurs, with buyer/seller addresses.
         """
-        delay = _RECONNECT_DELAY_S
-        while True:
-            try:
-                ws = await self._connect()
-                ping_task = asyncio.create_task(self._ping_loop(ws))
-                try:
-                    for coin in coins:
-                        await self._subscribe(ws, {"type": "trades", "coin": coin})
-                    delay = _RECONNECT_DELAY_S
-                    async for raw_msg in ws:
-                        data = self._parse_ws_message(raw_msg)
-                        if data is None:
-                            continue
-                        channel = data.get("channel")
-                        if channel in ("pong", "subscriptionResponse"):
-                            continue
-                        if channel == "trades":
-                            for trade in parse_ws_trades(data):
-                                yield trade
-                finally:
-                    ping_task.cancel()
-                    await ws.close()
-            except (
-                websockets.ConnectionClosed,
-                websockets.InvalidURI,
-                OSError,
-            ) as exc:
-                logger.warning(
-                    "WebSocket disconnected (%d coins): %s. Reconnecting in %ds...",
-                    len(coins),
-                    exc,
-                    delay,
-                )
-                await asyncio.sleep(delay)
-                delay = min(delay * 2, _MAX_RECONNECT_DELAY_S)
+        subscriptions = [{"type": "trades", "coin": coin} for coin in coins]
+        async for data in self._iter_multiplexed_messages(
+            subscriptions,
+            expected_channel="trades",
+            log_label="Trade WS",
+        ):
+            for trade in parse_ws_trades(data):
+                yield trade
 
     async def stream_all_mids(
         self,
@@ -360,6 +378,32 @@ class HyperLiquidStream:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _MAX_RECONNECT_DELAY_S)
 
+    async def stream_asset_ctxs(
+        self, coins: list[str]
+    ) -> AsyncIterator[AssetSnapshot]:
+        """Yield real-time asset context updates for native perpetual coins.
+
+        Subscribes to ``activeAssetCtx`` for each coin on a single WS
+        connection, following the ``stream_trades_multi`` multiplexing
+        pattern.  HL sends an initial snapshot per coin on subscribe
+        (``isSnapshot: true``) — yielded identically to live updates.
+
+        Args:
+            coins: Native perpetual asset names to subscribe to.
+
+        Yields:
+            AssetSnapshot on each push update (including initial snapshots).
+        """
+        subscriptions = [{"type": "activeAssetCtx", "coin": coin} for coin in coins]
+        async for data in self._iter_multiplexed_messages(
+            subscriptions,
+            expected_channel="activeAssetCtx",
+            log_label="Asset ctx WS",
+        ):
+            snapshot = parse_ws_active_asset_ctx(data)
+            if snapshot is not None:
+                yield snapshot
+
     async def stream_l2_book(self, coin: str) -> AsyncIterator[L2Book]:
         """Yield L2 book updates for a coin.
 
@@ -372,14 +416,7 @@ class HyperLiquidStream:
         sub = {"type": "l2Book", "coin": coin}
         async for msg in self._iter_messages(sub):
             data = msg.get("data", {})
-            levels = data.get("levels", [[], []])
-            bids = tuple((float(lvl["px"]), float(lvl["sz"])) for lvl in levels[0])
-            asks = tuple((float(lvl["px"]), float(lvl["sz"])) for lvl in levels[1])
-            yield L2Book(
-                coin=data.get("coin", coin),
-                timestamp_ms=data.get(
-                    "time", int(asyncio.get_event_loop().time() * 1000)
-                ),
-                bids=bids,
-                asks=asks,
-            )
+            book_data = dict(data)
+            book_data.setdefault("coin", coin)
+            book_data.setdefault("time", int(time.time() * 1000))
+            yield parse_l2_snapshot(book_data)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import asyncio
 import logging
 import os
@@ -34,6 +35,8 @@ def _configure_logging(level: str, log_file: str | None = None) -> None:
     # Handle must persist for structlog factory lifetime; context
     # manager is not appropriate here.
     file_handle = open(log_file, "a") if log_file else None  # noqa: SIM115
+    if file_handle is not None:
+        atexit.register(file_handle.close)
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,

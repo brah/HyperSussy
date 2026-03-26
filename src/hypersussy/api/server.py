@@ -16,13 +16,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from hypersussy.api.candle_service import CandleService
 from hypersussy.api.routes import alerts, candles, health, snapshots, trades, whales
 from hypersussy.api.ws import router as ws_router
-from hypersussy.config import HyperSussySettings
 from hypersussy.app.actions import DashboardActions
 from hypersussy.app.db_reader import DashboardReader
 from hypersussy.app.runner import BackgroundRunner
 from hypersussy.app.state import SharedState
+from hypersussy.config import HyperSussySettings
 
 
 @asynccontextmanager
@@ -40,15 +41,24 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
 
     reader = DashboardReader(db_path=settings.db_path)
     actions = DashboardActions(db_path=settings.db_path)
+    candle_service = CandleService(
+        base_url=settings.hl_api_url,
+        db_path=settings.db_path,
+        rate_limit_weight=settings.candle_rate_limit_weight,
+        window_seconds=settings.rate_limit_window_s,
+    )
+    await candle_service.init()
 
     app.state.shared = state
     app.state.reader = reader
     app.state.actions = actions
     app.state.runner = runner
+    app.state.candle_service = candle_service
 
     yield
 
     runner.stop()
+    await candle_service.close()
     reader.close()
     actions.close()
 

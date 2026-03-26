@@ -11,6 +11,7 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
+from hypersussy.api.candle_service import CandleService
 from hypersussy.app.actions import DashboardActions
 from hypersussy.app.db_reader import DashboardReader
 from hypersussy.app.state import SharedState
@@ -34,6 +35,13 @@ def get_state(request: Request) -> SharedState:
     return state
 
 
+def get_candle_service(request: Request) -> CandleService:
+    """Return the application-scoped candle fetch-through service."""
+    service: CandleService = request.app.state.candle_service
+    return service
+
+
 ReaderDep = Annotated[DashboardReader, Depends(get_reader)]
 ActionsDep = Annotated[DashboardActions, Depends(get_actions)]
 StateDep = Annotated[SharedState, Depends(get_state)]
+CandleServiceDep = Annotated[CandleService, Depends(get_candle_service)]

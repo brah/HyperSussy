@@ -4,7 +4,7 @@ interface CoinSelectorProps {
   onChange: (coin: string) => void;
 }
 
-export function CoinSelector({ coins, value, onChange }: CoinSelectorProps) {
+export function CoinSelector({ coins, value, onChange }: Readonly<CoinSelectorProps>) {
   const isLoading = coins.length === 0;
 
   return (

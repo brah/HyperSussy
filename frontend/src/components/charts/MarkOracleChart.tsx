@@ -1,0 +1,96 @@
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
+import type { FundingSnapshotItem } from "../../api/types";
+import { colors } from "../../theme/colors";
+import { fmtTime } from "../../utils/time";
+import { formatPrice } from "../../utils/format";
+
+interface MarkOracleChartProps {
+  data: FundingSnapshotItem[];
+  height?: number;
+}
+
+/** Dual-line chart comparing mark price vs oracle price over time. */
+export function MarkOracleChart({
+  data,
+  height = 240,
+}: Readonly<MarkOracleChartProps>) {
+  const chartData = data.map((d) => ({
+    timestamp_ms: d.timestamp_ms,
+    mark: d.mark_price,
+    oracle: d.oracle_price,
+  }));
+
+  if (chartData.length === 0) {
+    return (
+      <p className="text-hs-grey text-sm py-6 text-center">No data.</p>
+    );
+  }
+
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart
+        data={chartData}
+        margin={{ top: 4, right: 16, bottom: 0, left: 8 }}
+      >
+        <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
+        <XAxis
+          dataKey="timestamp_ms"
+          tickFormatter={(v: number) => fmtTime(v)}
+          stroke={colors.grey}
+          tick={{ fill: colors.grey, fontSize: 11 }}
+          minTickGap={60}
+        />
+        <YAxis
+          tickFormatter={(v: number) => formatPrice(v)}
+          stroke={colors.grey}
+          tick={{ fill: colors.grey, fontSize: 11 }}
+          width={80}
+          domain={["auto", "auto"]}
+        />
+        <Tooltip
+          formatter={(v: number, name: string) => [
+            formatPrice(v),
+            name === "mark" ? "Mark" : "Oracle",
+          ]}
+          labelFormatter={(ms: number) => fmtTime(ms)}
+          contentStyle={{
+            background: colors.surface,
+            border: `1px solid ${colors.grid}`,
+            color: colors.text,
+            fontSize: 12,
+          }}
+        />
+        <Legend
+          wrapperStyle={{ fontSize: 12, color: colors.grey }}
+          formatter={(v: string) => (v === "mark" ? "Mark" : "Oracle")}
+        />
+        <Line
+          type="monotone"
+          dataKey="mark"
+          stroke={colors.teal}
+          dot={false}
+          strokeWidth={2}
+          isAnimationActive={false}
+        />
+        <Line
+          type="monotone"
+          dataKey="oracle"
+          stroke={colors.orange}
+          dot={false}
+          strokeWidth={1.5}
+          strokeDasharray="4 2"
+          isAnimationActive={false}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}

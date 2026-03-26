@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import atexit
 import asyncio
+import atexit
 import logging
 import os
 import signal
@@ -91,7 +91,7 @@ def _build_components(
     from hypersussy.storage.sqlite import SqliteStorage as _Storage
 
     rate_limiter = _RateLimiter(
-        max_weight=settings.rate_limit_weight,
+        max_weight=settings.rate_limit_weight - settings.candle_rate_limit_weight,
         window_seconds=settings.rate_limit_window_s,
     )
     reader = _Reader(

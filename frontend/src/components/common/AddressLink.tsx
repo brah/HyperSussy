@@ -11,7 +11,7 @@ export function AddressLink({ address, label, width = 10 }: AddressLinkProps) {
   const display = label || shortAddress(address, width);
   return (
     <Link
-      to={`/wallet/${address}`}
+      to={`/wallets/${address}`}
       className="text-[#00d4aa] hover:underline font-mono text-sm"
       title={address}
     >

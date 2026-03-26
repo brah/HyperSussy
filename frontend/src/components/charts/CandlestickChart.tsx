@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import {
   createChart,
   type IChartApi,
@@ -65,14 +65,19 @@ export function CandlestickChart({
     });
     volumeSeriesRef.current = volumeSeries;
 
+    let rafId = 0;
     const resizeObserver = new ResizeObserver((entries) => {
-      if (entries[0]) {
-        chart.applyOptions({ width: entries[0].contentRect.width });
-      }
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        if (entries[0]) {
+          chart.applyOptions({ width: entries[0].contentRect.width });
+        }
+      });
     });
     resizeObserver.observe(containerRef.current);
 
     return () => {
+      cancelAnimationFrame(rafId);
       resizeObserver.disconnect();
       chart.remove();
       chartRef.current = null;
@@ -81,27 +86,34 @@ export function CandlestickChart({
     };
   }, [height]);
 
+  const candleData = useMemo<CandlestickData[]>(
+    () =>
+      candles.map((c) => ({
+        time: msToSec(c.timestamp_ms) as CandlestickData["time"],
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      })),
+    [candles]
+  );
+
+  const volumeData = useMemo<HistogramData[]>(
+    () =>
+      candles.map((c) => ({
+        time: msToSec(c.timestamp_ms) as HistogramData["time"],
+        value: c.volume,
+        color: c.close >= c.open ? `${colors.teal}80` : `${colors.red}80`,
+      })),
+    [candles]
+  );
+
   useEffect(() => {
     if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
-
-    const candleData: CandlestickData[] = candles.map((c) => ({
-      time: msToSec(c.timestamp_ms) as CandlestickData["time"],
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-
-    const volumeData: HistogramData[] = candles.map((c) => ({
-      time: msToSec(c.timestamp_ms) as HistogramData["time"],
-      value: c.volume,
-      color: c.close >= c.open ? `${colors.teal}80` : `${colors.red}80`,
-    }));
-
     candleSeriesRef.current.setData(candleData);
     volumeSeriesRef.current.setData(volumeData);
     chartRef.current?.timeScale().fitContent();
-  }, [candles]);
+  }, [candleData, volumeData]);
 
   return <div ref={containerRef} style={{ width: "100%", height }} />;
 }

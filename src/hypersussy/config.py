@@ -32,6 +32,7 @@ class HyperSussySettings(BaseSettings):
     # Rate limiting
     rate_limit_weight: int = 1200
     rate_limit_window_s: int = 60
+    candle_rate_limit_weight: int = 200
 
     # Engine toggles
     engine_oi_concentration: bool = True
@@ -51,7 +52,7 @@ class HyperSussySettings(BaseSettings):
     oi_history_maxlen: int = 4000
 
     # Whale Tracker engine
-    whale_volume_threshold_usd: float = 15_000_000.0
+    whale_volume_threshold_usd: float = 25_000_000.0
     whale_discovery_oi_pct: float = 0.15  # promote if address trades >= 15% of coin OI
     whale_oi_min_notional_usd: float = 500_000.0  # OI-path requires this min position size
     whale_volume_lookback_ms: int = 3_600_000

@@ -1,0 +1,341 @@
+import { startTransition, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import {
+  alertCountsQuery,
+  candlesQuery,
+  coinsQuery,
+  fundingQuery,
+  oiQuery,
+  topHoldersQuery,
+  topWhalesQuery,
+  tradeFlowQuery,
+} from "../api/queries";
+import { useWsStore } from "../api/websocket";
+import { AlertsByEngineChart } from "../components/charts/AlertsByEngineChart";
+import { CandlestickChart } from "../components/charts/CandlestickChart";
+import { FundingChart } from "../components/charts/FundingChart";
+import { MarkOracleChart } from "../components/charts/MarkOracleChart";
+import { OIChart } from "../components/charts/OIChart";
+import { TopHoldersChart } from "../components/charts/TopHoldersChart";
+import { TradeFlowChart } from "../components/charts/TradeFlowChart";
+import { CoinSelector } from "../components/common/CoinSelector";
+import { HoursSelector, type Hours } from "../components/common/HoursSelector";
+import { IntervalSelector, type Interval } from "../components/common/IntervalSelector";
+import { MetricCard } from "../components/common/MetricCard";
+import { PanelToggleBar } from "../components/common/PanelToggleBar";
+import { PanelWrapper } from "../components/common/PanelWrapper";
+import { SeverityFilterBar, type Severity } from "../components/common/SeverityFilterBar";
+import { StatusBanner } from "../components/common/StatusBanner";
+import { SymbolInfoBar } from "../components/common/SymbolInfoBar";
+import { AlertFeed } from "../components/common/AlertFeed";
+import { PageHeader } from "../components/layout/PageHeader";
+import { MarketSummaryTable } from "../components/market/MarketSummaryTable";
+import { TopTradersTable } from "../components/market/TopTradersTable";
+import { formatUSD } from "../utils/format";
+
+const ALL = "All";
+
+const HOURS_FOR_INTERVAL: Record<Interval, number> = {
+  "1m": 12,
+  "5m": 48,
+  "15m": 72,
+  "1h": 168,
+  "4h": 504,
+  "1d": 2160,
+};
+
+const MARKET_PANELS = [
+  { key: "metric-cards", label: "Metrics" },
+  { key: "market-table", label: "Table" },
+  { key: "candlestick", label: "Candles" },
+  { key: "oi-chart", label: "OI" },
+  { key: "funding-chart", label: "Funding" },
+  { key: "mark-oracle", label: "Mark/Oracle", defaultVisible: false },
+  { key: "top-holders", label: "Holders" },
+  { key: "trade-flow", label: "Flow" },
+  { key: "top-traders", label: "Traders" },
+  { key: "alert-feed", label: "Alerts" },
+  { key: "alerts-engine", label: "By Engine", defaultVisible: false },
+];
+
+function parseIntervalParam(value: string | null): Interval {
+  if (value && value in HOURS_FOR_INTERVAL) {
+    return value as Interval;
+  }
+  return "1h";
+}
+
+export function MarketPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const coinParam = searchParams.get("coin") ?? ALL;
+  const intervalParam = parseIntervalParam(searchParams.get("interval"));
+
+  const [coin, setCoin] = useState(coinParam === ALL ? "" : coinParam);
+  const [activeInterval, setActiveInterval] = useState<Interval>(intervalParam);
+  const [hours, setHours] = useState<Hours>(24);
+  const [severityFilter, setSeverityFilter] = useState<Severity | null>(null);
+
+  const coinMode = coin !== "";
+  const interval = activeInterval;
+
+  // Sync URL params
+  useEffect(() => {
+    const params: Record<string, string> = {};
+    if (coin) params.coin = coin;
+    if (coin) params.interval = activeInterval;
+    setSearchParams(params, { replace: true });
+  }, [coin, activeInterval, setSearchParams]);
+
+  const handleCoinChange = (c: string) => {
+    startTransition(() => setCoin(c === ALL ? "" : c));
+  };
+
+  const handleIntervalChange = (iv: Interval) => {
+    startTransition(() => setActiveInterval(iv));
+  };
+
+  const candleHours = HOURS_FOR_INTERVAL[interval];
+
+  const snapshots = useWsStore((s) => s.snapshots);
+  const liveAlerts = useWsStore((s) => s.liveAlerts);
+  const health = useWsStore((s) => s.health);
+  const connected = useWsStore((s) => s.connected);
+
+  const { data: coins = [] } = useQuery(coinsQuery());
+  const { data: candles = [] } = useQuery({
+    ...candlesQuery(coin, interval, candleHours),
+    enabled: coinMode,
+  });
+  const { data: oiData = [] } = useQuery({
+    ...oiQuery(coin, hours),
+    enabled: coinMode,
+  });
+  const { data: fundingData = [] } = useQuery({
+    ...fundingQuery(coin, hours),
+    enabled: coinMode,
+  });
+  const { data: topHolders = [] } = useQuery({
+    ...topHoldersQuery(coin, hours, 15),
+    enabled: coinMode,
+  });
+  const { data: tradeFlow = [] } = useQuery({
+    ...tradeFlowQuery(coin, hours),
+    enabled: coinMode,
+  });
+  const { data: topWhales = [] } = useQuery({
+    ...topWhalesQuery(coin, hours),
+    enabled: coinMode,
+  });
+  const { data: alertCounts = {} } = useQuery(alertCountsQuery(0));
+
+  const allCoins = coins.length > 0 ? [ALL, ...coins] : [];
+  const coinSelectorValue = coin || ALL;
+
+  // Compute metric aggregates from WS snapshots
+  const snapList = Object.values(snapshots);
+  const totalOI = snapList.reduce((s, c) => s + c.open_interest_usd, 0);
+  const totalVol = snapList.reduce((s, c) => s + c.day_volume_usd, 0);
+
+  // Alert feed filtering
+  const displayAlerts = severityFilter
+    ? liveAlerts.filter((a) => a.severity === severityFilter)
+    : liveAlerts;
+
+  const severityCounts = {
+    critical: liveAlerts.filter((a) => a.severity === "critical").length,
+    high: liveAlerts.filter((a) => a.severity === "high").length,
+    medium: liveAlerts.filter((a) => a.severity === "medium").length,
+    low: liveAlerts.filter((a) => a.severity === "low").length,
+  };
+
+  return (
+    <div>
+      <PageHeader title="Market">
+        <StatusBanner health={health} connected={connected} />
+        <CoinSelector
+          coins={allCoins}
+          value={coinSelectorValue}
+          onChange={handleCoinChange}
+        />
+        {coinMode && (
+          <IntervalSelector value={interval} onChange={handleIntervalChange} />
+        )}
+        {coinMode && (
+          <HoursSelector value={hours} onChange={setHours} />
+        )}
+        <PanelToggleBar panels={MARKET_PANELS} />
+      </PageHeader>
+
+      {/* Symbol info bar */}
+      {coinMode && (
+        <div className="bg-hs-surface border border-hs-grid rounded-lg px-4 py-1 mb-4">
+          <SymbolInfoBar coin={coin} />
+        </div>
+      )}
+
+      <div className="flex flex-col lg:flex-row gap-4">
+        {/* Main column */}
+        <div className="flex-1 min-w-0 space-y-4">
+
+          {/* Overview mode: market summary table */}
+          {!coinMode && (
+            <PanelWrapper panelKey="market-table">
+              <div className="bg-hs-surface border border-hs-grid rounded-lg">
+                <div className="border-b border-hs-grid px-4 py-3">
+                  <h2 className="text-hs-text font-medium">Market Overview</h2>
+                </div>
+                <MarketSummaryTable onSelectCoin={handleCoinChange} />
+              </div>
+            </PanelWrapper>
+          )}
+
+          {/* Analytics mode: charts */}
+          {coinMode && (
+            <>
+              <PanelWrapper panelKey="candlestick">
+                <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                  <h2 className="text-hs-text font-medium mb-3">
+                    {coin} / {interval}
+                  </h2>
+                  {candles.length > 0 ? (
+                    <CandlestickChart candles={candles} height={420} />
+                  ) : (
+                    <p className="text-hs-grey text-sm py-8 text-center">
+                      No candle data for {coin} ({interval}).
+                    </p>
+                  )}
+                </div>
+              </PanelWrapper>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <PanelWrapper panelKey="oi-chart">
+                  <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                    <h2 className="text-hs-text font-medium mb-3">
+                      Open Interest — {hours}h
+                    </h2>
+                    {oiData.length > 0 ? (
+                      <OIChart data={oiData} height={200} />
+                    ) : (
+                      <p className="text-hs-grey text-sm py-6 text-center">
+                        No OI data.
+                      </p>
+                    )}
+                  </div>
+                </PanelWrapper>
+
+                <PanelWrapper panelKey="funding-chart">
+                  <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                    <h2 className="text-hs-text font-medium mb-3">
+                      Funding Rate — {hours}h
+                    </h2>
+                    {fundingData.length > 0 ? (
+                      <FundingChart data={fundingData} height={200} />
+                    ) : (
+                      <p className="text-hs-grey text-sm py-6 text-center">
+                        No funding data.
+                      </p>
+                    )}
+                  </div>
+                </PanelWrapper>
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <PanelWrapper panelKey="top-holders">
+                  <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                    <h2 className="text-hs-text font-medium mb-3">
+                      Top Holder Concentration — {hours}h
+                    </h2>
+                    {topHolders.length > 0 ? (
+                      <TopHoldersChart data={topHolders} />
+                    ) : (
+                      <p className="text-hs-grey text-sm py-6 text-center">
+                        No data.
+                      </p>
+                    )}
+                  </div>
+                </PanelWrapper>
+
+                <PanelWrapper panelKey="trade-flow">
+                  <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                    <h2 className="text-hs-text font-medium mb-3">
+                      Trade Flow — {hours}h
+                    </h2>
+                    {tradeFlow.length > 0 ? (
+                      <TradeFlowChart data={tradeFlow} />
+                    ) : (
+                      <p className="text-hs-grey text-sm py-6 text-center">
+                        No data.
+                      </p>
+                    )}
+                  </div>
+                </PanelWrapper>
+              </div>
+
+              <PanelWrapper panelKey="mark-oracle" defaultVisible={false}>
+                <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                  <h2 className="text-hs-text font-medium mb-3">
+                    Mark vs Oracle — {hours}h
+                  </h2>
+                  <MarkOracleChart data={fundingData} height={240} />
+                </div>
+              </PanelWrapper>
+
+              <PanelWrapper panelKey="top-traders">
+                <TopTradersTable
+                  coin={coin}
+                  hours={hours}
+                  traders={topWhales}
+                />
+              </PanelWrapper>
+            </>
+          )}
+        </div>
+
+        {/* Side column */}
+        <div className="w-full lg:w-72 shrink-0 space-y-4">
+          <PanelWrapper panelKey="metric-cards">
+            <div className="grid grid-cols-2 lg:grid-cols-1 gap-3">
+              <MetricCard
+                label="Assets Tracked"
+                value={String(snapList.length)}
+              />
+              <MetricCard
+                label="Total OI"
+                value={formatUSD(totalOI)}
+              />
+              <MetricCard
+                label="24h Volume"
+                value={formatUSD(totalVol)}
+              />
+              <MetricCard
+                label="Live Alerts"
+                value={String(liveAlerts.length)}
+                valueClassName={liveAlerts.length > 0 ? "text-hs-orange" : undefined}
+              />
+            </div>
+          </PanelWrapper>
+
+          <PanelWrapper panelKey="alert-feed">
+            <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+              <h2 className="text-hs-text font-medium mb-3">Live Alerts</h2>
+              <SeverityFilterBar
+                counts={severityCounts}
+                active={severityFilter}
+                onToggle={setSeverityFilter}
+              />
+              <AlertFeed alerts={displayAlerts} maxRows={20} />
+            </div>
+          </PanelWrapper>
+
+          <PanelWrapper panelKey="alerts-engine" defaultVisible={false}>
+            <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+              <h2 className="text-hs-text font-medium mb-3">Alerts by Engine</h2>
+              <AlertsByEngineChart counts={alertCounts} height={180} />
+            </div>
+          </PanelWrapper>
+        </div>
+      </div>
+    </div>
+  );
+}

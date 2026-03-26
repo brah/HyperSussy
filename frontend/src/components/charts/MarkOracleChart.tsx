@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import {
   LineChart,
   Line,
@@ -19,15 +20,19 @@ interface MarkOracleChartProps {
 }
 
 /** Dual-line chart comparing mark price vs oracle price over time. */
-export function MarkOracleChart({
+export const MarkOracleChart = memo(function MarkOracleChart({
   data,
   height = 240,
 }: Readonly<MarkOracleChartProps>) {
-  const chartData = data.map((d) => ({
-    timestamp_ms: d.timestamp_ms,
-    mark: d.mark_price,
-    oracle: d.oracle_price,
-  }));
+  const chartData = useMemo(
+    () =>
+      data.map((d) => ({
+        timestamp_ms: d.timestamp_ms,
+        mark: d.mark_price,
+        oracle: d.oracle_price,
+      })),
+    [data]
+  );
 
   if (chartData.length === 0) {
     return (
@@ -93,4 +98,4 @@ export function MarkOracleChart({
       </LineChart>
     </ResponsiveContainer>
   );
-}
+});

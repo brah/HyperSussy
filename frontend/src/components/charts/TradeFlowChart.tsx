@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -35,8 +36,12 @@ function pivotFlow(data: TradeFlowItem[]): BucketRow[] {
   return [...byBucket.values()].sort((a, b) => a.bucket - b.bucket);
 }
 
-export function TradeFlowChart({ data, height = 220 }: TradeFlowChartProps) {
-  const pivoted = pivotFlow(data);
+export const TradeFlowChart = memo(function TradeFlowChart({
+  data,
+  height = 220,
+}: Readonly<TradeFlowChartProps>) {
+  const pivoted = useMemo(() => pivotFlow(data), [data]);
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart
@@ -81,4 +86,4 @@ export function TradeFlowChart({ data, height = 220 }: TradeFlowChartProps) {
       </BarChart>
     </ResponsiveContainer>
   );
-}
+});

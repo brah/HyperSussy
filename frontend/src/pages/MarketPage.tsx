@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useState } from "react";
+import { memo, startTransition, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -66,6 +66,98 @@ function parseIntervalParam(value: string | null): Interval {
   return "1h";
 }
 
+// ---------------------------------------------------------------------------
+// Sidebar components — each owns its own WS subscription so updates here
+// don't cascade into the chart area.
+// ---------------------------------------------------------------------------
+
+/** Metric cards sourced from live WS snapshots. */
+const MetricSidebar = memo(function MetricSidebar() {
+  const snapshots = useWsStore((s) => s.snapshots);
+  const liveAlertCount = useWsStore((s) => s.liveAlerts.length);
+
+  const { count, totalOI, totalVol } = useMemo(() => {
+    const list = Object.values(snapshots);
+    return {
+      count: list.length,
+      totalOI: list.reduce((s, c) => s + c.open_interest_usd, 0),
+      totalVol: list.reduce((s, c) => s + c.day_volume_usd, 0),
+    };
+  }, [snapshots]);
+
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-1 gap-3">
+      <MetricCard label="Assets Tracked" value={String(count)} />
+      <MetricCard label="Total OI" value={formatUSD(totalOI)} />
+      <MetricCard label="24h Volume" value={formatUSD(totalVol)} />
+      <MetricCard
+        label="Live Alerts"
+        value={String(liveAlertCount)}
+        valueClassName={liveAlertCount > 0 ? "text-hs-orange" : undefined}
+      />
+    </div>
+  );
+});
+
+/** Live alerts feed + severity filter + alerts-by-engine chart. */
+const AlertSidebar = memo(function AlertSidebar() {
+  const liveAlerts = useWsStore((s) => s.liveAlerts);
+  const [severityFilter, setSeverityFilter] = useState<Severity | null>(null);
+  const { data: alertCounts = {} } = useQuery(alertCountsQuery(0));
+
+  const severityCounts = useMemo(
+    () => ({
+      critical: liveAlerts.filter((a) => a.severity === "critical").length,
+      high: liveAlerts.filter((a) => a.severity === "high").length,
+      medium: liveAlerts.filter((a) => a.severity === "medium").length,
+      low: liveAlerts.filter((a) => a.severity === "low").length,
+    }),
+    [liveAlerts]
+  );
+
+  const displayAlerts = useMemo(
+    () =>
+      severityFilter
+        ? liveAlerts.filter((a) => a.severity === severityFilter)
+        : liveAlerts,
+    [liveAlerts, severityFilter]
+  );
+
+  return (
+    <>
+      <PanelWrapper panelKey="alert-feed">
+        <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+          <h2 className="text-hs-text font-medium mb-3">Live Alerts</h2>
+          <SeverityFilterBar
+            counts={severityCounts}
+            active={severityFilter}
+            onToggle={setSeverityFilter}
+          />
+          <AlertFeed alerts={displayAlerts} maxRows={20} />
+        </div>
+      </PanelWrapper>
+
+      <PanelWrapper panelKey="alerts-engine" defaultVisible={false}>
+        <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+          <h2 className="text-hs-text font-medium mb-3">Alerts by Engine</h2>
+          <AlertsByEngineChart counts={alertCounts} height={180} />
+        </div>
+      </PanelWrapper>
+    </>
+  );
+});
+
+/** Status banner that subscribes to health/connected only. */
+const StatusInfo = memo(function StatusInfo() {
+  const health = useWsStore((s) => s.health);
+  const connected = useWsStore((s) => s.connected);
+  return <StatusBanner health={health} connected={connected} />;
+});
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
+
 export function MarketPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const coinParam = searchParams.get("coin") ?? ALL;
@@ -74,7 +166,6 @@ export function MarketPage() {
   const [coin, setCoin] = useState(coinParam === ALL ? "" : coinParam);
   const [activeInterval, setActiveInterval] = useState<Interval>(intervalParam);
   const [hours, setHours] = useState<Hours>(24);
-  const [severityFilter, setSeverityFilter] = useState<Severity | null>(null);
 
   const coinMode = coin !== "";
   const interval = activeInterval;
@@ -97,12 +188,9 @@ export function MarketPage() {
 
   const candleHours = HOURS_FOR_INTERVAL[interval];
 
-  const snapshots = useWsStore((s) => s.snapshots);
-  const liveAlerts = useWsStore((s) => s.liveAlerts);
-  const health = useWsStore((s) => s.health);
-  const connected = useWsStore((s) => s.connected);
-
+  // --- Data queries (only active in coin mode) ---
   const { data: coins = [] } = useQuery(coinsQuery());
+
   const { data: candles = [] } = useQuery({
     ...candlesQuery(coin, interval, candleHours),
     enabled: coinMode,
@@ -127,32 +215,17 @@ export function MarketPage() {
     ...topWhalesQuery(coin, hours),
     enabled: coinMode,
   });
-  const { data: alertCounts = {} } = useQuery(alertCountsQuery(0));
 
-  const allCoins = coins.length > 0 ? [ALL, ...coins] : [];
+  const allCoins = useMemo(
+    () => (coins.length > 0 ? [ALL, ...coins] : []),
+    [coins]
+  );
   const coinSelectorValue = coin || ALL;
-
-  // Compute metric aggregates from WS snapshots
-  const snapList = Object.values(snapshots);
-  const totalOI = snapList.reduce((s, c) => s + c.open_interest_usd, 0);
-  const totalVol = snapList.reduce((s, c) => s + c.day_volume_usd, 0);
-
-  // Alert feed filtering
-  const displayAlerts = severityFilter
-    ? liveAlerts.filter((a) => a.severity === severityFilter)
-    : liveAlerts;
-
-  const severityCounts = {
-    critical: liveAlerts.filter((a) => a.severity === "critical").length,
-    high: liveAlerts.filter((a) => a.severity === "high").length,
-    medium: liveAlerts.filter((a) => a.severity === "medium").length,
-    low: liveAlerts.filter((a) => a.severity === "low").length,
-  };
 
   return (
     <div>
       <PageHeader title="Market">
-        <StatusBanner health={health} connected={connected} />
+        <StatusInfo />
         <CoinSelector
           coins={allCoins}
           value={coinSelectorValue}
@@ -295,45 +368,10 @@ export function MarketPage() {
         {/* Side column */}
         <div className="w-full lg:w-72 shrink-0 space-y-4">
           <PanelWrapper panelKey="metric-cards">
-            <div className="grid grid-cols-2 lg:grid-cols-1 gap-3">
-              <MetricCard
-                label="Assets Tracked"
-                value={String(snapList.length)}
-              />
-              <MetricCard
-                label="Total OI"
-                value={formatUSD(totalOI)}
-              />
-              <MetricCard
-                label="24h Volume"
-                value={formatUSD(totalVol)}
-              />
-              <MetricCard
-                label="Live Alerts"
-                value={String(liveAlerts.length)}
-                valueClassName={liveAlerts.length > 0 ? "text-hs-orange" : undefined}
-              />
-            </div>
+            <MetricSidebar />
           </PanelWrapper>
 
-          <PanelWrapper panelKey="alert-feed">
-            <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
-              <h2 className="text-hs-text font-medium mb-3">Live Alerts</h2>
-              <SeverityFilterBar
-                counts={severityCounts}
-                active={severityFilter}
-                onToggle={setSeverityFilter}
-              />
-              <AlertFeed alerts={displayAlerts} maxRows={20} />
-            </div>
-          </PanelWrapper>
-
-          <PanelWrapper panelKey="alerts-engine" defaultVisible={false}>
-            <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
-              <h2 className="text-hs-text font-medium mb-3">Alerts by Engine</h2>
-              <AlertsByEngineChart counts={alertCounts} height={180} />
-            </div>
-          </PanelWrapper>
+          <AlertSidebar />
         </div>
       </div>
     </div>

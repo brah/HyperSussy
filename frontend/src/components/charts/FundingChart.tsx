@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -19,7 +20,15 @@ interface FundingChartProps {
   height?: number;
 }
 
-export function FundingChart({ data, height = 220 }: FundingChartProps) {
+export const FundingChart = memo(function FundingChart({
+  data,
+  height = 220,
+}: Readonly<FundingChartProps>) {
+  const cellColors = useMemo(
+    () => data.map((d) => (d.funding_rate >= 0 ? colors.teal : colors.red)),
+    [data]
+  );
+
   return (
     <ResponsiveContainer width="100%" height={height}>
       <BarChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
@@ -49,14 +58,11 @@ export function FundingChart({ data, height = 220 }: FundingChartProps) {
         />
         <ReferenceLine y={0} stroke={colors.grey} strokeDasharray="3 3" />
         <Bar dataKey="funding_rate" isAnimationActive={false}>
-          {data.map((entry, idx) => (
-            <Cell
-              key={idx}
-              fill={entry.funding_rate >= 0 ? colors.teal : colors.red}
-            />
+          {cellColors.map((fill, idx) => (
+            <Cell key={data[idx].timestamp_ms} fill={fill} />
           ))}
         </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
-}
+});

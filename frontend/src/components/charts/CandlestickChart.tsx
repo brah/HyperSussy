@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import {
   createChart,
   type IChartApi,
@@ -17,7 +17,7 @@ interface CandlestickChartProps {
   height?: number;
 }
 
-export function CandlestickChart({
+export const CandlestickChart = memo(function CandlestickChart({
   candles,
   height = 400,
 }: CandlestickChartProps) {
@@ -116,4 +116,4 @@ export function CandlestickChart({
   }, [candleData, volumeData]);
 
   return <div ref={containerRef} style={{ width: "100%", height }} />;
-}
+});

@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -15,13 +16,17 @@ interface AlertsByEngineChartProps {
 }
 
 /** Horizontal bar chart showing alert counts by engine/type. */
-export function AlertsByEngineChart({
+export const AlertsByEngineChart = memo(function AlertsByEngineChart({
   counts,
   height = 180,
 }: Readonly<AlertsByEngineChartProps>) {
-  const data = Object.entries(counts)
-    .map(([type, count]) => ({ type, count }))
-    .sort((a, b) => b.count - a.count);
+  const data = useMemo(
+    () =>
+      Object.entries(counts)
+        .map(([type, count]) => ({ type, count }))
+        .sort((a, b) => b.count - a.count),
+    [counts]
+  );
 
   if (data.length === 0) return null;
 
@@ -66,4 +71,4 @@ export function AlertsByEngineChart({
       </BarChart>
     </ResponsiveContainer>
   );
-}
+});

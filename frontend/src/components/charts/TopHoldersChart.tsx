@@ -1,3 +1,4 @@
+import { memo, useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -16,16 +17,23 @@ interface TopHoldersChartProps {
   height?: number;
 }
 
-export function TopHoldersChart({ data, height = 260 }: TopHoldersChartProps) {
-  const chartData = data.map((d) => ({
-    address: shortAddress(d.address, 8),
-    volume_usd: d.volume_usd,
-    pct:
-      d.total_volume > 0
-        ? ((d.volume_usd / d.total_volume) * 100).toFixed(1)
-        : "0.0",
-    fullAddress: d.address,
-  }));
+export const TopHoldersChart = memo(function TopHoldersChart({
+  data,
+  height = 260,
+}: Readonly<TopHoldersChartProps>) {
+  const chartData = useMemo(
+    () =>
+      data.map((d) => ({
+        address: shortAddress(d.address, 8),
+        volume_usd: d.volume_usd,
+        pct:
+          d.total_volume > 0
+            ? ((d.volume_usd / d.total_volume) * 100).toFixed(1)
+            : "0.0",
+        fullAddress: d.address,
+      })),
+    [data]
+  );
 
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -70,4 +78,4 @@ export function TopHoldersChart({ data, height = 260 }: TopHoldersChartProps) {
       </BarChart>
     </ResponsiveContainer>
   );
-}
+});

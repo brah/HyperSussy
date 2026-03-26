@@ -1,4 +1,4 @@
-import { usePanelStore } from "../../stores/panelStore";
+import { usePanelVisible } from "../../stores/panelStore";
 
 interface PanelWrapperProps {
   panelKey: string;
@@ -12,6 +12,6 @@ export function PanelWrapper({
   defaultVisible = true,
   children,
 }: Readonly<PanelWrapperProps>) {
-  const isVisible = usePanelStore((s) => s.isVisible(panelKey, defaultVisible));
-  return isVisible ? <>{children}</> : null;
+  const visible = usePanelVisible(panelKey, defaultVisible);
+  return visible ? <>{children}</> : null;
 }

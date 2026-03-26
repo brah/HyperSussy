@@ -1,3 +1,4 @@
+import { memo } from "react";
 import {
   AreaChart,
   Area,
@@ -17,7 +18,7 @@ interface OIChartProps {
   height?: number;
 }
 
-export function OIChart({ data, height = 260 }: OIChartProps) {
+export const OIChart = memo(function OIChart({ data, height = 260 }: Readonly<OIChartProps>) {
   return (
     <ResponsiveContainer width="100%" height={height}>
       <AreaChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
@@ -63,4 +64,4 @@ export function OIChart({ data, height = 260 }: OIChartProps) {
       </AreaChart>
     </ResponsiveContainer>
   );
-}
+});

@@ -7,6 +7,7 @@ before a large price move, indicating possible informed trading.
 from __future__ import annotations
 
 import uuid
+from bisect import bisect_left
 from collections import defaultdict, deque
 
 from hypersussy.config import HyperSussySettings
@@ -145,11 +146,14 @@ class PreMoveEngine:
         if not trades:
             return None
 
+        # Binary search for window boundaries (trades sorted by timestamp)
+        start_idx = bisect_left(trades, (pre_start,))
+        end_idx = bisect_left(trades, (pre_end,))
+
         # Net flow per address: positive = net long, negative = net short
         addr_flow: dict[str, float] = {}
-        for ts, buyer, seller, price, size in trades:
-            if ts < pre_start or ts >= pre_end:
-                continue
+        for i in range(start_idx, end_idx):
+            _, buyer, seller, price, size = trades[i]
             notional = price * size
             if buyer:
                 addr_flow[buyer] = addr_flow.get(buyer, 0.0) + notional

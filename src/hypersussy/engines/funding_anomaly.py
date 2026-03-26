@@ -94,9 +94,9 @@ class FundingAnomalyEngine:
             if current_rate is None:
                 continue
 
-            rates = list(history)
-            mean = sum(rates) / len(rates)
-            variance = sum(((r - mean) ** 2 for r in rates), 0.0) / len(rates)
+            n = len(history)
+            mean = sum(history) / n
+            variance = sum((r - mean) ** 2 for r in history) / n
             stdev = math.sqrt(variance)
 
             zscore = (current_rate - mean) / stdev if stdev > 0 else 0.0
@@ -128,7 +128,7 @@ class FundingAnomalyEngine:
                         f"{coin} funding rate {current_rate:+.6f} is "
                         f"anomalous. Rolling mean={mean:+.6f}, "
                         f"stdev={stdev:.6f}, z-score={zscore:+.2f}. "
-                        f"Based on {len(rates)} hourly samples."
+                        f"Based on {n} hourly samples."
                     ),
                     timestamp_ms=timestamp_ms,
                     metadata={
@@ -136,7 +136,7 @@ class FundingAnomalyEngine:
                         "rolling_mean": mean,
                         "rolling_stdev": stdev,
                         "zscore": zscore,
-                        "sample_count": float(len(rates)),
+                        "sample_count": float(n),
                     },
                 )
             )

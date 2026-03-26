@@ -108,6 +108,8 @@ class WhaleTrackerEngine:
                 coin_oi > 0
                 and self._address_coin_volume[key]
                 >= self._settings.whale_discovery_oi_pct * coin_oi
+                and self._address_coin_volume[key]
+                >= self._settings.whale_oi_min_notional_usd
             )
             if usd_ok or oi_ok:
                 label = f"{trade.coin} OI WHALE" if oi_ok else f"{trade.coin} WHALE"

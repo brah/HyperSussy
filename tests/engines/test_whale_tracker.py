@@ -256,3 +256,45 @@ class TestWhaleTrackerEngine:
         engine = WhaleTrackerEngine(storage=storage, reader=reader, settings=settings)
         await engine.on_asset_update(_snapshot("SOL", 1000, 5_000_000.0))
         assert engine._coin_oi["SOL"] == 5_000_000.0
+
+    @pytest.mark.asyncio
+    async def test_oi_whale_discovery_blocked_below_min_notional(
+        self,
+        storage: SqliteStorage,
+        settings: HyperSussySettings,
+    ) -> None:
+        """OI-path discovery is skipped when coin volume < whale_oi_min_notional_usd."""
+        settings.whale_volume_threshold_usd = 10_000_000.0  # unreachable
+        settings.whale_discovery_oi_pct = 0.01  # very low so OI pct passes easily
+        settings.whale_oi_min_notional_usd = 500_000.0
+        reader = _MockReader()
+        engine = WhaleTrackerEngine(storage=storage, reader=reader, settings=settings)
+
+        # coin OI = 1M, address trades 20K (2% of OI — above 1% pct, below 500K floor)
+        await engine.on_asset_update(_snapshot("BTC", 1000, 1_000_000.0))
+        await engine.on_trade(_trade("BTC", "0xsmalloi", "0xmm", 200.0, 100.0, 1000, 1))
+
+        tracked = await storage.get_tracked_addresses()
+        assert "0xsmalloi" not in tracked
+
+    @pytest.mark.asyncio
+    async def test_oi_whale_discovery_passes_with_sufficient_notional(
+        self,
+        storage: SqliteStorage,
+        settings: HyperSussySettings,
+    ) -> None:
+        """OI-path discovery promotes address when coin volume meets both OI pct and notional floor."""
+        settings.whale_volume_threshold_usd = 10_000_000.0  # unreachable
+        settings.whale_discovery_oi_pct = 0.01
+        settings.whale_oi_min_notional_usd = 500_000.0
+        reader = _MockReader()
+        engine = WhaleTrackerEngine(storage=storage, reader=reader, settings=settings)
+
+        # coin OI = 1M, address trades 600K (60% of OI — above both thresholds)
+        await engine.on_asset_update(_snapshot("BTC", 1000, 1_000_000.0))
+        await engine.on_trade(
+            _trade("BTC", "0xoiwhale", "0xmm", 60000.0, 10.0, 1000, 1)
+        )
+
+        tracked = await storage.get_tracked_addresses()
+        assert "0xoiwhale" in tracked

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import pytest
+
 from hypersussy.exchange.hyperliquid.parsers import (
     parse_l2_snapshot,
     parse_meta_and_asset_ctxs,
     parse_user_fills,
     parse_user_state,
+    parse_ws_active_asset_ctx,
     parse_ws_all_mids,
     parse_ws_trades,
 )
@@ -284,3 +287,73 @@ class TestParseWsAllMids:
         mids = parse_ws_all_mids(raw)
         assert mids["BTC"] == 50000.5
         assert mids["ETH"] == 2000.1
+
+
+class TestParseWsActiveAssetCtx:
+    """Tests for WebSocket activeAssetCtx parser."""
+
+    _VALID_MSG = {
+        "channel": "activeAssetCtx",
+        "data": {
+            "coin": "BTC",
+            "ctx": {
+                "funding": "0.0001",
+                "openInterest": "100.5",
+                "prevDayPx": "60000",
+                "dayNtlVlm": "500000000",
+                "premium": "0.0002",
+                "oraclePx": "65000",
+                "markPx": "65100",
+                "midPx": "65050",
+                "impactPxs": ["65000", "65200"],
+                "dayBaseVlm": "7700",
+            },
+        },
+    }
+
+    def test_valid_message(self) -> None:
+        """Parses a full activeAssetCtx message into an AssetSnapshot."""
+        snap = parse_ws_active_asset_ctx(self._VALID_MSG)
+        assert snap is not None
+        assert snap.coin == "BTC"
+        assert snap.mark_price == pytest.approx(65100.0)
+        assert snap.oracle_price == pytest.approx(65000.0)
+        assert snap.funding_rate == pytest.approx(0.0001)
+        assert snap.premium == pytest.approx(0.0002)
+        assert snap.open_interest == pytest.approx(100.5)
+        assert snap.open_interest_usd == pytest.approx(100.5 * 65100.0)
+        assert snap.day_volume_usd == pytest.approx(500_000_000.0)
+        assert snap.mid_price == pytest.approx(65050.0)
+
+    def test_missing_mark_price_returns_none(self) -> None:
+        """Returns None when markPx is absent (inactive asset)."""
+        msg = {
+            "channel": "activeAssetCtx",
+            "data": {"coin": "BTC", "ctx": {"funding": "0.0001"}},
+        }
+        assert parse_ws_active_asset_ctx(msg) is None
+
+    def test_missing_coin_returns_none(self) -> None:
+        """Returns None when coin field is absent."""
+        msg = {
+            "channel": "activeAssetCtx",
+            "data": {"ctx": {"markPx": "65100"}},
+        }
+        assert parse_ws_active_asset_ctx(msg) is None
+
+    def test_null_mid_price(self) -> None:
+        """Sets mid_price to None when midPx is null."""
+        msg = {
+            "channel": "activeAssetCtx",
+            "data": {
+                "coin": "ETH",
+                "ctx": {
+                    "markPx": "3000",
+                    "midPx": None,
+                    "openInterest": "50",
+                },
+            },
+        }
+        snap = parse_ws_active_asset_ctx(msg)
+        assert snap is not None
+        assert snap.mid_price is None

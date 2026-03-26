@@ -197,6 +197,27 @@ class StorageProtocol(Protocol):
         """
         ...
 
+    async def get_top_addresses_and_total_volume(
+        self,
+        coin: str,
+        since_ms: int,
+        limit: int = 10,
+    ) -> tuple[list[tuple[str, float]], float]:
+        """Get top addresses by volume and total volume in one query.
+
+        Combines ``get_top_addresses_by_volume`` and ``get_total_volume``
+        into a single database pass for efficiency.
+
+        Args:
+            coin: Asset name.
+            since_ms: Start timestamp.
+            limit: Max addresses to return.
+
+        Returns:
+            Tuple of (top_addresses, total_volume_usd).
+        """
+        ...
+
     # -- Candles --
 
     async def insert_candles(self, candles: list[CandleBar]) -> None:

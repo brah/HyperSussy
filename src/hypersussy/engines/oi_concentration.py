@@ -8,6 +8,7 @@ volume during that period.
 from __future__ import annotations
 
 import uuid
+from bisect import bisect_left
 from collections import defaultdict, deque
 
 from hypersussy.config import HyperSussySettings
@@ -119,14 +120,13 @@ class OiConcentrationEngine:
         history = self._oi_history[coin]
         cutoff = now_ms - window_ms
 
-        # Find the OI value at the start of the window
-        start_oi = None
-        for ts, oi in history:
-            if ts >= cutoff:
-                start_oi = oi
-                break
+        # Binary search for the first entry >= cutoff
+        idx = bisect_left(history, (cutoff,))
+        if idx >= len(history):
+            return None
+        start_oi = history[idx][1]
 
-        if start_oi is None or start_oi == 0:
+        if start_oi == 0:
             return None
 
         delta_pct = (current_oi - start_oi) / start_oi
@@ -134,17 +134,14 @@ class OiConcentrationEngine:
             return None
 
         # OI changed significantly -- check address concentration
-        top_addresses = await self._storage.get_top_addresses_by_volume(
-            coin,
-            cutoff,
-            self._settings.oi_concentration_top_n,
+        (
+            top_addresses,
+            total_volume,
+        ) = await self._storage.get_top_addresses_and_total_volume(
+            coin, cutoff, self._settings.oi_concentration_top_n
         )
 
-        if not top_addresses:
-            return None
-
-        total_volume = await self._storage.get_total_volume(coin, cutoff)
-        if total_volume == 0:
+        if not top_addresses or total_volume == 0:
             return None
 
         top_volume = sum(vol for _, vol in top_addresses)

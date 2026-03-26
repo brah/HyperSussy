@@ -268,6 +268,41 @@ def parse_ws_trades(
     return trades
 
 
+def parse_ws_active_asset_ctx(msg: dict[str, Any]) -> AssetSnapshot | None:
+    """Parse a WebSocket ``activeAssetCtx`` channel message.
+
+    The WS ``activeAssetCtx`` message delivers real-time asset context
+    updates (funding, OI, prices) for a single native perpetual coin.
+    HL sends an initial snapshot on subscribe and push updates thereafter.
+    All numeric values in ``ctx`` are strings — parsed via ``_f()``.
+
+    Args:
+        msg: The full WS message dict with ``channel`` and ``data`` keys.
+
+    Returns:
+        An AssetSnapshot, or None if the asset is inactive (no markPx).
+    """
+    data: dict[str, Any] = msg.get("data", {})
+    coin: str = data.get("coin", "")
+    ctx: dict[str, Any] = data.get("ctx", {})
+    if not coin or not ctx.get("markPx"):
+        return None
+    mark = _f(ctx["markPx"])
+    oi = _f(ctx.get("openInterest"))
+    return AssetSnapshot(
+        coin=coin,
+        timestamp_ms=int(time.time() * 1000),
+        open_interest=oi,
+        open_interest_usd=oi * mark,
+        mark_price=mark,
+        oracle_price=_f(ctx.get("oraclePx")),
+        funding_rate=_f(ctx.get("funding")),
+        premium=_f(ctx.get("premium")),
+        day_volume_usd=_f(ctx.get("dayNtlVlm")),
+        mid_price=_f(ctx["midPx"]) if ctx.get("midPx") else None,
+    )
+
+
 def parse_ws_all_mids(
     raw: dict[str, Any],
 ) -> dict[str, float]:

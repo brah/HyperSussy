@@ -11,7 +11,7 @@ from hypersussy.api.schemas import (
     TradeFlowItem,
     TradeItem,
 )
-from hypersussy.dashboard.navigation import normalize_wallet_address
+from hypersussy.app.navigation import normalize_wallet_address
 
 router = APIRouter(prefix="/trades", tags=["trades"])
 

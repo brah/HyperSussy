@@ -22,7 +22,7 @@ export function OverviewPage() {
       </PageHeader>
 
       {coins.length === 0 && (
-        <p className="text-[#4a4e69] text-sm mb-6">
+        <p className="text-hs-grey text-sm mb-6">
           Waiting for live data…
         </p>
       )}
@@ -32,7 +32,7 @@ export function OverviewPage() {
         <div className="overflow-x-auto mb-8">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-[#2a2d35] text-[#4a4e69]">
+              <tr className="border-b border-hs-grid text-hs-grey">
                 {["Coin", "Mark Price", "OI (USD)", "Funding Rate", "24h Volume"].map(
                   (h) => (
                     <th key={h} className="py-2 px-3 text-left font-medium">
@@ -46,26 +46,25 @@ export function OverviewPage() {
               {coins.map((snap) => (
                 <tr
                   key={snap.coin}
-                  className="border-b border-[#2a2d35] hover:bg-[#141a22]"
+                  className="border-b border-hs-grid hover:bg-hs-surface"
                 >
-                  <td className="py-2 px-3 text-[#fafafa] font-medium">
+                  <td className="py-2 px-3 text-hs-text font-medium">
                     {snap.coin}
                   </td>
-                  <td className="py-2 px-3 text-[#fafafa] tabular-nums">
+                  <td className="py-2 px-3 text-hs-text tabular-nums">
                     {formatPrice(snap.mark_price)}
                   </td>
-                  <td className="py-2 px-3 text-[#fafafa] tabular-nums">
+                  <td className="py-2 px-3 text-hs-text tabular-nums">
                     {formatUSD(snap.open_interest_usd)}
                   </td>
                   <td
-                    className="py-2 px-3 tabular-nums"
-                    style={{
-                      color: snap.funding_rate >= 0 ? "#00d4aa" : "#ff4b4b",
-                    }}
+                    className={`py-2 px-3 tabular-nums ${
+                      snap.funding_rate >= 0 ? "text-hs-green" : "text-hs-red"
+                    }`}
                   >
                     {formatFundingRate(snap.funding_rate)}
                   </td>
-                  <td className="py-2 px-3 text-[#fafafa] tabular-nums">
+                  <td className="py-2 px-3 text-hs-text tabular-nums">
                     {formatUSD(snap.day_volume_usd)}
                   </td>
                 </tr>
@@ -92,13 +91,13 @@ export function OverviewPage() {
         <MetricCard
           label="Live Alerts"
           value={String(liveAlerts.length)}
-          valueColor={liveAlerts.length > 0 ? "#ffa500" : undefined}
+          valueClassName={liveAlerts.length > 0 ? "text-hs-orange" : undefined}
         />
       </div>
 
       {/* Recent alerts */}
-      <div className="bg-[#141a22] rounded-lg border border-[#2a2d35] p-4">
-        <h2 className="text-[#fafafa] font-medium mb-4">Recent Alerts</h2>
+      <div className="bg-hs-surface rounded-lg border border-hs-grid p-4">
+        <h2 className="text-hs-text font-medium mb-4">Recent Alerts</h2>
         <AlertFeed alerts={liveAlerts} maxRows={20} />
       </div>
     </div>

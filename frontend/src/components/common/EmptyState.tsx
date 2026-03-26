@@ -4,7 +4,7 @@ interface EmptyStateProps {
 
 export function EmptyState({ message }: EmptyStateProps) {
   return (
-    <div className="flex items-center justify-center h-32 text-[#4a4e69] text-sm">
+    <div className="flex h-32 items-center justify-center px-4 text-center text-sm text-hs-grey">
       {message}
     </div>
   );

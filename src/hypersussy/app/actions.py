@@ -1,8 +1,4 @@
-"""Mutation-oriented dashboard actions.
-
-Separates write operations from the read-only ``DashboardReader`` so the
-page layer no longer mixes query and command responsibilities.
-"""
+"""Mutation-oriented SQLite actions for API endpoints."""
 
 from __future__ import annotations
 
@@ -11,11 +7,7 @@ import time
 
 
 class DashboardActions:
-    """Writable SQLite interface for dashboard-triggered actions.
-
-    Args:
-        db_path: Path to the SQLite database file.
-    """
+    """Writable SQLite interface for API-triggered actions."""
 
     def __init__(self, db_path: str) -> None:
         self._conn = sqlite3.connect(
@@ -25,7 +17,7 @@ class DashboardActions:
         )
         self._conn.execute("PRAGMA busy_timeout=5000")
 
-    def add_tracked_address(self, address: str, label: str) -> None:
+    def add_tracked_address(self, address: str, label: str | None) -> None:
         """Manually add a whale address for tracking."""
         now_ms = int(time.time() * 1000)
         self._conn.execute(
@@ -33,7 +25,7 @@ class DashboardActions:
                (address, label, source, first_seen_ms,
                 total_volume_usd, last_active_ms, is_manual)
                VALUES (?, ?, 'manual', ?, 0.0, ?, 1)""",
-            (address, label, now_ms, now_ms),
+            (address, label or "", now_ms, now_ms),
         )
         self._conn.commit()
 

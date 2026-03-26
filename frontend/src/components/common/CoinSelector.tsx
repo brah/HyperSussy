@@ -5,18 +5,18 @@ interface CoinSelectorProps {
 }
 
 export function CoinSelector({ coins, value, onChange }: CoinSelectorProps) {
+  const isLoading = coins.length === 0;
+
   return (
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="bg-[#141a22] border border-[#2a2d35] text-[#fafafa] text-sm
-                 rounded px-3 py-1.5 focus:outline-none focus:border-[#00d4aa]"
+      disabled={isLoading}
+      className="rounded border border-hs-grid bg-hs-surface px-3 py-1.5 text-sm text-hs-text
+                 focus:border-hs-green focus:outline-none disabled:cursor-not-allowed
+                 disabled:text-hs-grey"
     >
-      {coins.length === 0 && (
-        <option value="" disabled>
-          Loading…
-        </option>
-      )}
+      {isLoading && <option value={value}>Loading...</option>}
       {coins.map((c) => (
         <option key={c} value={c}>
           {c}

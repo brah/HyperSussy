@@ -3,6 +3,7 @@
 export const colors = {
   bg: "#0e1117",
   surface: "#141a22",
+  green: "#00d4aa",
   teal: "#00d4aa",
   red: "#ff4b4b",
   orange: "#ffa500",

@@ -191,38 +191,9 @@ def _run_api() -> None:
     uvicorn.run(app, host="0.0.0.0", port=8000)
 
 
-def _run_streamlit() -> None:
-    """Launch the Streamlit dashboard via subprocess.
-
-    Delegates entirely to `streamlit run` so Streamlit manages its own
-    server lifecycle and event loop, avoiding conflicts with asyncio.
-    """
-    import shutil
-    import subprocess
-    from importlib.resources import files
-
-    streamlit_exe = shutil.which("streamlit")
-    if streamlit_exe is None:
-        logger.error("streamlit not found. Run: uv sync --extra dashboard")
-        sys.exit(1)
-
-    app_path = str(files("hypersussy.dashboard").joinpath("app.py"))
-    proc = subprocess.Popen(
-        [streamlit_exe, "run", app_path, "--server.headless", "true"],
-    )
-    try:
-        proc.wait()
-    except KeyboardInterrupt:
-        proc.terminate()
-        proc.wait()
-    sys.exit(proc.returncode)
-
-
 def main() -> None:
     """Synchronous entry point for the CLI."""
-    if "--streamlit" in sys.argv:
-        _run_streamlit()
-    elif "--api" in sys.argv:
+    if "--api" in sys.argv:
         _run_api()
     else:
         asyncio.run(_run())

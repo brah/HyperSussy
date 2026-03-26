@@ -34,11 +34,6 @@ notebooks = [
     "ipywidgets>=8.0",
     "tqdm>=4.60",
 ]
-dashboard = [
-    "streamlit>=1.35.0",
-    "plotly>=5.20.0",
-    "streamlit-lightweight-charts>=0.7.5",
-]
 api = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.30",
@@ -74,30 +69,6 @@ module = "requests.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-module = "plotly"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "plotly.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "streamlit"
-ignore_missing_imports = true
-follow_untyped_imports = true
-
-[[tool.mypy.overrides]]
-module = "streamlit.*"
-ignore_missing_imports = true
-follow_untyped_imports = true
-
-# Dashboard code uses untyped Streamlit decorators (@st.fragment, @st.cache_resource)
-# which have no type stubs. Suppressed here rather than per-call-site.
-[[tool.mypy.overrides]]
-module = "hypersussy.dashboard.*"
-disallow_untyped_decorators = false
-
-[[tool.mypy.overrides]]
 module = "hypersussy.api.*"
 disallow_untyped_decorators = false
 
@@ -107,10 +78,6 @@ ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "uvicorn.*"
-ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = "streamlit_lightweight_charts.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

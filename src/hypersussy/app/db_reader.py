@@ -1,9 +1,4 @@
-"""Synchronous read-only SQLite queries for the Streamlit dashboard.
-
-Opens a separate sqlite3 connection in WAL read-only mode so Streamlit's
-main thread can query history without conflicting with the async writer.
-All methods return plain Python dicts; no asyncio required.
-"""
+"""Synchronous read-only SQLite queries for the FastAPI dashboard."""
 
 from __future__ import annotations
 
@@ -12,21 +7,13 @@ import time
 
 
 class DashboardReader:
-    """Read-only SQLite interface for dashboard pages.
-
-    Uses a URI connection with mode=ro so no writes are possible on the
-    primary connection.
-
-    Args:
-        db_path: Path to the SQLite database file.
-    """
+    """Read-only SQLite interface for API routes."""
 
     def __init__(self, db_path: str) -> None:
         self._conn = sqlite3.connect(
             f"file:{db_path}?mode=ro",
             uri=True,
             check_same_thread=False,
-            # autocommit: never hold implicit read txns
             isolation_level=None,
         )
         self._conn.row_factory = sqlite3.Row
@@ -45,23 +32,12 @@ class DashboardReader:
         cur = self._conn.execute(query, params)
         return [dict(row) for row in cur.fetchall()]
 
-    # -- Alerts --
-
     def get_alerts_all(
         self,
         limit: int = 200,
         since_ms: int = 0,
     ) -> list[dict[str, object]]:
-        """Fetch recent alerts ordered newest-first.
-
-        Args:
-            limit: Maximum number of rows to return.
-            since_ms: Only return alerts after this timestamp (ms).
-
-        Returns:
-            List of alert dicts.  Includes an ``address`` key extracted
-            from metadata via ``json_extract`` at the SQL level.
-        """
+        """Fetch recent alerts ordered newest-first."""
         return self._fetch_dicts(
             """
             SELECT alert_id, alert_type, severity, coin,
@@ -75,23 +51,12 @@ class DashboardReader:
             (since_ms, limit),
         )
 
-    # -- Snapshots --
-
     def get_oi_history(
         self,
         coin: str,
         hours: int = 24,
     ) -> list[dict[str, object]]:
-        """Fetch open interest snapshots for a coin over the past N hours.
-
-        Args:
-            coin: Asset ticker symbol.
-            hours: Lookback window in hours.
-
-        Returns:
-            List of dicts with keys: timestamp_ms, open_interest_usd,
-            mark_price, funding_rate.
-        """
+        """Fetch open interest snapshots for a coin over the past N hours."""
         since_ms = self._hours_to_since_ms(hours)
         return self._fetch_dicts(
             """
@@ -108,16 +73,7 @@ class DashboardReader:
         coin: str,
         hours: int = 24,
     ) -> list[dict[str, object]]:
-        """Fetch funding rate history for a coin over the past N hours.
-
-        Args:
-            coin: Asset ticker symbol.
-            hours: Lookback window in hours.
-
-        Returns:
-            List of dicts with keys: timestamp_ms, funding_rate, premium,
-            mark_price, oracle_price.
-        """
+        """Fetch funding rate history for a coin over the past N hours."""
         since_ms = self._hours_to_since_ms(hours)
         return self._fetch_dicts(
             """
@@ -129,23 +85,12 @@ class DashboardReader:
             (coin, since_ms),
         )
 
-    # -- Trades --
-
     def get_top_whales(
         self,
         coin: str,
         hours: int = 1,
     ) -> list[dict[str, object]]:
-        """Top addresses by volume (buyer + seller combined) for a coin.
-
-        Args:
-            coin: Asset ticker symbol.
-            hours: Lookback window in hours.
-
-        Returns:
-            List of dicts with keys: address, volume_usd, ordered by
-            volume_usd descending.
-        """
+        """Top addresses by combined buy and sell volume for a coin."""
         since_ms = self._hours_to_since_ms(hours)
         return self._fetch_dicts(
             """
@@ -176,15 +121,7 @@ class DashboardReader:
         address: str,
         hours: int = 24,
     ) -> list[dict[str, object]]:
-        """Fetch recent trades involving an address.
-
-        Args:
-            address: The 0x address (matched as buyer or seller).
-            hours: Lookback window in hours.
-
-        Returns:
-            List of trade dicts ordered newest-first, up to 200 rows.
-        """
+        """Fetch recent trades involving an address."""
         since_ms = self._hours_to_since_ms(hours)
         return self._fetch_dicts(
             """
@@ -198,21 +135,11 @@ class DashboardReader:
             (address, address, since_ms),
         )
 
-    # -- Tracked addresses --
-
     def get_tracked_addresses(
         self,
         limit: int = 50,
     ) -> list[dict[str, object]]:
-        """Fetch tracked whale addresses ordered by total volume.
-
-        Args:
-            limit: Maximum number of addresses to return.
-
-        Returns:
-            List of dicts with keys: address, label, total_volume_usd,
-            last_active_ms, source.
-        """
+        """Fetch tracked whale addresses ordered by total volume."""
         return self._fetch_dicts(
             """
             SELECT address, label, total_volume_usd, last_active_ms, source
@@ -224,11 +151,7 @@ class DashboardReader:
         )
 
     def get_tracked_address_count(self) -> int:
-        """Return the total number of tracked whale addresses.
-
-        Returns:
-            Count of rows in tracked_addresses table.
-        """
+        """Return the total number of tracked whale addresses."""
         cur = self._conn.execute("SELECT COUNT(*) FROM tracked_addresses")
         return int(cur.fetchone()[0])
 
@@ -236,15 +159,7 @@ class DashboardReader:
         self,
         address: str,
     ) -> list[dict[str, object]]:
-        """Latest position per coin for a tracked whale address.
-
-        Args:
-            address: The 0x whale address.
-
-        Returns:
-            List of dicts with keys: coin, size, notional_usd,
-            unrealized_pnl, liquidation_price, mark_price, timestamp_ms.
-        """
+        """Latest position per coin for a tracked whale address."""
         return self._fetch_dicts(
             """
             SELECT p.coin, p.size, p.notional_usd, p.unrealized_pnl,
@@ -262,20 +177,11 @@ class DashboardReader:
             (address, address),
         )
 
-    # -- Alert aggregations --
-
     def get_alert_counts_by_type(
         self,
         since_ms: int = 0,
     ) -> dict[str, int]:
-        """Count of alerts per engine type since a given timestamp.
-
-        Args:
-            since_ms: Only count alerts after this timestamp (ms).
-
-        Returns:
-            Mapping of alert_type to count.
-        """
+        """Count alerts per engine type since a given timestamp."""
         cur = self._conn.execute(
             """
             SELECT alert_type, COUNT(*) AS cnt
@@ -292,19 +198,7 @@ class DashboardReader:
         address: str,
         limit: int = 20,
     ) -> list[dict[str, object]]:
-        """Fetch alerts associated with a tracked whale address.
-
-        Uses SQLite's json_extract to match alerts whose metadata
-        contains the given address.
-
-        Args:
-            address: The 0x whale address.
-            limit: Maximum alerts to return.
-
-        Returns:
-            List of dicts with keys: alert_type, severity, coin, title,
-            timestamp_ms; ordered newest-first.
-        """
+        """Fetch alerts associated with a tracked whale address."""
         return self._fetch_dicts(
             """
             SELECT alert_type, severity, coin, title, timestamp_ms
@@ -317,11 +211,7 @@ class DashboardReader:
         )
 
     def get_latest_oi_per_coin(self) -> dict[str, float]:
-        """Latest open interest (base units) per coin from asset_snapshots.
-
-        Returns:
-            Mapping of coin symbol to most recent open_interest value.
-        """
+        """Latest open interest per coin from asset snapshots."""
         cur = self._conn.execute(
             """
             SELECT s.coin, s.open_interest
@@ -337,17 +227,11 @@ class DashboardReader:
         return {row["coin"]: float(row["open_interest"]) for row in cur.fetchall()}
 
     def get_distinct_coins(self) -> list[str]:
-        """Return distinct coin symbols present in asset_snapshots.
-
-        Returns:
-            Sorted list of coin symbols.
-        """
+        """Return distinct coin symbols present in asset snapshots."""
         cur = self._conn.execute(
             "SELECT DISTINCT coin FROM asset_snapshots ORDER BY coin"
         )
         return [row["coin"] for row in cur.fetchall()]
-
-    # -- Candles --
 
     def get_candles(
         self,
@@ -355,17 +239,7 @@ class DashboardReader:
         interval: str,
         hours: int = 48,
     ) -> list[dict[str, object]]:
-        """Fetch OHLCV candle rows for a coin and interval.
-
-        Args:
-            coin: Asset ticker symbol.
-            interval: Candle interval string, e.g. ``"1m"``, ``"1h"``.
-            hours: Lookback window in hours.
-
-        Returns:
-            List of dicts with keys: timestamp_ms, open, high, low, close,
-            volume, num_trades; ordered oldest-first.
-        """
+        """Fetch OHLCV candle rows for a coin and interval."""
         since_ms = self._hours_to_since_ms(hours)
         return self._fetch_dicts(
             """
@@ -383,20 +257,7 @@ class DashboardReader:
         hours: int = 24,
         limit: int = 15,
     ) -> list[dict[str, object]]:
-        """Top addresses by combined buy+sell volume for a coin.
-
-        Aggregates buyer and seller sides via UNION ALL and uses a window
-        function to attach the total volume for percentage calculation.
-
-        Args:
-            coin: Asset ticker symbol.
-            hours: Lookback window in hours.
-            limit: Maximum number of addresses to return.
-
-        Returns:
-            List of dicts with keys: address, volume_usd, total_volume;
-            ordered by volume_usd descending.
-        """
+        """Top addresses by combined buy and sell volume for a coin."""
         since_ms = self._hours_to_since_ms(hours)
         return self._fetch_dicts(
             """
@@ -428,17 +289,7 @@ class DashboardReader:
         coin: str,
         hours: int = 24,
     ) -> list[dict[str, object]]:
-        """Buy vs sell volume bucketed by hour for a coin.
-
-        Args:
-            coin: Asset ticker symbol.
-            hours: Lookback window in hours.
-
-        Returns:
-            List of dicts with keys: bucket (ms epoch floored to hour),
-            side (``"B"`` = buy, ``"A"`` = sell), volume_usd; ordered by
-            bucket ascending.
-        """
+        """Buy vs sell volume bucketed by hour for a coin."""
         since_ms = self._hours_to_since_ms(hours)
         return self._fetch_dicts(
             """
@@ -454,5 +305,5 @@ class DashboardReader:
         )
 
     def close(self) -> None:
-        """Close all database connections."""
+        """Close the read-only database connection."""
         self._conn.close()

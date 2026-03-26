@@ -17,11 +17,11 @@ export function AlertFeed({ alerts, maxRows = 50 }: AlertFeedProps) {
   const displayed = alerts.slice(0, maxRows);
   if (displayed.length === 0) {
     return (
-      <p className="text-[#4a4e69] text-sm py-4 text-center">No alerts yet.</p>
+      <p className="py-4 text-center text-sm text-hs-grey">No alerts yet.</p>
     );
   }
   return (
-    <div className="divide-y divide-[#2a2d35]">
+    <div className="divide-y divide-hs-grid">
       {displayed.map((alert, idx) => (
         <div key={isAlertItem(alert) ? alert.alert_id : idx} className="py-2">
           <div className="flex items-center gap-2 mb-0.5">
@@ -34,14 +34,14 @@ export function AlertFeed({ alerts, maxRows = 50 }: AlertFeedProps) {
             >
               {alert.severity}
             </span>
-            <span className="text-[#4a4e69] text-xs">{alert.coin}</span>
-            <span className="text-[#4a4e69] text-xs ml-auto">
+            <span className="text-xs text-hs-grey">{alert.coin}</span>
+            <span className="ml-auto text-xs text-hs-grey">
               {fmtDatetime(alert.timestamp_ms)}
             </span>
           </div>
-          <p className="text-[#fafafa] text-sm">{alert.title}</p>
+          <p className="text-sm text-hs-text">{alert.title}</p>
           {isAlertItem(alert) && alert.description && (
-            <p className="text-[#4a4e69] text-xs mt-0.5 line-clamp-2">
+            <p className="mt-0.5 line-clamp-2 text-xs text-hs-grey">
               {alert.description}
             </p>
           )}

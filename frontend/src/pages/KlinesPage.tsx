@@ -48,8 +48,8 @@ export function KlinesPage() {
         <select
           value={interval}
           onChange={(e) => setInterval(e.target.value as Interval)}
-          className="bg-[#141a22] border border-[#2a2d35] text-[#fafafa] text-sm
-                     rounded px-3 py-1.5 focus:outline-none focus:border-[#00d4aa]"
+          className="bg-hs-surface border border-hs-grid text-hs-text text-sm
+                     rounded px-3 py-1.5 focus:outline-none focus:border-hs-green"
         >
           {INTERVAL_OPTIONS.map((iv) => (
             <option key={iv} value={iv}>
@@ -61,14 +61,14 @@ export function KlinesPage() {
 
       <div className="space-y-6">
         {/* Candlestick chart */}
-        <div className="bg-[#141a22] border border-[#2a2d35] rounded-lg p-4">
-          <h2 className="text-[#fafafa] font-medium mb-3">
+        <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+          <h2 className="text-hs-text font-medium mb-3">
             {coin} / {interval}
           </h2>
           {candles.length > 0 ? (
             <CandlestickChart candles={candles} height={380} />
           ) : (
-            <p className="text-[#4a4e69] text-sm py-8 text-center">
+            <p className="text-hs-grey text-sm py-8 text-center">
               No candle data for {coin} ({interval}).
             </p>
           )}
@@ -76,49 +76,49 @@ export function KlinesPage() {
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Top holders concentration */}
-          <div className="bg-[#141a22] border border-[#2a2d35] rounded-lg p-4">
-            <h2 className="text-[#fafafa] font-medium mb-3">
+          <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+            <h2 className="text-hs-text font-medium mb-3">
               Top Holder Concentration — 24h
             </h2>
             {topHolders.length > 0 ? (
               <TopHoldersChart data={topHolders} />
             ) : (
-              <p className="text-[#4a4e69] text-sm py-8 text-center">No data.</p>
+              <p className="text-hs-grey text-sm py-8 text-center">No data.</p>
             )}
           </div>
 
           {/* Trade flow */}
-          <div className="bg-[#141a22] border border-[#2a2d35] rounded-lg p-4">
-            <h2 className="text-[#fafafa] font-medium mb-3">
+          <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+            <h2 className="text-hs-text font-medium mb-3">
               Trade Flow — 24h
             </h2>
             {tradeFlow.length > 0 ? (
               <TradeFlowChart data={tradeFlow} />
             ) : (
-              <p className="text-[#4a4e69] text-sm py-8 text-center">No data.</p>
+              <p className="text-hs-grey text-sm py-8 text-center">No data.</p>
             )}
           </div>
         </div>
 
         {/* Top whales table */}
         {topWhales.length > 0 && (
-          <div className="bg-[#141a22] border border-[#2a2d35] rounded-lg p-4">
-            <h2 className="text-[#fafafa] font-medium mb-3">
+          <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+            <h2 className="text-hs-text font-medium mb-3">
               Top Traders — {coin} (1h)
             </h2>
-            <div className="divide-y divide-[#2a2d35]">
+            <div className="divide-y divide-hs-grid">
               {topWhales.slice(0, 10).map((w, idx) => (
                 <div
                   key={w.address}
                   className="flex items-center justify-between py-2"
                 >
                   <div className="flex items-center gap-3">
-                    <span className="text-[#4a4e69] text-sm w-5">
+                    <span className="text-hs-grey text-sm w-5">
                       {idx + 1}
                     </span>
                     <AddressLink address={w.address} />
                   </div>
-                  <span className="text-[#fafafa] tabular-nums text-sm">
+                  <span className="text-hs-text tabular-nums text-sm">
                     {formatUSD(w.volume_usd)}
                   </span>
                 </div>

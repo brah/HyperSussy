@@ -47,8 +47,8 @@ export function ChartsPage() {
         <select
           value={hours}
           onChange={(e) => setHours(Number(e.target.value))}
-          className="bg-[#141a22] border border-[#2a2d35] text-[#fafafa] text-sm
-                     rounded px-3 py-1.5 focus:outline-none focus:border-[#00d4aa]"
+          className="bg-hs-surface border border-hs-grid text-hs-text text-sm
+                     rounded px-3 py-1.5 focus:outline-none focus:border-hs-green"
         >
           {HOUR_OPTIONS.map((h) => (
             <option key={h} value={h}>
@@ -59,23 +59,23 @@ export function ChartsPage() {
       </PageHeader>
 
       <div className="space-y-6">
-        <div className="bg-[#141a22] border border-[#2a2d35] rounded-lg p-4">
-          <h2 className="text-[#fafafa] font-medium mb-3">
+        <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+          <h2 className="text-hs-text font-medium mb-3">
             Open Interest — {coin}
           </h2>
           <OIChart data={oiData} />
         </div>
 
-        <div className="bg-[#141a22] border border-[#2a2d35] rounded-lg p-4">
-          <h2 className="text-[#fafafa] font-medium mb-3">
+        <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+          <h2 className="text-hs-text font-medium mb-3">
             Funding Rate — {coin}
           </h2>
           <FundingChart data={fundingData} />
         </div>
 
         {markOracleData.length > 0 && (
-          <div className="bg-[#141a22] border border-[#2a2d35] rounded-lg p-4">
-            <h2 className="text-[#fafafa] font-medium mb-3">
+          <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+            <h2 className="text-hs-text font-medium mb-3">
               Mark vs Oracle Price — {coin}
             </h2>
             <ResponsiveContainer width="100%" height={240}>

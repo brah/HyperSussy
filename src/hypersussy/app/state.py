@@ -1,9 +1,4 @@
-"""Thread-safe shared state between the orchestrator thread and Streamlit.
-
-SharedState implements the DataBus protocol so it can be passed directly
-to the Orchestrator as its data_bus argument, receiving snapshots and alerts
-from the same push interface used by the TUI.
-"""
+"""Thread-safe shared state between the background runner and API."""
 
 from __future__ import annotations
 
@@ -17,17 +12,7 @@ from hypersussy.models import Alert, AssetSnapshot
 
 @dataclass(frozen=True, slots=True)
 class LiveSnapshot:
-    """Condensed, mutable market snapshot held in SharedState.
-
-    Attributes:
-        coin: Asset ticker symbol.
-        mark_price: Current mark price in USD.
-        open_interest_usd: Open interest denominated in USD.
-        funding_rate: Current hourly funding rate.
-        premium: Mark/oracle price premium.
-        day_volume_usd: 24-hour volume in USD.
-        timestamp_ms: Unix timestamp of the snapshot in milliseconds.
-    """
+    """Condensed market snapshot stored in shared state."""
 
     coin: str
     mark_price: float
@@ -40,7 +25,7 @@ class LiveSnapshot:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeIssue:
-    """A captured engine or runtime issue for dashboard display."""
+    """A captured engine or runtime issue for UI display."""
 
     source: str
     message: str
@@ -49,7 +34,7 @@ class RuntimeIssue:
 
 @dataclass(frozen=True, slots=True)
 class RuntimeHealth:
-    """Immutable summary of current dashboard runtime health."""
+    """Immutable summary of current runner health."""
 
     is_running: bool
     snapshot_count: int
@@ -60,15 +45,7 @@ class RuntimeHealth:
 
 
 class SharedState:
-    """Thread-safe store for live market data and alerts.
-
-    Implements the DataBus protocol (push_snapshot / push_alert) so it can
-    be passed as data_bus to the Orchestrator. All mutations are protected
-    by an RLock; reads return shallow copies to avoid external mutation.
-
-    Args:
-        max_alerts: Maximum number of alerts retained in the deque.
-    """
+    """Thread-safe store for live snapshots, alerts, and runtime health."""
 
     def __init__(self, max_alerts: int = 500) -> None:
         self._lock = threading.RLock()
@@ -80,14 +57,8 @@ class SharedState:
         self._last_snapshot_ms: int | None = None
         self._last_alert_ms: int | None = None
 
-    # -- DataBus protocol --
-
     def push_snapshot(self, snapshot: AssetSnapshot) -> None:
-        """Overwrite the latest snapshot for a coin.
-
-        Args:
-            snapshot: The incoming asset snapshot.
-        """
+        """Store the latest snapshot for one coin."""
         live = LiveSnapshot(
             coin=snapshot.coin,
             mark_price=snapshot.mark_price,
@@ -102,46 +73,28 @@ class SharedState:
             self._last_snapshot_ms = snapshot.timestamp_ms
 
     def push_alert(self, alert: Alert) -> None:
-        """Append an alert to the live deque.
-
-        Args:
-            alert: The dispatched alert.
-        """
+        """Append a new alert to the in-memory live feed."""
         with self._lock:
             self._alerts.append(alert)
             self._last_alert_ms = alert.timestamp_ms
 
-    # -- Read interface for Streamlit --
+    async def add_alert(self, alert: Alert) -> None:
+        """Async compatibility wrapper for alert sinks."""
+        self.push_alert(alert)
 
     def get_snapshots(self) -> dict[str, LiveSnapshot]:
-        """Return a shallow copy of the current snapshots dict.
-
-        Returns:
-            Mapping of coin symbol to its latest LiveSnapshot.
-        """
+        """Return a shallow copy of the live snapshots."""
         with self._lock:
             return dict(self._snapshots)
 
     def get_recent_alerts(self, limit: int = 100) -> list[Alert]:
-        """Return the most recent alerts as a list, newest-first.
-
-        Args:
-            limit: Maximum number of alerts to return.
-
-        Returns:
-            List of Alert objects ordered from newest to oldest.
-        """
+        """Return recent alerts newest-first."""
         with self._lock:
             alerts = list(self._alerts)
         return list(reversed(alerts))[:limit]
 
     def mark_engine_error(self, engine_name: str, error: str) -> None:
-        """Record the latest error for an engine.
-
-        Args:
-            engine_name: Name of the detection engine.
-            error: Error message string.
-        """
+        """Record the latest error for an engine."""
         issue = RuntimeIssue(
             source=engine_name,
             message=error,
@@ -151,23 +104,19 @@ class SharedState:
             self._engine_errors[engine_name] = issue
 
     def clear_engine_error(self, engine_name: str) -> None:
-        """Clear the latest recorded error for an engine."""
+        """Clear a previously recorded engine error."""
         with self._lock:
             self._engine_errors.pop(engine_name, None)
 
     def get_engine_errors(self) -> dict[str, str]:
-        """Return a copy of the latest error per engine.
-
-        Returns:
-            Mapping of engine name to its most recent error message.
-        """
+        """Return the latest engine error messages."""
         with self._lock:
             return {
                 name: issue.message for name, issue in self._engine_errors.items()
             }
 
     def mark_runtime_error(self, source: str, error: str) -> None:
-        """Record a non-engine runtime error for dashboard visibility."""
+        """Record a runtime error for UI visibility."""
         issue = RuntimeIssue(
             source=source,
             message=error,
@@ -182,7 +131,7 @@ class SharedState:
             self._runtime_errors.pop(source, None)
 
     def get_runtime_errors(self) -> dict[str, str]:
-        """Return a copy of the latest non-engine runtime errors."""
+        """Return the latest runtime error messages."""
         with self._lock:
             return {
                 name: issue.message for name, issue in self._runtime_errors.items()
@@ -201,16 +150,12 @@ class SharedState:
             )
 
     def set_running(self, value: bool) -> None:
-        """Update the running flag (called by BackgroundRunner).
-
-        Args:
-            value: True when the orchestrator loop is active.
-        """
+        """Update the runner active flag."""
         with self._lock:
             self._running = value
 
     @property
     def is_running(self) -> bool:
-        """True while the background orchestrator thread is active."""
+        """True while the background runner is active."""
         with self._lock:
             return self._running

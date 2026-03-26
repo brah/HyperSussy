@@ -19,10 +19,10 @@ from fastapi.staticfiles import StaticFiles
 from hypersussy.api.routes import alerts, candles, health, snapshots, trades, whales
 from hypersussy.api.ws import router as ws_router
 from hypersussy.config import HyperSussySettings
-from hypersussy.dashboard.actions import DashboardActions
-from hypersussy.dashboard.db_reader import DashboardReader
-from hypersussy.dashboard.runner import BackgroundRunner
-from hypersussy.dashboard.state import SharedState
+from hypersussy.app.actions import DashboardActions
+from hypersussy.app.db_reader import DashboardReader
+from hypersussy.app.runner import BackgroundRunner
+from hypersussy.app.state import SharedState
 
 
 @asynccontextmanager

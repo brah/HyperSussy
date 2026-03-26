@@ -2,8 +2,8 @@
  * WebSocket client and Zustand live-state store.
  *
  * Connects to /ws/live and dispatches server messages into a Zustand store
- * that components subscribe to via selectors.  Reconnects with exponential
- * backoff (1 s → 2 s → 4 s → … capped at 30 s) on disconnection.
+ * that components subscribe to via selectors. Reconnects with exponential
+ * backoff (1 s -> 2 s -> 4 s -> ... capped at 30 s) on disconnection.
  */
 
 import { create } from "zustand";
@@ -11,6 +11,7 @@ import type { AlertItem, HealthResponse, LiveSnapshot, WsMessage } from "./types
 
 const MAX_LIVE_ALERTS = 100;
 const BACKOFF_CAP_MS = 30_000;
+const STOP_GRACE_MS = 100;
 
 interface WsState {
   snapshots: Record<string, LiveSnapshot>;
@@ -39,9 +40,40 @@ export const useWsStore = create<WsState>((set) => ({
 
 let _ws: WebSocket | null = null;
 let _backoffMs = 1_000;
+let _subscriberCount = 0;
+let _allowReconnect = true;
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let _stopTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearReconnectTimer(): void {
+  if (_reconnectTimer !== null) {
+    clearTimeout(_reconnectTimer);
+    _reconnectTimer = null;
+  }
+}
+
+function clearStopTimer(): void {
+  if (_stopTimer !== null) {
+    clearTimeout(_stopTimer);
+    _stopTimer = null;
+  }
+}
+
+function scheduleReconnect(): void {
+  clearReconnectTimer();
+  _reconnectTimer = setTimeout(() => {
+    _backoffMs = Math.min(_backoffMs * 2, BACKOFF_CAP_MS);
+    if (_subscriberCount > 0) {
+      connect();
+    }
+  }, _backoffMs);
+}
 
 function connect(): void {
+  if (_subscriberCount === 0) {
+    return;
+  }
+
   const { setConnected, setSnapshots, addAlert, setHealth } =
     useWsStore.getState();
 
@@ -49,6 +81,8 @@ function connect(): void {
   const url = import.meta.env.DEV
     ? "ws://localhost:8000/ws/live"
     : `${scheme}://${location.host}/ws/live`;
+
+  _allowReconnect = true;
   _ws = new WebSocket(url);
 
   _ws.onopen = () => {
@@ -63,6 +97,7 @@ function connect(): void {
     } catch {
       return;
     }
+
     switch (msg.type) {
       case "snapshots":
         setSnapshots(msg.data);
@@ -79,10 +114,13 @@ function connect(): void {
   _ws.onclose = () => {
     setConnected(false);
     _ws = null;
-    _reconnectTimer = setTimeout(() => {
-      _backoffMs = Math.min(_backoffMs * 2, BACKOFF_CAP_MS);
-      connect();
-    }, _backoffMs);
+
+    if (!_allowReconnect || _subscriberCount === 0) {
+      _allowReconnect = true;
+      return;
+    }
+
+    scheduleReconnect();
   };
 
   _ws.onerror = () => {
@@ -92,19 +130,38 @@ function connect(): void {
 }
 
 export function startWebSocket(): void {
-  if (_ws !== null) return;
-  if (_reconnectTimer !== null) {
-    clearTimeout(_reconnectTimer);
-    _reconnectTimer = null;
+  _subscriberCount += 1;
+  clearStopTimer();
+  clearReconnectTimer();
+
+  if (_ws !== null) {
+    return;
   }
+
   connect();
 }
 
 export function stopWebSocket(): void {
-  if (_reconnectTimer !== null) {
-    clearTimeout(_reconnectTimer);
-    _reconnectTimer = null;
+  _subscriberCount = Math.max(0, _subscriberCount - 1);
+  if (_subscriberCount > 0) {
+    return;
   }
-  _ws?.close();
-  _ws = null;
+
+  clearReconnectTimer();
+  clearStopTimer();
+
+  // React Strict Mode intentionally mounts, unmounts, and remounts once in
+  // development. Delaying teardown avoids closing a still-connecting socket
+  // during that probe cycle while still cleaning up on a real app unmount.
+  _stopTimer = setTimeout(() => {
+    _stopTimer = null;
+    if (_subscriberCount > 0) {
+      return;
+    }
+
+    _allowReconnect = false;
+    useWsStore.getState().setConnected(false);
+    _ws?.close();
+    _ws = null;
+  }, STOP_GRACE_MS);
 }

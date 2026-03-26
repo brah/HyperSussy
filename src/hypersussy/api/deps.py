@@ -11,9 +11,9 @@ from typing import Annotated
 
 from fastapi import Depends, Request
 
-from hypersussy.dashboard.actions import DashboardActions
-from hypersussy.dashboard.db_reader import DashboardReader
-from hypersussy.dashboard.state import SharedState
+from hypersussy.app.actions import DashboardActions
+from hypersussy.app.db_reader import DashboardReader
+from hypersussy.app.state import SharedState
 
 
 def get_reader(request: Request) -> DashboardReader:

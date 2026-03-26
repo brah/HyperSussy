@@ -19,7 +19,7 @@ import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from hypersussy.dashboard.state import LiveSnapshot, SharedState
+from hypersussy.app.state import LiveSnapshot, SharedState
 
 router = APIRouter()
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from hypersussy.api.deps import ReaderDep
 from hypersussy.api.schemas import AlertItem, AlertSummaryItem
-from hypersussy.dashboard.navigation import normalize_wallet_address
+from hypersussy.app.navigation import normalize_wallet_address
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 

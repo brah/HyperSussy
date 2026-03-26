@@ -94,7 +94,7 @@ class LiquidationRiskEngine:
 
         tracked = await self._storage.get_tracked_addresses()
 
-        for address in tracked[:50]:
+        for address in tracked[: self._settings.liquidation_max_tracked]:
             try:
                 positions = await self._storage.get_latest_positions(address)
             except sqlite3.Error:

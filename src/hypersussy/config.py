@@ -48,6 +48,7 @@ class HyperSussySettings(BaseSettings):
     oi_concentration_top_n: int = 5
     oi_concentration_threshold: float = 0.20
     oi_min_usd: float = 100_000.0
+    oi_history_maxlen: int = 4000
 
     # Whale Tracker engine
     whale_volume_threshold_usd: float = 15_000_000.0
@@ -59,6 +60,8 @@ class HyperSussySettings(BaseSettings):
     large_position_oi_pct: float = 0.20
     large_position_min_oi_usd: float = 1_500_000.0
     large_position_change_usd: float = 1_000_000.0
+    whale_poll_batch_size: int = 10
+    twap_active_window_multiplier: int = 3
 
     # Pre-Move engine
     pre_move_threshold_pct: float = 0.02
@@ -69,14 +72,18 @@ class HyperSussySettings(BaseSettings):
     pre_move_min_notional_usd: float = 500_000.0
     pre_move_top_n: int = 5
     pre_move_cooldown_ms: int = 3_600_000
+    pre_move_price_maxlen: int = 10_000
+    pre_move_trade_maxlen: int = 50_000
 
     # Funding Anomaly engine
     funding_zscore_threshold: float = 3.0
     funding_abs_threshold: float = 0.001
     funding_rolling_window: int = 168  # hours
+    funding_min_samples: int = 24
 
     # Liquidation Risk engine
     liquidation_distance_threshold: float = 0.05
+    liquidation_max_tracked: int = 50
 
     # Alert system
     alert_cooldown_s: int = 3600

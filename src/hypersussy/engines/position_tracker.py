@@ -1,0 +1,240 @@
+"""Polls positions of tracked whales and generates alerts."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+from collections.abc import Coroutine
+
+from hyperliquid.utils.error import ClientError
+
+from hypersussy.config import HyperSussySettings
+from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
+from hypersussy.exchange.base import ExchangeReader
+from hypersussy.models import Alert, Position, TwapSliceFill
+from hypersussy.storage.base import StorageProtocol
+
+logger = logging.getLogger(__name__)
+
+
+class PositionTracker:
+    """Polls positions for tracked whales and detects changes."""
+
+    def __init__(
+        self,
+        storage: StorageProtocol,
+        reader: ExchangeReader,
+        settings: HyperSussySettings,
+    ) -> None:
+        self._storage = storage
+        self._reader = reader
+        self._settings = settings
+        self._last_positions: dict[str, list[tuple[str, float]]] = {}
+        self._polled_once: set[str] = set()
+        self._last_polled: dict[str, float] = {}
+        self._coin_oi: dict[str, float] = {}
+        self._whale_active_dexes: dict[str, set[str]] = {}
+        self._last_alert_ms: dict[str, int] = {}
+
+    async def poll_positions(
+        self, timestamp_ms: int, db_tracked: set[str]
+    ) -> list[Alert]:
+        """Poll positions for tracked whales due for refresh."""
+        now_s = timestamp_ms / 1000.0
+
+        to_poll = [
+            addr
+            for addr in db_tracked
+            if now_s - self._last_polled.get(addr, 0.0)
+            >= self._settings.position_poll_interval_s
+        ]
+
+        batch = to_poll[: self._settings.whale_poll_batch_size]
+        if not batch:
+            return []
+
+        results = await asyncio.gather(
+            *(self._fetch_addr_data(addr) for addr in batch),
+            return_exceptions=True,
+        )
+
+        alerts: list[Alert] = []
+        for addr, result in zip(batch, results, strict=True):
+            if isinstance(result, ClientError):
+                if result.status_code == 429:
+                    logger.warning(
+                        "Rate-limited polling positions for %s — backing off", addr
+                    )
+                    self._last_polled[addr] = now_s
+                else:
+                    logger.exception("Client error polling positions for %s", addr)
+                continue
+            if isinstance(result, BaseException):
+                logger.exception("Failed to poll positions for %s", addr)
+                continue
+
+            positions, _ = result
+            self._last_polled[addr] = now_s
+
+            if positions:
+                await self._storage.insert_positions(positions)
+
+            pos_alerts = self._generate_position_alerts(addr, positions, timestamp_ms)
+            alerts.extend(pos_alerts)
+
+            self._last_positions[addr] = [(p.coin, p.notional_usd) for p in positions]
+            self._polled_once.add(addr)
+
+        return alerts
+
+    async def on_position_update(
+        self,
+        address: str,
+        positions: list[Position],
+        timestamp_ms: int,
+    ) -> list[Alert]:
+        """Process a WebSocket-pushed position update for an address."""
+        if positions:
+            await self._storage.insert_positions(positions)
+
+        alerts = self._generate_position_alerts(address, positions, timestamp_ms)
+        self._last_positions[address] = [(p.coin, p.notional_usd) for p in positions]
+        self._polled_once.add(address)
+        return alerts
+
+    def _generate_position_alerts(
+        self,
+        address: str,
+        positions: list[Position],
+        timestamp_ms: int,
+    ) -> list[Alert]:
+        """Generate large-position and change alerts from a position list."""
+        cooldown_ms = self._settings.alert_cooldown_s * 1000
+        prev = dict(self._last_positions.get(address, []))
+        alerts: list[Alert] = []
+
+        for pos in positions:
+            coin_oi = self._coin_oi.get(pos.coin, 0.0)
+            if coin_oi >= self._settings.large_position_min_oi_usd:
+                oi_pct = abs(pos.notional_usd) / coin_oi
+                if oi_pct >= self._settings.large_position_oi_pct:
+                    key = f"{address}:{pos.coin}"
+                    if not is_on_cooldown(
+                        self._last_alert_ms, key, timestamp_ms, cooldown_ms
+                    ):
+                        alerts.append(
+                            _position_alert(
+                                address,
+                                pos.coin,
+                                pos.notional_usd,
+                                oi_pct,
+                                timestamp_ms,
+                            )
+                        )
+                        record_alert_timestamp(self._last_alert_ms, key, timestamp_ms)
+
+            if address in self._polled_once:
+                prev_notional = prev.get(pos.coin, 0.0)
+                change_usd = abs(pos.notional_usd - prev_notional)
+                if change_usd >= self._settings.large_position_change_usd:
+                    key = f"{address}:{pos.coin}:change"
+                    if not is_on_cooldown(
+                        self._last_alert_ms, key, timestamp_ms, cooldown_ms
+                    ):
+                        alerts.append(
+                            _change_alert(
+                                address,
+                                pos.coin,
+                                prev_notional,
+                                pos.notional_usd,
+                                change_usd,
+                                timestamp_ms,
+                            )
+                        )
+                        record_alert_timestamp(self._last_alert_ms, key, timestamp_ms)
+
+        return alerts
+
+    def _fetch_addr_data(
+        self, addr: str
+    ) -> Coroutine[Any, Any, tuple[list[Position], list[TwapSliceFill]]]:
+        """Fetch positions and TWAP fills for an address concurrently."""
+        return asyncio.gather(
+            self._reader.get_user_positions(
+                addr,
+                active_dexes=self._whale_active_dexes.get(addr),
+            ),
+            self._reader.get_user_twap_slice_fills(addr),
+        )
+
+    def set_coin_oi(self, coin: str, oi: float) -> None:
+        self._coin_oi[coin] = oi
+
+    def set_whale_active_dexes(self, whale_active_dexes: dict[str, set[str]]) -> None:
+        self._whale_active_dexes = whale_active_dexes
+
+
+def _position_alert(
+    address: str,
+    coin: str,
+    notional_usd: float,
+    oi_pct: float,
+    timestamp_ms: int,
+) -> Alert:
+    """Create an alert for a large position relative to OI."""
+    if oi_pct > 0.15:
+        severity = "critical"
+    elif oi_pct > 0.10:
+        severity = "high"
+    else:
+        severity = "medium"
+    return Alert(
+        alert_id=str(uuid.uuid4()),
+        alert_type="whale_position",
+        severity=severity,
+        coin=coin,
+        title=f"{coin}: whale holds {oi_pct:.1%} of OI (${abs(notional_usd):,.0f})",
+        description=(
+            f"Address {address[:10]}... holds ${abs(notional_usd):,.0f} "
+            f"notional ({oi_pct:.1%} of open interest) on {coin}."
+        ),
+        timestamp_ms=timestamp_ms,
+        metadata={
+            "address": address,
+            "notional_usd": notional_usd,
+            "oi_pct": oi_pct,
+        },
+    )
+
+
+def _change_alert(
+    address: str,
+    coin: str,
+    prev_notional: float,
+    current_notional: float,
+    change_usd: float,
+    timestamp_ms: int,
+) -> Alert:
+    """Create an alert for a significant position change."""
+    direction = "increased" if current_notional > prev_notional else "decreased"
+    severity = "high" if change_usd > 5_000_000 else "medium"
+    return Alert(
+        alert_id=str(uuid.uuid4()),
+        alert_type="whale_position_change",
+        severity=severity,
+        coin=coin,
+        title=f"{coin}: whale position {direction} by ${change_usd:,.0f}",
+        description=(
+            f"Address {address[:10]}... {direction} {coin} position "
+            f"from ${prev_notional:,.0f} to ${current_notional:,.0f} "
+            f"(${change_usd:,.0f} change)."
+        ),
+        timestamp_ms=timestamp_ms,
+        metadata={
+            "address": address,
+            "prev_notional_usd": prev_notional,
+            "current_notional_usd": current_notional,
+            "change_usd": change_usd,
+        },
+    )

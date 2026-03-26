@@ -34,7 +34,7 @@ class OiConcentrationEngine:
         self._settings = settings
         # Ring buffer per coin: deque of (timestamp_ms, oi_usd)
         self._oi_history: dict[str, deque[tuple[int, float]]] = defaultdict(
-            lambda: deque(maxlen=4000)
+            lambda: deque(maxlen=settings.oi_history_maxlen)
         )
         # Cooldown tracking: coin -> last alert timestamp_ms
         self._last_alert_ms: dict[str, int] = {}

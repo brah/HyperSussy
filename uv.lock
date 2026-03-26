@@ -858,6 +858,7 @@ dependencies = [
 dashboard = [
     { name = "plotly" },
     { name = "streamlit" },
+    { name = "streamlit-lightweight-charts" },
 ]
 dev = [
     { name = "aioresponses" },
@@ -892,6 +893,7 @@ requires-dist = [
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=6.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8.0" },
     { name = "streamlit", marker = "extra == 'dashboard'", specifier = ">=1.35.0" },
+    { name = "streamlit-lightweight-charts", marker = "extra == 'dashboard'", specifier = ">=0.7.5" },
     { name = "structlog", specifier = ">=24.0.0" },
     { name = "tqdm", marker = "extra == 'notebooks'", specifier = ">=4.60" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.32.0" },
@@ -2354,6 +2356,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/92/8e/f2b8b4fa8ba65aae251170c54f8ce198fb588fc348301c2b624f8c63efac/streamlit-1.55.0.tar.gz", hash = "sha256:015e512bbd02d000f4047e51118dc086b70e7d9c46b4a11a33c2509731379626", size = 8612008, upload-time = "2026-03-03T22:26:02.149Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/dc/e6/412c1e1f200ca8c32ecf10201839183e261ad61ced3ede34a66f6d4be3cf/streamlit-1.55.0-py3-none-any.whl", hash = "sha256:1e4a16449c6131696180f4ddb40ea8c51834e89c2a43e1b0362bc9b1cfd9b415", size = 9075714, upload-time = "2026-03-03T22:25:59.126Z" },
+]
+
+[[package]]
+name = "streamlit-lightweight-charts"
+version = "0.7.20"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "streamlit" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7e/51/4a1b5c968746baf403845e4dc58d0e4c789f0a4274a690b06d1f11e073a2/streamlit-lightweight-charts-0.7.20.tar.gz", hash = "sha256:1341348b8286c23975246b391956295c70cb315c06eaec9a51b31e5bcf774ef5", size = 661775, upload-time = "2023-05-22T17:16:02.799Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/d1/adc3380ab8f92c7c89516a562186349a61cf063a931e88811398fccd2024/streamlit_lightweight_charts-0.7.20-py3-none-any.whl", hash = "sha256:61e0edc669dac626176a16da173414f577161f28107a3475762640d5665c7fe4", size = 669339, upload-time = "2023-05-22T17:15:59.81Z" },
 ]
 
 [[package]]

@@ -15,77 +15,7 @@ from hypersussy.config import HyperSussySettings
 from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.models import Alert, AssetSnapshot, Trade
 
-# Minimum hourly samples before computing z-scores
-_MIN_SAMPLES = 24
-
-
-class FundingAnomalyEngine:
-    """Detect anomalous funding rates via rolling statistics.
-
-    Args:
-        settings: Application settings with funding thresholds.
-    """
-
-    def __init__(self, settings: HyperSussySettings) -> None:
-        self._settings = settings
-        # Rolling funding rate samples per coin (sampled hourly)
-        self._funding_history: dict[str, deque[float]] = defaultdict(
-            lambda: deque(maxlen=settings.funding_rolling_window)
-        )
-        # Last sample timestamp per coin
-        self._last_sample_ms: dict[str, int] = {}
-        # Latest funding rate per coin (for tick analysis)
-        self._latest_rate: dict[str, float] = {}
-        # Cooldown: coin -> last alert timestamp_ms
-        self._last_alert_ms: dict[str, int] = {}
-
-    @property
-    def name(self) -> str:
-        """Unique name identifying this engine."""
-        return "funding_anomaly"
-
-    async def on_asset_update(self, snapshot: AssetSnapshot) -> list[Alert]:
-        """Sample funding rate at hourly intervals.
-
-        Args:
-            snapshot: Updated asset snapshot.
-
-        Returns:
-            Empty list.
-        """
-        self._latest_rate[snapshot.coin] = snapshot.funding_rate
-
-        last_ts = self._last_sample_ms.get(snapshot.coin)
-        if last_ts is None or snapshot.timestamp_ms - last_ts >= 3_600_000:
-            self._funding_history[snapshot.coin].append(snapshot.funding_rate)
-            self._last_sample_ms[snapshot.coin] = snapshot.timestamp_ms
-        return []
-
-    async def on_trade(self, trade: Trade) -> list[Alert]:
-        """No-op for this engine.
-
-        Args:
-            trade: The incoming trade.
-
-        Returns:
-            Empty list.
-        """
-        return []
-
-    async def tick(self, timestamp_ms: int) -> list[Alert]:
-        """Check for funding rate anomalies across all coins.
-
-        Args:
-            timestamp_ms: Current timestamp in milliseconds.
-
-        Returns:
-            Alerts for coins with anomalous funding rates.
-        """
-        alerts: list[Alert] = []
-        cooldown_ms = self._settings.alert_cooldown_s * 1000
-
-        for coin, history in self._funding_history.items():
-            if len(history) < _MIN_SAMPLES:
+            if len(history) < self._settings.funding_min_samples:
                 continue
 
             if is_on_cooldown(self._last_alert_ms, coin, timestamp_ms, cooldown_ms):

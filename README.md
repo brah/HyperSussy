@@ -14,8 +14,8 @@ HyperSussy passively monitors all listed perps via REST polling and WebSocket tr
 | Engine | What it detects |
 | ------ | --------------- |
 | **OI Concentration** | Rapid OI changes where a small number of addresses account for a disproportionate share of volume |
-| **Whale Tracker** | Whale discovery, large positions (>20% of coin OI), significant position changes (>$1M); polls active TWAPs via HyperLiquid API |
-| **TWAP Detector** | Evenly-spaced fill patterns indicative of algorithmic TWAP execution (disabled by default; API-based TWAP detection preferred) |
+| **Whale Tracker** | Orchestrates whale discovery, position tracking, and TWAP detection. |
+| **TWAP Detector** | Detects active TWAP orders from API fill data. |
 | **Pre-Move Correlation** | Addresses that traded heavily in a direction shortly before a large price move |
 | **Funding Anomaly** | Extreme or unusual funding rates (z-score > 3 sigma or absolute rate breach) |
 | **Liquidation Risk** | Tracked whales approaching liquidation with estimated market impact via L2 book depth |
@@ -122,8 +122,10 @@ src/hypersussy/
     engines/
         base.py                # DetectionEngine protocol
         oi_concentration.py    # OI spike + address concentration
-        whale_tracker.py       # Discover whales, poll positions, detect changes + active TWAPs
-        twap_detector.py       # Statistical fill-pattern TWAP detection (disabled by default)
+        whale_tracker.py       # Orchestrates whale discovery, position tracking, and TWAP detection
+        whale_discovery.py     # Discovers whales from trade flow
+        position_tracker.py    # Polls positions for tracked whales and detects changes
+        twap_detector.py       # Detects active TWAP orders from API fill data
         pre_move.py            # Retroactive pre-move correlation
         funding_anomaly.py     # Extreme funding rate detection
         liquidation_risk.py    # Whales near liquidation with market impact

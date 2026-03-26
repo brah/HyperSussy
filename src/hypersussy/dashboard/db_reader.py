@@ -347,6 +347,112 @@ class DashboardReader:
         )
         return [row["coin"] for row in cur.fetchall()]
 
+    # -- Candles --
+
+    def get_candles(
+        self,
+        coin: str,
+        interval: str,
+        hours: int = 48,
+    ) -> list[dict[str, object]]:
+        """Fetch OHLCV candle rows for a coin and interval.
+
+        Args:
+            coin: Asset ticker symbol.
+            interval: Candle interval string, e.g. ``"1m"``, ``"1h"``.
+            hours: Lookback window in hours.
+
+        Returns:
+            List of dicts with keys: timestamp_ms, open, high, low, close,
+            volume, num_trades; ordered oldest-first.
+        """
+        since_ms = self._hours_to_since_ms(hours)
+        return self._fetch_dicts(
+            """
+            SELECT timestamp_ms, open, high, low, close, volume, num_trades
+            FROM candles
+            WHERE coin = ? AND interval_str = ? AND timestamp_ms >= ?
+            ORDER BY timestamp_ms ASC
+            """,
+            (coin, interval, since_ms),
+        )
+
+    def get_top_holders_concentration(
+        self,
+        coin: str,
+        hours: int = 24,
+        limit: int = 15,
+    ) -> list[dict[str, object]]:
+        """Top addresses by combined buy+sell volume for a coin.
+
+        Aggregates buyer and seller sides via UNION ALL and uses a window
+        function to attach the total volume for percentage calculation.
+
+        Args:
+            coin: Asset ticker symbol.
+            hours: Lookback window in hours.
+            limit: Maximum number of addresses to return.
+
+        Returns:
+            List of dicts with keys: address, volume_usd, total_volume;
+            ordered by volume_usd descending.
+        """
+        since_ms = self._hours_to_since_ms(hours)
+        return self._fetch_dicts(
+            """
+            SELECT address,
+                   SUM(vol) AS volume_usd,
+                   SUM(SUM(vol)) OVER () AS total_volume
+            FROM (
+                SELECT buyer AS address, SUM(price * size) AS vol
+                FROM trades
+                WHERE coin = ? AND timestamp_ms >= ? AND buyer != ''
+                GROUP BY buyer
+
+                UNION ALL
+
+                SELECT seller AS address, SUM(price * size) AS vol
+                FROM trades
+                WHERE coin = ? AND timestamp_ms >= ? AND seller != ''
+                GROUP BY seller
+            )
+            GROUP BY address
+            ORDER BY volume_usd DESC
+            LIMIT ?
+            """,
+            (coin, since_ms, coin, since_ms, limit),
+        )
+
+    def get_trade_flow_by_hour(
+        self,
+        coin: str,
+        hours: int = 24,
+    ) -> list[dict[str, object]]:
+        """Buy vs sell volume bucketed by hour for a coin.
+
+        Args:
+            coin: Asset ticker symbol.
+            hours: Lookback window in hours.
+
+        Returns:
+            List of dicts with keys: bucket (ms epoch floored to hour),
+            side (``"B"`` = buy, ``"A"`` = sell), volume_usd; ordered by
+            bucket ascending.
+        """
+        since_ms = self._hours_to_since_ms(hours)
+        return self._fetch_dicts(
+            """
+            SELECT (timestamp_ms / 3600000) * 3600000 AS bucket,
+                   side,
+                   SUM(price * size) AS volume_usd
+            FROM trades
+            WHERE coin = ? AND timestamp_ms >= ?
+            GROUP BY bucket, side
+            ORDER BY bucket ASC
+            """,
+            (coin, since_ms),
+        )
+
     def close(self) -> None:
         """Close all database connections."""
         self._conn.close()

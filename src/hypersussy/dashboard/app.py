@@ -74,7 +74,7 @@ def main() -> None:
 
     page = st.sidebar.radio(
         "Page",
-        options=["Overview", "Alerts", "Whale Tracker", "Charts"],
+        options=["Overview", "Alerts", "Whale Tracker", "Charts", "Klines"],
         on_change=_clear_wallet_params,
     )
     refresh_s = int(
@@ -120,6 +120,10 @@ def main() -> None:
         from hypersussy.dashboard._pages.charts import render_charts
 
         render_charts(db_reader)
+    elif page == "Klines":
+        from hypersussy.dashboard._pages.klines import render_klines
+
+        render_klines(db_reader, refresh_s)
 
 
 if __name__ == "__main__":

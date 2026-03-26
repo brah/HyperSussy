@@ -14,11 +14,6 @@ from hypersussy.config import HyperSussySettings
 from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.models import Alert, AssetSnapshot, Trade
 
-# Max entries per coin in price and trade buffers
-_PRICE_MAXLEN = 10_000
-_TRADE_MAXLEN = 50_000
-
-
 class PreMoveEngine:
     """Retroactively identify pre-move trading activity.
 
@@ -30,11 +25,11 @@ class PreMoveEngine:
         self._settings = settings
         # Price ring buffer: coin -> deque of (timestamp_ms, mark_price)
         self._prices: dict[str, deque[tuple[int, float]]] = defaultdict(
-            lambda: deque(maxlen=_PRICE_MAXLEN)
+            lambda: deque(maxlen=settings.pre_move_price_maxlen)
         )
         # Trade buffer: coin -> deque of (ts, buyer, seller, price, size)
         self._trades: dict[str, deque[tuple[int, str, str, float, float]]] = (
-            defaultdict(lambda: deque(maxlen=_TRADE_MAXLEN))
+            defaultdict(lambda: deque(maxlen=settings.pre_move_trade_maxlen))
         )
         # Cooldown: coin -> last alert timestamp_ms
         self._last_alert_ms: dict[str, int] = {}

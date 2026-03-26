@@ -8,6 +8,7 @@ from the same push interface used by the TUI.
 from __future__ import annotations
 
 import threading
+import time
 from collections import deque
 from dataclasses import dataclass
 
@@ -37,6 +38,27 @@ class LiveSnapshot:
     timestamp_ms: int
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeIssue:
+    """A captured engine or runtime issue for dashboard display."""
+
+    source: str
+    message: str
+    timestamp_ms: int
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeHealth:
+    """Immutable summary of current dashboard runtime health."""
+
+    is_running: bool
+    snapshot_count: int
+    last_snapshot_ms: int | None
+    last_alert_ms: int | None
+    engine_errors: tuple[RuntimeIssue, ...]
+    runtime_errors: tuple[RuntimeIssue, ...]
+
+
 class SharedState:
     """Thread-safe store for live market data and alerts.
 
@@ -53,7 +75,10 @@ class SharedState:
         self._snapshots: dict[str, LiveSnapshot] = {}
         self._alerts: deque[Alert] = deque(maxlen=max_alerts)
         self._running = False
-        self._engine_errors: dict[str, str] = {}
+        self._engine_errors: dict[str, RuntimeIssue] = {}
+        self._runtime_errors: dict[str, RuntimeIssue] = {}
+        self._last_snapshot_ms: int | None = None
+        self._last_alert_ms: int | None = None
 
     # -- DataBus protocol --
 
@@ -74,6 +99,7 @@ class SharedState:
         )
         with self._lock:
             self._snapshots[snapshot.coin] = live
+            self._last_snapshot_ms = snapshot.timestamp_ms
 
     def push_alert(self, alert: Alert) -> None:
         """Append an alert to the live deque.
@@ -83,6 +109,7 @@ class SharedState:
         """
         with self._lock:
             self._alerts.append(alert)
+            self._last_alert_ms = alert.timestamp_ms
 
     # -- Read interface for Streamlit --
 
@@ -115,8 +142,18 @@ class SharedState:
             engine_name: Name of the detection engine.
             error: Error message string.
         """
+        issue = RuntimeIssue(
+            source=engine_name,
+            message=error,
+            timestamp_ms=int(time.time() * 1000),
+        )
         with self._lock:
-            self._engine_errors[engine_name] = error
+            self._engine_errors[engine_name] = issue
+
+    def clear_engine_error(self, engine_name: str) -> None:
+        """Clear the latest recorded error for an engine."""
+        with self._lock:
+            self._engine_errors.pop(engine_name, None)
 
     def get_engine_errors(self) -> dict[str, str]:
         """Return a copy of the latest error per engine.
@@ -125,7 +162,43 @@ class SharedState:
             Mapping of engine name to its most recent error message.
         """
         with self._lock:
-            return dict(self._engine_errors)
+            return {
+                name: issue.message for name, issue in self._engine_errors.items()
+            }
+
+    def mark_runtime_error(self, source: str, error: str) -> None:
+        """Record a non-engine runtime error for dashboard visibility."""
+        issue = RuntimeIssue(
+            source=source,
+            message=error,
+            timestamp_ms=int(time.time() * 1000),
+        )
+        with self._lock:
+            self._runtime_errors[source] = issue
+
+    def clear_runtime_error(self, source: str) -> None:
+        """Clear a previously recorded runtime error."""
+        with self._lock:
+            self._runtime_errors.pop(source, None)
+
+    def get_runtime_errors(self) -> dict[str, str]:
+        """Return a copy of the latest non-engine runtime errors."""
+        with self._lock:
+            return {
+                name: issue.message for name, issue in self._runtime_errors.items()
+            }
+
+    def get_runtime_health(self) -> RuntimeHealth:
+        """Return an immutable snapshot of current runtime health."""
+        with self._lock:
+            return RuntimeHealth(
+                is_running=self._running,
+                snapshot_count=len(self._snapshots),
+                last_snapshot_ms=self._last_snapshot_ms,
+                last_alert_ms=self._last_alert_ms,
+                engine_errors=tuple(self._engine_errors.values()),
+                runtime_errors=tuple(self._runtime_errors.values()),
+            )
 
     def set_running(self, value: bool) -> None:
         """Update the running flag (called by BackgroundRunner).

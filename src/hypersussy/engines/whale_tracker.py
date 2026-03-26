@@ -15,6 +15,7 @@ from collections import deque
 from hyperliquid.utils.error import ClientError
 
 from hypersussy.config import HyperSussySettings
+from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.exchange.base import ExchangeReader
 from hypersussy.models import (
     Alert,
@@ -327,7 +328,9 @@ class WhaleTrackerEngine:
                 oi_pct = abs(pos.notional_usd) / coin_oi
                 if oi_pct >= self._settings.large_position_oi_pct:
                     key = f"{address}:{pos.coin}"
-                    if timestamp_ms - self._last_alert_ms.get(key, 0) >= cooldown_ms:
+                    if not is_on_cooldown(
+                        self._last_alert_ms, key, timestamp_ms, cooldown_ms
+                    ):
                         alerts.append(
                             _position_alert(
                                 address,
@@ -337,14 +340,16 @@ class WhaleTrackerEngine:
                                 timestamp_ms,
                             )
                         )
-                        self._last_alert_ms[key] = timestamp_ms
+                        record_alert_timestamp(self._last_alert_ms, key, timestamp_ms)
 
             if address in self._polled_once:
                 prev_notional = prev.get(pos.coin, 0.0)
                 change_usd = abs(pos.notional_usd - prev_notional)
                 if change_usd >= self._settings.large_position_change_usd:
                     key = f"{address}:{pos.coin}:change"
-                    if timestamp_ms - self._last_alert_ms.get(key, 0) >= cooldown_ms:
+                    if not is_on_cooldown(
+                        self._last_alert_ms, key, timestamp_ms, cooldown_ms
+                    ):
                         alerts.append(
                             _change_alert(
                                 address,
@@ -355,7 +360,7 @@ class WhaleTrackerEngine:
                                 timestamp_ms,
                             )
                         )
-                        self._last_alert_ms[key] = timestamp_ms
+                        record_alert_timestamp(self._last_alert_ms, key, timestamp_ms)
 
         return alerts
 
@@ -422,7 +427,7 @@ class WhaleTrackerEngine:
                 continue
 
             key = f"{addr}:twap:{twap_id}"
-            if timestamp_ms - self._last_alert_ms.get(key, 0) < cooldown_ms:
+            if is_on_cooldown(self._last_alert_ms, key, timestamp_ms, cooldown_ms):
                 continue
 
             coin = latest_fill["coin"]
@@ -441,7 +446,7 @@ class WhaleTrackerEngine:
                     timestamp_ms,
                 )
             )
-            self._last_alert_ms[key] = timestamp_ms
+            record_alert_timestamp(self._last_alert_ms, key, timestamp_ms)
 
         return alerts
 

@@ -7,8 +7,13 @@ import time
 import polars as pl
 import streamlit as st
 
+from hypersussy.dashboard.components import (
+    render_alert_feed,
+    render_page_header,
+    render_section_header,
+)
 from hypersussy.dashboard.db_reader import DashboardReader
-from hypersussy.dashboard.formatting import render_alert_line, sort_alerts_by_severity
+from hypersussy.dashboard.view_models import build_alert_counts_df, build_alert_feed_items
 
 _ALL_SEVERITIES = ["critical", "high", "medium", "low"]
 _ALL_TYPES = [
@@ -26,16 +31,11 @@ def render_alerts(
     db_reader: DashboardReader,
     refresh_s: int,
 ) -> None:
-    """Render the filterable alert feed page.
-
-    Provides filter controls for severity, type, coin, and time range.
-    Auto-refreshes every refresh_s seconds.
-
-    Args:
-        db_reader: Read-only SQLite reader for historical queries.
-        refresh_s: Auto-refresh interval in seconds.
-    """
-    st.header("Alert Feed")
+    """Render the filterable alert feed page."""
+    render_page_header(
+        "Alert Feed",
+        "Filter recent alerts by severity, engine type, coin, and recency without leaving the live dashboard.",
+    )
 
     @st.fragment(run_every=refresh_s)
     def _live() -> None:
@@ -46,7 +46,7 @@ def render_alerts(
 
 
 def _render_filters_and_feed(db_reader: DashboardReader) -> None:
-    """Render filter controls and the colour-coded alert feed."""
+    """Render filter controls and the alert feed."""
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
@@ -68,44 +68,32 @@ def _render_filters_and_feed(db_reader: DashboardReader) -> None:
 
     now_ms = int(time.time() * 1000)
     since_ms = now_ms - hours_back * 3_600_000
-
     rows = db_reader.get_alerts_all(limit=500, since_ms=since_ms)
 
-    # Apply filters
     if selected_severities:
-        rows = [r for r in rows if r["severity"] in selected_severities]
+        rows = [row for row in rows if row["severity"] in selected_severities]
     if selected_types:
-        rows = [r for r in rows if r["alert_type"] in selected_types]
+        rows = [row for row in rows if row["alert_type"] in selected_types]
     if coin_filter.strip():
         needle = coin_filter.strip().upper()
-        rows = [r for r in rows if str(r["coin"]).upper() == needle]
+        rows = [row for row in rows if str(row["coin"]).upper() == needle]
 
-    if not rows:
-        st.info("No alerts match the current filters.")
-        return
+    render_section_header(
+        "Matching Alerts",
+        f"Showing up to 500 alerts from the last {hours_back}h after filters are applied.",
+    )
+    render_alert_feed(
+        build_alert_feed_items(rows),
+        empty_message="No alerts match the current filters.",
+    )
 
-    rows = sort_alerts_by_severity(rows)
-
-    for r in rows:
-        st.markdown(
-            render_alert_line(
-                severity=str(r["severity"]),
-                coin=str(r["coin"]),
-                title=str(r["title"]),
-                timestamp_ms=int(r["timestamp_ms"]),
-                alert_type=str(r["alert_type"]),
-                address=str(r["address"]) if r.get("address") else None,
-            ),
-            unsafe_allow_html=True,
-        )
-
-    with st.expander("Alert counts by type"):
-        counts = db_reader.get_alert_counts_by_type(since_ms=since_ms)
-        if counts:
-            count_df = pl.DataFrame(
-                {"Type": list(counts.keys()), "Count": list(counts.values())}
-            ).sort("Count", descending=True)
-            st.bar_chart(count_df, x="Type", y="Count", width="stretch")
+    counts = db_reader.get_alert_counts_by_type(since_ms=since_ms)
+    counts_df = build_alert_counts_df(counts)
+    with st.expander("Alert counts by type", expanded=False):
+        if counts_df.is_empty():
+            st.info("No alert activity in the selected lookback window.")
+        else:
+            st.bar_chart(counts_df, x="Type", y="Count", width="stretch")
 
 
 def _render_hourly_chart(db_reader: DashboardReader) -> None:
@@ -122,9 +110,15 @@ def _render_hourly_chart(db_reader: DashboardReader) -> None:
         )
         buckets[hour_label] = buckets.get(hour_label, 0) + 1
 
-    df = pl.DataFrame(
-        {"Hour": list(buckets.keys()), "Alerts": list(buckets.values())}
-    ).sort("Hour")
-
-    st.subheader("Alert Volume (last 24h, by hour)")
-    st.bar_chart(df, x="Hour", y="Alerts", width="stretch")
+    render_section_header(
+        "Alert Volume (last 24h)",
+        "A quick scan of when alert activity clustered during the last day.",
+    )
+    st.bar_chart(
+        pl.DataFrame(
+            {"Hour": list(buckets.keys()), "Alerts": list(buckets.values())}
+        ).sort("Hour"),
+        x="Hour",
+        y="Alerts",
+        width="stretch",
+    )

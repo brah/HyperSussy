@@ -2,32 +2,30 @@
 
 from __future__ import annotations
 
-import time
-
-import polars as pl
 import streamlit as st
 
+from hypersussy.dashboard.components import (
+    render_alert_feed,
+    render_empty_state,
+    render_page_header,
+    render_section_header,
+)
 from hypersussy.dashboard.db_reader import DashboardReader
-from hypersussy.dashboard.formatting import (
-    build_positions_df,
-    format_price,
-    render_alert_line,
+from hypersussy.dashboard.navigation import normalize_wallet_address
+from hypersussy.dashboard.view_models import (
+    build_alert_feed_items,
+    build_positions_table,
+    build_trade_history_df,
+    coerce_select_int,
 )
 
 
 def render_wallet_detail(db_reader: DashboardReader, refresh_s: int) -> None:
-    """Render a deep-dive view for a single wallet address.
+    """Render a deep-dive view for a single wallet address."""
+    query_address = st.query_params.get("address", "")
+    address = normalize_wallet_address(query_address)
 
-    Accessed via query params ``?page=wallet&address=0x...``.
-    Shows positions, trade history, and alerts for the address.
-
-    Args:
-        db_reader: Read-only SQLite reader.
-        refresh_s: Auto-refresh interval in seconds.
-    """
-    address = st.query_params.get("address", "")
-
-    if not address or not address.startswith("0x") or len(address) != 42:
+    if address is None:
         st.warning("Invalid or missing wallet address.")
         if st.button("Back to dashboard"):
             st.query_params.clear()
@@ -38,7 +36,10 @@ def render_wallet_detail(db_reader: DashboardReader, refresh_s: int) -> None:
         st.query_params.clear()
         st.rerun()
 
-    st.header(f"Wallet ...{address[-10:]}")
+    render_page_header(
+        f"Wallet ...{address[-10:]}",
+        "Inspect the latest open positions, recent trade history, and alert activity for a tracked address.",
+    )
     st.caption(address)
 
     @st.fragment(run_every=refresh_s)
@@ -60,12 +61,11 @@ def _render_positions(db_reader: DashboardReader, address: str) -> None:
     """Render latest positions for the wallet."""
     positions = db_reader.get_whale_positions(address)
     if not positions:
-        st.info("No open positions found.")
+        render_empty_state("No open positions found.")
         return
 
-    df = build_positions_df(positions, db_reader.get_latest_oi_per_coin())
     st.dataframe(
-        df,
+        build_positions_table(positions, db_reader.get_latest_oi_per_coin()),
         width="stretch",
         hide_index=True,
         column_config={
@@ -77,37 +77,26 @@ def _render_positions(db_reader: DashboardReader, address: str) -> None:
 
 def _render_trades(db_reader: DashboardReader, address: str) -> None:
     """Render recent trade history for the wallet."""
+    render_section_header(
+        "Trade History",
+        "Recent fills involving this address as either buyer or seller.",
+    )
     hours = st.select_slider(
         "Lookback",
         options=[1, 4, 24, 48, 168],
         value=24,
-        format_func=lambda h: f"{h}h",
+        format_func=lambda value: f"{value}h",
         key="wallet_trade_hours",
     )
 
-    rows = db_reader.get_trades_by_address(address, hours=int(hours))  # type: ignore[arg-type]
+    lookback_hours = coerce_select_int(hours, default=24)
+    rows = db_reader.get_trades_by_address(address, hours=lookback_hours)
     if not rows:
-        st.info(f"No trades in the last {hours}h.")
+        render_empty_state(f"No trades in the last {lookback_hours}h.")
         return
 
-    df = pl.DataFrame(
-        [
-            {
-                "Time": time.strftime(
-                    "%Y-%m-%d %H:%M:%S",
-                    time.localtime(int(r["timestamp_ms"]) / 1000),
-                ),
-                "Coin": r["coin"],
-                "Side": "BUY" if r["side"] == "B" else "SELL",
-                "Size": float(r["size"]),
-                "Price": format_price(float(r["price"])),
-                "Notional": float(r["price"]) * float(r["size"]),
-            }
-            for r in rows
-        ]
-    )
     st.dataframe(
-        df,
+        build_trade_history_df(rows, address),
         width="stretch",
         hide_index=True,
         column_config={
@@ -117,20 +106,8 @@ def _render_trades(db_reader: DashboardReader, address: str) -> None:
 
 
 def _render_alerts(db_reader: DashboardReader, address: str) -> None:
-    """Render colour-coded alert history for the wallet."""
-    alert_rows = db_reader.get_alerts_by_address(address, limit=50)
-    if not alert_rows:
-        st.info("No alerts triggered by this address yet.")
-        return
-
-    for r in alert_rows:
-        st.markdown(
-            render_alert_line(
-                severity=str(r["severity"]),
-                coin=str(r["coin"]),
-                title=str(r["title"]),
-                timestamp_ms=int(r["timestamp_ms"]),
-                alert_type=str(r["alert_type"]),
-            ),
-            unsafe_allow_html=True,
-        )
+    """Render alert history for the wallet."""
+    render_alert_feed(
+        build_alert_feed_items(db_reader.get_alerts_by_address(address, limit=50)),
+        empty_message="No alerts triggered by this address yet.",
+    )

@@ -12,6 +12,7 @@ from bisect import bisect_left
 from collections import defaultdict, deque
 
 from hypersussy.config import HyperSussySettings
+from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.models import Alert, AssetSnapshot, Trade
 from hypersussy.storage.base import StorageProtocol
 
@@ -80,8 +81,7 @@ class OiConcentrationEngine:
                 continue
 
             # Skip if recently alerted
-            last = self._last_alert_ms.get(coin, 0)
-            if timestamp_ms - last < cooldown_ms:
+            if is_on_cooldown(self._last_alert_ms, coin, timestamp_ms, cooldown_ms):
                 continue
 
             current_oi = history[-1][1]
@@ -94,7 +94,7 @@ class OiConcentrationEngine:
                 )
                 if alert:
                     alerts.append(alert)
-                    self._last_alert_ms[coin] = timestamp_ms
+                    record_alert_timestamp(self._last_alert_ms, coin, timestamp_ms)
                     break  # One alert per coin per tick
 
         return alerts

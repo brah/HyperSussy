@@ -99,13 +99,41 @@ class HyperLiquidReader:
             logger.debug("_run_sync: executor returned")
             return result
 
+    async def _call_info(
+        self,
+        operation: str,
+        func: Callable[[], Any],
+        *,
+        weight: int,
+        context: str = "",
+    ) -> Any:
+        """Run an HL SDK call with consistent logging and error context."""
+        try:
+            return await self._run_sync(func, weight=weight)
+        except (
+            ClientError,
+            ServerError,
+            requests.RequestException,
+            OSError,
+            ValueError,
+            KeyError,
+            TypeError,
+        ) as exc:
+            suffix = f" [{context}]" if context else ""
+            logger.warning("HL API call failed: %s%s (%s)", operation, suffix, exc)
+            raise
+
     async def refresh_hip3_dexes(self) -> list[str]:
         """Fetch and cache the list of active HIP-3 builder dex names.
 
         Returns:
             List of dex name strings (e.g. ["xyz", "flx", "km"]).
         """
-        raw = await self._run_sync(partial(self._info_client.perp_dexs), weight=2)
+        raw = await self._call_info(
+            "perp_dexs",
+            partial(self._info_client.perp_dexs),
+            weight=2,
+        )
         names: list[str] = []
         for entry in raw:
             if entry is None:
@@ -143,8 +171,8 @@ class HyperLiquidReader:
                 ServerError,
                 requests.RequestException,
                 OSError,
-            ) as exc:
-                logger.warning("Failed to fetch dex snapshots for %r: %s", dex, exc)
+            ):
+                logger.debug("Skipping failed dex snapshot fetch for %r", dex)
         return snapshots
 
     async def _fetch_dex_snapshots(self, dex: str) -> list[AssetSnapshot]:
@@ -159,8 +187,11 @@ class HyperLiquidReader:
         payload: dict[str, str] = {"type": "metaAndAssetCtxs"}
         if dex:
             payload["dex"] = dex
-        raw = await self._run_sync(
-            partial(self._info_client.post, _INFO_PATH, payload), weight=2
+        raw = await self._call_info(
+            "metaAndAssetCtxs",
+            partial(self._info_client.post, _INFO_PATH, payload),
+            weight=2,
+            context=f"dex={dex or 'native'}",
         )
         return parse_meta_and_asset_ctxs(raw)
 
@@ -212,8 +243,11 @@ class HyperLiquidReader:
         Returns:
             Positions on this dex.
         """
-        raw = await self._run_sync(
-            partial(self._info_client.user_state, address, dex=dex), weight=2
+        raw = await self._call_info(
+            "user_state",
+            partial(self._info_client.user_state, address, dex=dex),
+            weight=2,
+            context=f"address={address}, dex={dex or 'native'}",
         )
         return parse_user_state(raw, address)
 
@@ -234,7 +268,8 @@ class HyperLiquidReader:
             List of trade fills.
         """
         if start_ms is not None:
-            raw = await self._run_sync(
+            raw = await self._call_info(
+                "user_fills_by_time",
                 partial(
                     self._info_client.user_fills_by_time,
                     address,
@@ -242,10 +277,14 @@ class HyperLiquidReader:
                     end_ms,
                 ),
                 weight=20,
+                context=f"address={address}",
             )
         else:
-            raw = await self._run_sync(
-                partial(self._info_client.user_fills, address), weight=20
+            raw = await self._call_info(
+                "user_fills",
+                partial(self._info_client.user_fills, address),
+                weight=20,
+                context=f"address={address}",
             )
         return parse_user_fills(raw, address)
 
@@ -261,9 +300,11 @@ class HyperLiquidReader:
         Returns:
             L2 book with bids and asks.
         """
-        raw = await self._run_sync(
+        raw = await self._call_info(
+            "l2Book",
             partial(self._info_client.post, _INFO_PATH, {"type": "l2Book", "coin": coin}),
             weight=2,
+            context=f"coin={coin}",
         )
         return parse_l2_snapshot(raw)
 
@@ -285,7 +326,8 @@ class HyperLiquidReader:
         Returns:
             List of candle bars.
         """
-        raw = await self._run_sync(
+        raw = await self._call_info(
+            "candles_snapshot",
             partial(
                 self._info_client.candles_snapshot,
                 coin,
@@ -294,6 +336,7 @@ class HyperLiquidReader:
                 end_ms,
             ),
             weight=20,
+            context=f"coin={coin}, interval={interval}",
         )
         return parse_candles(raw, coin, interval)
 
@@ -310,8 +353,11 @@ class HyperLiquidReader:
             Up to 2000 most recent TWAP slice fill dicts, each containing
             a ``fill`` sub-dict and a ``twapId`` field.
         """
-        raw = await self._run_sync(
-            partial(self._info_client.user_twap_slice_fills, address), weight=2
+        raw = await self._call_info(
+            "user_twap_slice_fills",
+            partial(self._info_client.user_twap_slice_fills, address),
+            weight=2,
+            context=f"address={address}",
         )
         return list(raw) if raw else []
 
@@ -341,7 +387,10 @@ class HyperLiquidReader:
         }
         if end_ms is not None:
             payload["endTime"] = end_ms
-        raw = await self._run_sync(
-            partial(self._info_client.post, _INFO_PATH, payload), weight=20
+        raw = await self._call_info(
+            "fundingHistory",
+            partial(self._info_client.post, _INFO_PATH, payload),
+            weight=20,
+            context=f"coin={coin}",
         )
         return parse_funding_history(raw, coin)

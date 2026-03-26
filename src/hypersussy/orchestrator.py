@@ -83,6 +83,38 @@ class Orchestrator:
         self._native_coins: list[str] = []
         self._running = False
 
+    def _mark_engine_error(self, engine_name: str, exc: Exception) -> None:
+        """Forward engine errors to the dashboard state when available."""
+        if self._data_bus is None:
+            return
+        mark = getattr(self._data_bus, "mark_engine_error", None)
+        if callable(mark):
+            mark(engine_name, str(exc))
+
+    def _clear_engine_error(self, engine_name: str) -> None:
+        """Clear a previously recorded engine error."""
+        if self._data_bus is None:
+            return
+        clear = getattr(self._data_bus, "clear_engine_error", None)
+        if callable(clear):
+            clear(engine_name)
+
+    def _mark_runtime_error(self, source: str, exc: Exception) -> None:
+        """Forward runtime loop errors to the dashboard state when available."""
+        if self._data_bus is None:
+            return
+        mark = getattr(self._data_bus, "mark_runtime_error", None)
+        if callable(mark):
+            mark(source, str(exc))
+
+    def _clear_runtime_error(self, source: str) -> None:
+        """Clear a previously recorded runtime error."""
+        if self._data_bus is None:
+            return
+        clear = getattr(self._data_bus, "clear_runtime_error", None)
+        if callable(clear):
+            clear(source)
+
     async def run(self) -> None:
         """Start all polling and streaming tasks.
 
@@ -133,6 +165,7 @@ class Orchestrator:
     async def _refresh_coins(self) -> None:
         """Fetch the current list of perpetual assets."""
         snapshots = await self._reader.get_asset_snapshots()
+        self._clear_runtime_error("refresh_coins")
         all_coins = [s.coin for s in snapshots]
         if self._settings.watched_coins:
             all_coins = [c for c in all_coins if c in self._settings.watched_coins]
@@ -156,7 +189,9 @@ class Orchestrator:
             await asyncio.sleep(self._settings.asset_list_refresh_s)
             try:
                 await self._refresh_coins()
-            except _RECOVERABLE:
+                self._clear_runtime_error("refresh_coins")
+            except _RECOVERABLE as exc:
+                self._mark_runtime_error("refresh_coins", exc)
                 logger.exception("Failed to refresh coin list")
 
     async def _poll_meta_loop(self) -> None:
@@ -177,10 +212,20 @@ class Orchestrator:
                     if self._data_bus is not None:
                         self._data_bus.push_snapshot(snapshot)
                     for engine in self._engines:
-                        alerts = await engine.on_asset_update(snapshot)
-                        for alert in alerts:
-                            await self._alert_manager.process_alert(alert)
-            except _RECOVERABLE:
+                        try:
+                            alerts = await engine.on_asset_update(snapshot)
+                            self._clear_engine_error(engine.name)
+                            for alert in alerts:
+                                await self._alert_manager.process_alert(alert)
+                        except _RECOVERABLE as exc:
+                            self._mark_engine_error(engine.name, exc)
+                            logger.exception(
+                                "Error in on_asset_update (meta polling) for %s",
+                                snapshot.coin,
+                            )
+                self._clear_runtime_error("poll_meta")
+            except _RECOVERABLE as exc:
+                self._mark_runtime_error("poll_meta", exc)
                 logger.exception("Error in meta polling loop")
 
             await asyncio.sleep(self._settings.meta_poll_interval_s)
@@ -195,21 +240,28 @@ class Orchestrator:
             coins: Native perpetual asset names (no ``:`` in name).
         """
         logger.info("Starting asset ctx WS stream for %d native coins", len(coins))
-        async for snapshot in self._stream.stream_asset_ctxs(coins):
-            if not self._running:
-                break
-            if self._data_bus is not None:
-                self._data_bus.push_snapshot(snapshot)
-            for engine in self._engines:
-                try:
-                    alerts = await engine.on_asset_update(snapshot)
-                    for alert in alerts:
-                        await self._alert_manager.process_alert(alert)
-                except _RECOVERABLE:
-                    logger.exception(
-                        "Error in on_asset_update (asset ctx stream) for %s",
-                        snapshot.coin,
-                    )
+        try:
+            async for snapshot in self._stream.stream_asset_ctxs(coins):
+                if not self._running:
+                    break
+                if self._data_bus is not None:
+                    self._data_bus.push_snapshot(snapshot)
+                for engine in self._engines:
+                    try:
+                        alerts = await engine.on_asset_update(snapshot)
+                        self._clear_engine_error(engine.name)
+                        for alert in alerts:
+                            await self._alert_manager.process_alert(alert)
+                    except _RECOVERABLE as exc:
+                        self._mark_engine_error(engine.name, exc)
+                        logger.exception(
+                            "Error in on_asset_update (asset ctx stream) for %s",
+                            snapshot.coin,
+                        )
+            self._clear_runtime_error("asset_ctx_stream")
+        except _RECOVERABLE as exc:
+            self._mark_runtime_error("asset_ctx_stream", exc)
+            logger.exception("Asset ctx stream loop error")
 
     async def _engine_tick_loop(self) -> None:
         """Periodically call tick() on all engines."""
@@ -218,9 +270,11 @@ class Orchestrator:
             for engine in self._engines:
                 try:
                     alerts = await engine.tick(now_ms)
+                    self._clear_engine_error(engine.name)
                     for alert in alerts:
                         await self._alert_manager.process_alert(alert)
-                except _RECOVERABLE:
+                except _RECOVERABLE as exc:
+                    self._mark_engine_error(engine.name, exc)
                     logger.exception("Error in engine tick: %s", engine.name)
             await asyncio.sleep(self._settings.engine_tick_interval_s)
 
@@ -235,10 +289,15 @@ class Orchestrator:
             len(coins),
             ", ".join(coins[:5]) + ("..." if len(coins) > 5 else ""),
         )
-        async for trade in self._stream.stream_trades_multi(coins):
-            if not self._running:
-                break
-            await self._dispatch_trade(trade)
+        try:
+            async for trade in self._stream.stream_trades_multi(coins):
+                if not self._running:
+                    break
+                await self._dispatch_trade(trade)
+            self._clear_runtime_error("trade_stream")
+        except _RECOVERABLE as exc:
+            self._mark_runtime_error("trade_stream", exc)
+            logger.exception("Trade stream loop error")
 
     @staticmethod
     async def _cancel_tasks(tasks: list[asyncio.Task[None]]) -> None:
@@ -249,8 +308,8 @@ class Orchestrator:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    @staticmethod
     def _log_failed_stream_tasks(
+        self,
         tasks: list[asyncio.Task[None]],
         stream_name: str,
     ) -> bool:
@@ -264,6 +323,8 @@ class Orchestrator:
                 continue
             exc = task.exception()
             if exc is not None:
+                if isinstance(exc, Exception):
+                    self._mark_runtime_error(stream_name, exc)
                 logger.error("%s task crashed; restarting", stream_name, exc_info=exc)
         return needs_restart
 
@@ -304,6 +365,7 @@ class Orchestrator:
                         "Trade WS subscriptions refreshed across %d connection(s)",
                         len(desired_batches),
                     )
+                    self._clear_runtime_error("trade stream")
                 await asyncio.sleep(_STREAM_RECONCILE_S)
         finally:
             await self._cancel_tasks(tasks)
@@ -336,6 +398,7 @@ class Orchestrator:
                         "Asset ctx WS subscriptions refreshed for %d native coin(s)",
                         len(desired_coins),
                     )
+                    self._clear_runtime_error("asset ctx stream")
                 await asyncio.sleep(_STREAM_RECONCILE_S)
         finally:
             await self._cancel_tasks([task] if task is not None else [])
@@ -356,7 +419,14 @@ class Orchestrator:
         logger.debug("_position_stream_loop: %d whale engine(s)", len(whale_engines))
         while self._running:
             logger.debug("_position_stream_loop: fetching tracked addresses")
-            tracked = await self._storage.get_tracked_addresses()
+            try:
+                tracked = await self._storage.get_tracked_addresses()
+                self._clear_runtime_error("position_stream")
+            except _RECOVERABLE as exc:
+                self._mark_runtime_error("position_stream", exc)
+                logger.exception("Failed to fetch tracked addresses for position stream")
+                await asyncio.sleep(2)
+                continue
             logger.debug("_position_stream_loop: %d tracked addresses", len(tracked))
             if not tracked:
                 await asyncio.sleep(10.0)
@@ -375,13 +445,17 @@ class Orchestrator:
                             pos_alerts = await engine.on_position_update(
                                 address, positions, now_ms
                             )
+                            self._clear_engine_error(engine.name)
                             for alert in pos_alerts:
                                 await self._alert_manager.process_alert(alert)
-                        except _RECOVERABLE:
+                        except _RECOVERABLE as exc:
+                            self._mark_engine_error(engine.name, exc)
                             logger.exception(
                                 "Error in on_position_update for %s", address
                             )
-            except _RECOVERABLE:
+                self._clear_runtime_error("position_stream")
+            except _RECOVERABLE as exc:
+                self._mark_runtime_error("position_stream", exc)
                 logger.exception("Position stream loop error; restarting")
                 await asyncio.sleep(2)
 
@@ -393,15 +467,19 @@ class Orchestrator:
         """
         try:
             await self._storage.insert_trades([trade])
-        except _RECOVERABLE:
+            self._clear_runtime_error("trade_storage")
+        except _RECOVERABLE as exc:
+            self._mark_runtime_error("trade_storage", exc)
             logger.exception("Failed to store trade")
 
         for engine in self._engines:
             try:
                 alerts = await engine.on_trade(trade)
+                self._clear_engine_error(engine.name)
                 for alert in alerts:
                     await self._alert_manager.process_alert(alert)
-            except _RECOVERABLE:
+            except _RECOVERABLE as exc:
+                self._mark_engine_error(engine.name, exc)
                 logger.exception(
                     "Error dispatching trade to engine %s",
                     engine.name,

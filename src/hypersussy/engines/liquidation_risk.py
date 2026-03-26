@@ -16,6 +16,7 @@ import requests
 from hyperliquid.utils.error import ClientError, ServerError
 
 from hypersussy.config import HyperSussySettings
+from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.exchange.base import ExchangeReader
 from hypersussy.models import Alert, AssetSnapshot, L2Book, Trade
 from hypersussy.storage.base import StorageProtocol
@@ -113,7 +114,7 @@ class LiquidationRiskEngine:
                     continue
 
                 key = f"{address}:{pos.coin}"
-                if timestamp_ms - self._last_alert_ms.get(key, 0) < cooldown_ms:
+                if is_on_cooldown(self._last_alert_ms, key, timestamp_ms, cooldown_ms):
                     continue
 
                 impact_ratio = await self._estimate_impact(
@@ -135,7 +136,7 @@ class LiquidationRiskEngine:
                         )
                     )
                 )
-                self._last_alert_ms[key] = timestamp_ms
+                record_alert_timestamp(self._last_alert_ms, key, timestamp_ms)
 
         return alerts
 

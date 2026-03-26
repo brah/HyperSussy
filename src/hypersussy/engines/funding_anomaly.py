@@ -12,6 +12,7 @@ import uuid
 from collections import defaultdict, deque
 
 from hypersussy.config import HyperSussySettings
+from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.models import Alert, AssetSnapshot, Trade
 
 # Minimum hourly samples before computing z-scores
@@ -87,7 +88,7 @@ class FundingAnomalyEngine:
             if len(history) < _MIN_SAMPLES:
                 continue
 
-            if timestamp_ms - self._last_alert_ms.get(coin, 0) < cooldown_ms:
+            if is_on_cooldown(self._last_alert_ms, coin, timestamp_ms, cooldown_ms):
                 continue
 
             current_rate = self._latest_rate.get(coin)
@@ -140,7 +141,7 @@ class FundingAnomalyEngine:
                     },
                 )
             )
-            self._last_alert_ms[coin] = timestamp_ms
+            record_alert_timestamp(self._last_alert_ms, coin, timestamp_ms)
 
         return alerts
 

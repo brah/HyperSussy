@@ -74,6 +74,47 @@ class SqliteStorage:
             raise RuntimeError(msg)
         return self._db
 
+    async def _execute_write(
+        self,
+        query: str,
+        params: Sequence[object] = (),
+    ) -> None:
+        """Execute a single write statement under the shared write lock."""
+        async with self._write_lock:
+            await self._conn.execute(query, params)
+            await self._conn.commit()
+
+    async def _executemany_write(
+        self,
+        query: str,
+        rows: Sequence[Sequence[object]],
+    ) -> None:
+        """Execute a batch write statement under the shared write lock."""
+        async with self._write_lock:
+            await self._conn.executemany(query, rows)
+            await self._conn.commit()
+
+    async def _fetchall(
+        self,
+        query: str,
+        params: Sequence[object] = (),
+    ) -> list[Sequence[object]]:
+        """Execute a query and return all rows."""
+        cursor = await self._conn.execute(query, params)
+        return await cursor.fetchall()
+
+    async def _fetch_scalar(
+        self,
+        query: str,
+        params: Sequence[object] = (),
+        *,
+        default: float = 0.0,
+    ) -> float:
+        """Execute a scalar query and return the first value."""
+        cursor = await self._conn.execute(query, params)
+        row = await cursor.fetchone()
+        return float(row[0]) if row else default
+
     @staticmethod
     def _asset_snapshot_from_row(row: Sequence[object]) -> AssetSnapshot:
         """Hydrate an ``AssetSnapshot`` from a SQLite row tuple."""
@@ -162,30 +203,28 @@ class SqliteStorage:
         Args:
             snapshots: List of asset snapshots to store.
         """
-        async with self._write_lock:
-            await self._conn.executemany(
-                """INSERT OR IGNORE INTO asset_snapshots
-                   (coin, timestamp_ms, open_interest, open_interest_usd,
-                    mark_price, oracle_price, funding_rate, premium,
-                    day_volume_usd, mid_price)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        s.coin,
-                        s.timestamp_ms,
-                        s.open_interest,
-                        s.open_interest_usd,
-                        s.mark_price,
-                        s.oracle_price,
-                        s.funding_rate,
-                        s.premium,
-                        s.day_volume_usd,
-                        s.mid_price,
-                    )
-                    for s in snapshots
-                ],
-            )
-            await self._conn.commit()
+        await self._executemany_write(
+            """INSERT OR IGNORE INTO asset_snapshots
+               (coin, timestamp_ms, open_interest, open_interest_usd,
+                mark_price, oracle_price, funding_rate, premium,
+                day_volume_usd, mid_price)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    s.coin,
+                    s.timestamp_ms,
+                    s.open_interest,
+                    s.open_interest_usd,
+                    s.mark_price,
+                    s.oracle_price,
+                    s.funding_rate,
+                    s.premium,
+                    s.day_volume_usd,
+                    s.mid_price,
+                )
+                for s in snapshots
+            ],
+        )
 
     async def get_oi_history(self, coin: str, since_ms: int) -> list[AssetSnapshot]:
         """Fetch recent OI history for a coin.
@@ -198,7 +237,7 @@ class SqliteStorage:
             Snapshots ordered by timestamp ascending.
         """
         cutoff = since_ms
-        cursor = await self._conn.execute(
+        rows = await self._fetchall(
             """SELECT coin, timestamp_ms, open_interest,
                       open_interest_usd, mark_price, oracle_price,
                       funding_rate, premium, day_volume_usd, mid_price
@@ -207,7 +246,6 @@ class SqliteStorage:
                ORDER BY timestamp_ms ASC""",
             (coin, cutoff),
         )
-        rows = await cursor.fetchall()
         return [self._asset_snapshot_from_row(row) for row in rows]
 
     # -- Trades --
@@ -218,29 +256,27 @@ class SqliteStorage:
         Args:
             trades: List of trades to store.
         """
-        async with self._write_lock:
-            await self._conn.executemany(
-                """INSERT OR IGNORE INTO trades
-                   (tid, coin, price, size, side, timestamp_ms,
-                    buyer, seller, tx_hash, exchange)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        t.tid,
-                        t.coin,
-                        t.price,
-                        t.size,
-                        t.side,
-                        t.timestamp_ms,
-                        t.buyer,
-                        t.seller,
-                        t.tx_hash,
-                        t.exchange,
-                    )
-                    for t in trades
-                ],
-            )
-            await self._conn.commit()
+        await self._executemany_write(
+            """INSERT OR IGNORE INTO trades
+               (tid, coin, price, size, side, timestamp_ms,
+                buyer, seller, tx_hash, exchange)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    t.tid,
+                    t.coin,
+                    t.price,
+                    t.size,
+                    t.side,
+                    t.timestamp_ms,
+                    t.buyer,
+                    t.seller,
+                    t.tx_hash,
+                    t.exchange,
+                )
+                for t in trades
+            ],
+        )
 
     async def get_top_addresses_by_volume(
         self,
@@ -362,13 +398,11 @@ class SqliteStorage:
         Returns:
             Total notional volume in USD.
         """
-        cursor = await self._conn.execute(
+        return await self._fetch_scalar(
             """SELECT COALESCE(SUM(price * size), 0.0)
                FROM trades WHERE coin = ? AND timestamp_ms >= ?""",
             (coin, since_ms),
         )
-        row = await cursor.fetchone()
-        return float(row[0]) if row else 0.0
 
     # -- Tracked addresses --
 
@@ -388,21 +422,19 @@ class SqliteStorage:
             volume_usd: Cumulative volume.
         """
         now_ms = int(time.time() * 1000)
-        async with self._write_lock:
-            await self._conn.execute(
-                """INSERT INTO tracked_addresses
-                   (address, label, source, first_seen_ms,
-                    total_volume_usd, last_active_ms)
-                   VALUES (?, ?, ?, ?, ?, ?)
-                   ON CONFLICT(address) DO UPDATE SET
-                     total_volume_usd = MAX(
-                         tracked_addresses.total_volume_usd,
-                         excluded.total_volume_usd
-                     ),
-                     last_active_ms = excluded.last_active_ms""",
-                (address, label, source, now_ms, volume_usd, now_ms),
-            )
-            await self._conn.commit()
+        await self._execute_write(
+            """INSERT INTO tracked_addresses
+               (address, label, source, first_seen_ms,
+                total_volume_usd, last_active_ms)
+               VALUES (?, ?, ?, ?, ?, ?)
+               ON CONFLICT(address) DO UPDATE SET
+                 total_volume_usd = MAX(
+                     tracked_addresses.total_volume_usd,
+                     excluded.total_volume_usd
+                 ),
+                 last_active_ms = excluded.last_active_ms""",
+            (address, label, source, now_ms, volume_usd, now_ms),
+        )
 
     async def get_tracked_addresses(self) -> list[str]:
         """Get all tracked whale addresses.
@@ -410,11 +442,11 @@ class SqliteStorage:
         Returns:
             List of 0x addresses ordered by volume descending.
         """
-        cursor = await self._conn.execute(
+        rows = await self._fetchall(
             """SELECT address FROM tracked_addresses
                ORDER BY total_volume_usd DESC"""
         )
-        return [row[0] for row in await cursor.fetchall()]
+        return [row[0] for row in rows]
 
     async def delete_tracked_address(self, address: str) -> None:
         """Remove a tracked whale address.
@@ -422,11 +454,9 @@ class SqliteStorage:
         Args:
             address: The 0x address to remove.
         """
-        async with self._write_lock:
-            await self._conn.execute(
-                "DELETE FROM tracked_addresses WHERE address = ?", (address,)
-            )
-            await self._conn.commit()
+        await self._execute_write(
+            "DELETE FROM tracked_addresses WHERE address = ?", (address,)
+        )
 
     # -- Positions --
 
@@ -436,33 +466,31 @@ class SqliteStorage:
         Args:
             positions: List of position snapshots.
         """
-        async with self._write_lock:
-            await self._conn.executemany(
-                """INSERT OR IGNORE INTO address_positions
-                   (address, coin, timestamp_ms, size, entry_price,
-                    notional_usd, unrealized_pnl, leverage_value,
-                    leverage_type, liquidation_price, mark_price,
-                    margin_used)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        p.address,
-                        p.coin,
-                        p.timestamp_ms,
-                        p.size,
-                        p.entry_price,
-                        p.notional_usd,
-                        p.unrealized_pnl,
-                        p.leverage_value,
-                        p.leverage_type,
-                        p.liquidation_price,
-                        p.mark_price,
-                        p.margin_used,
-                    )
-                    for p in positions
-                ],
-            )
-            await self._conn.commit()
+        await self._executemany_write(
+            """INSERT OR IGNORE INTO address_positions
+               (address, coin, timestamp_ms, size, entry_price,
+                notional_usd, unrealized_pnl, leverage_value,
+                leverage_type, liquidation_price, mark_price,
+                margin_used)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    p.address,
+                    p.coin,
+                    p.timestamp_ms,
+                    p.size,
+                    p.entry_price,
+                    p.notional_usd,
+                    p.unrealized_pnl,
+                    p.leverage_value,
+                    p.leverage_type,
+                    p.liquidation_price,
+                    p.mark_price,
+                    p.margin_used,
+                )
+                for p in positions
+            ],
+        )
 
     async def get_position_history(
         self, address: str, coin: str, since_ms: int
@@ -529,25 +557,23 @@ class SqliteStorage:
         Args:
             alert: The alert to persist.
         """
-        async with self._write_lock:
-            await self._conn.execute(
-                """INSERT OR IGNORE INTO alerts
-                   (alert_id, alert_type, severity, coin, title,
-                    description, timestamp_ms, metadata_json, exchange)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    alert.alert_id,
-                    alert.alert_type,
-                    alert.severity,
-                    alert.coin,
-                    alert.title,
-                    alert.description,
-                    alert.timestamp_ms,
-                    orjson.dumps(alert.metadata),
-                    alert.exchange,
-                ),
-            )
-            await self._conn.commit()
+        await self._execute_write(
+            """INSERT OR IGNORE INTO alerts
+               (alert_id, alert_type, severity, coin, title,
+                description, timestamp_ms, metadata_json, exchange)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                alert.alert_id,
+                alert.alert_type,
+                alert.severity,
+                alert.coin,
+                alert.title,
+                alert.description,
+                alert.timestamp_ms,
+                orjson.dumps(alert.metadata),
+                alert.exchange,
+            ),
+        )
 
     async def get_recent_alerts(
         self,
@@ -586,28 +612,26 @@ class SqliteStorage:
         Args:
             candles: List of candle bars.
         """
-        async with self._write_lock:
-            await self._conn.executemany(
-                """INSERT OR REPLACE INTO candles
-                   (coin, interval_str, timestamp_ms, open, high, low,
-                    close, volume, num_trades)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                [
-                    (
-                        c.coin,
-                        c.interval,
-                        c.timestamp_ms,
-                        c.open,
-                        c.high,
-                        c.low,
-                        c.close,
-                        c.volume,
-                        c.num_trades,
-                    )
-                    for c in candles
-                ],
-            )
-            await self._conn.commit()
+        await self._executemany_write(
+            """INSERT OR REPLACE INTO candles
+               (coin, interval_str, timestamp_ms, open, high, low,
+                close, volume, num_trades)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    c.coin,
+                    c.interval,
+                    c.timestamp_ms,
+                    c.open,
+                    c.high,
+                    c.low,
+                    c.close,
+                    c.volume,
+                    c.num_trades,
+                )
+                for c in candles
+            ],
+        )
 
     async def get_candles(
         self,

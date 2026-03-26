@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import math
-import time
 from collections.abc import Sequence
 
 import polars as pl
@@ -18,15 +17,6 @@ CHART_GREY = "#4a4e69"
 CHART_PAPER_BG = "rgba(0,0,0,0)"
 CHART_PLOT_BG = "rgba(0,0,0,0)"
 CHART_FONT_COLOR = "#fafafa"
-
-# -- Severity helpers --
-
-_SEV_COLORS: dict[str, str] = {
-    "critical": "#ff4b4b",
-    "high": "#ffa500",
-    "medium": "#ffd700",
-    "low": "#21c354",
-}
 
 SEV_RANK: dict[str, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
@@ -73,52 +63,6 @@ def price_d3_format(representative: float) -> str:
     leading_zeros = max(0, math.floor(-math.log10(representative)))
     return f",.{leading_zeros + 2}f"
 
-
-def severity_color(severity: str) -> str:
-    """Map an alert severity to a hex colour.
-
-    Args:
-        severity: One of ``critical``, ``high``, ``medium``, ``low``.
-
-    Returns:
-        Hex colour string.
-    """
-    return _SEV_COLORS.get(severity, "#cccccc")
-
-
-def render_alert_line(
-    severity: str,
-    coin: str,
-    title: str,
-    timestamp_ms: int,
-    alert_type: str = "",
-    address: str | None = None,
-) -> str:
-    """Return an HTML string for a single colour-coded alert line.
-
-    Args:
-        severity: Alert severity level.
-        coin: Asset ticker symbol.
-        title: Alert title text.
-        timestamp_ms: Alert timestamp in milliseconds.
-        alert_type: Optional engine alert type string.
-        address: Optional wallet address for a clickable link.
-
-    Returns:
-        HTML string for use with ``st.markdown(unsafe_allow_html=True)``.
-    """
-    color = severity_color(severity)
-    ts = time.strftime("%H:%M:%S", time.localtime(timestamp_ms / 1000))
-    type_part = f" | {alert_type}" if alert_type else ""
-    addr_part = f" | {wallet_link_html(address)}" if address else ""
-    return (
-        f'<span style="color:{color};font-weight:bold">'
-        f"[{severity.upper()}]</span> "
-        f"`{coin}`{type_part} | "
-        f"**{title}** | _{ts}_{addr_part}"
-    )
-
-
 def sort_alerts_by_severity(
     rows: Sequence[dict[str, object]],
     ts_key: str = "timestamp_ms",
@@ -139,23 +83,6 @@ def sort_alerts_by_severity(
             -int(r[ts_key]),  # type: ignore[call-overload]
         ),
     )
-
-
-def wallet_link_html(address: str) -> str:
-    """Return an HTML anchor that navigates to the wallet detail page.
-
-    Args:
-        address: Full 0x address.
-
-    Returns:
-        HTML ``<a>`` tag for use with ``unsafe_allow_html=True``.
-    """
-    short = f"...{address[-8:]}"
-    return (
-        f'<a href="?page=wallet&address={address}" '
-        f'target="_self" style="color:#00d4aa">{short}</a>'
-    )
-
 
 def build_positions_df(
     positions: list[dict[str, object]],

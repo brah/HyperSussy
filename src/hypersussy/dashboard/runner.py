@@ -97,6 +97,7 @@ class BackgroundRunner:
     def _run_forever(self) -> None:
         """Thread target: create event loop, run orchestrator, clean up."""
         logger.debug("BackgroundRunner: thread started, creating event loop")
+        self._state.clear_runtime_error("background_runner")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self._loop = loop
@@ -115,7 +116,8 @@ class BackgroundRunner:
             KeyError,
             TypeError,
             RuntimeError,
-        ):
+        ) as exc:
+            self._state.mark_runtime_error("background_runner", str(exc))
             logger.exception("BackgroundRunner crashed")
         finally:
             loop.close()
@@ -142,6 +144,7 @@ class BackgroundRunner:
         logger.debug("BackgroundRunner: initialising storage")
         await storage.init()
         logger.debug("BackgroundRunner: storage ready")
+        self._state.clear_runtime_error("background_runner")
 
         sinks = [LogSink(), StreamlitSink(self._state)]
         alert_manager = AlertManager(

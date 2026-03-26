@@ -127,3 +127,23 @@ def test_running_flag_cleared_on_exit(
         time.sleep(0.01)
 
     assert not shared_state.is_running
+
+
+def test_runner_records_runtime_error_on_crash(
+    settings: HyperSussySettings,
+    shared_state: SharedState,
+) -> None:
+    """Unexpected runner failures are surfaced through shared runtime errors."""
+
+    async def _crash() -> None:
+        raise RuntimeError("boom")
+
+    runner = _make_runner(settings, shared_state)
+    runner._async_main = _crash  # type: ignore[method-assign]
+    runner.start()
+
+    deadline = time.monotonic() + 2.0
+    while runner.is_alive and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert shared_state.get_runtime_errors()["background_runner"] == "boom"

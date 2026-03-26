@@ -15,15 +15,13 @@ class DashboardReader:
     """Read-only SQLite interface for dashboard pages.
 
     Uses a URI connection with mode=ro so no writes are possible on the
-    primary connection.  A separate writable connection is lazily created
-    for mutation operations (add / remove tracked addresses).
+    primary connection.
 
     Args:
         db_path: Path to the SQLite database file.
     """
 
     def __init__(self, db_path: str) -> None:
-        self._db_path = db_path
         self._conn = sqlite3.connect(
             f"file:{db_path}?mode=ro",
             uri=True,
@@ -32,22 +30,6 @@ class DashboardReader:
             isolation_level=None,
         )
         self._conn.row_factory = sqlite3.Row
-        self._write_conn: sqlite3.Connection | None = None
-
-    def _get_write_conn(self) -> sqlite3.Connection:
-        """Lazily open a writable connection for mutation operations.
-
-        Returns:
-            A writable sqlite3 connection with busy_timeout set.
-        """
-        if self._write_conn is None:
-            self._write_conn = sqlite3.connect(
-                self._db_path,
-                check_same_thread=False,
-                isolation_level=None,
-            )
-            self._write_conn.execute("PRAGMA busy_timeout=5000")
-        return self._write_conn
 
     @staticmethod
     def _hours_to_since_ms(hours: int) -> int:
@@ -62,36 +44,6 @@ class DashboardReader:
         """Execute a query and return rows as plain dicts."""
         cur = self._conn.execute(query, params)
         return [dict(row) for row in cur.fetchall()]
-
-    # -- Mutations --
-
-    def delete_tracked_address(self, address: str) -> None:
-        """Remove a tracked whale address.
-
-        Args:
-            address: The 0x address to remove.
-        """
-        conn = self._get_write_conn()
-        conn.execute("DELETE FROM tracked_addresses WHERE address = ?", (address,))
-        conn.commit()
-
-    def insert_tracked_address(self, address: str, label: str) -> None:
-        """Manually add a whale address for tracking.
-
-        Args:
-            address: The 0x address.
-            label: Human-readable label.
-        """
-        now_ms = int(time.time() * 1000)
-        conn = self._get_write_conn()
-        conn.execute(
-            """INSERT OR IGNORE INTO tracked_addresses
-               (address, label, source, first_seen_ms,
-                total_volume_usd, last_active_ms, is_manual)
-               VALUES (?, ?, 'manual', ?, 0.0, ?, 1)""",
-            (address, label, now_ms, now_ms),
-        )
-        conn.commit()
 
     # -- Alerts --
 
@@ -398,5 +350,3 @@ class DashboardReader:
     def close(self) -> None:
         """Close all database connections."""
         self._conn.close()
-        if self._write_conn is not None:
-            self._write_conn.close()

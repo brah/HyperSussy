@@ -7,6 +7,13 @@ import time
 import plotly.graph_objects as go
 import streamlit as st
 
+from hypersussy.dashboard.actions import DashboardActions
+from hypersussy.dashboard.components import (
+    render_alert_feed,
+    render_empty_state,
+    render_page_header,
+    render_section_header,
+)
 from hypersussy.dashboard.db_reader import DashboardReader
 from hypersussy.dashboard.formatting import (
     CHART_FONT_COLOR,
@@ -15,114 +22,114 @@ from hypersussy.dashboard.formatting import (
     CHART_PAPER_BG,
     CHART_PLOT_BG,
     CHART_TEAL,
-    build_positions_df,
-    render_alert_line,
-    sort_alerts_by_severity,
-    wallet_link_html,
+)
+from hypersussy.dashboard.navigation import normalize_wallet_address
+from hypersussy.dashboard.view_models import (
+    build_alert_feed_items,
+    build_positions_table,
+    build_top_trader_views,
+    build_top_traders_df,
+    build_tracked_address_views,
+    coerce_select_int,
 )
 
 _HOURS_OPTIONS = [1, 4, 24]
 _COL_VOLUME = "Volume (USD)"
 
 
-def render_whale_tracker(db_reader: DashboardReader, refresh_s: int) -> None:
-    """Render the whale tracking page.
-
-    Displays tracked whale addresses with drill-down into positions and
-    alert history, and top traders by coin with a Plotly horizontal bar
-    chart and ranked summary table.
-
-    Args:
-        db_reader: Read-only SQLite reader.
-        refresh_s: Auto-refresh interval in seconds.
-    """
-    st.header("Whale Tracker")
+def render_whale_tracker(
+    db_reader: DashboardReader,
+    actions: DashboardActions,
+    refresh_s: int,
+) -> None:
+    """Render the whale tracking page."""
+    render_page_header(
+        "Whale Tracker",
+        "Inspect tracked addresses, drill into their open positions and alert history, and compare them with the top traders by coin.",
+    )
 
     @st.fragment(run_every=refresh_s)
     def _live() -> None:
-        _render_address_panel(db_reader)
+        _render_address_panel(db_reader, actions)
         st.divider()
         _render_top_traders(db_reader)
 
     _live()
 
 
-def _render_address_panel(db_reader: DashboardReader) -> None:
+def _render_address_panel(
+    db_reader: DashboardReader,
+    actions: DashboardActions,
+) -> None:
     """Two-column layout: address list and selected address detail."""
-    # Manual whale add form
-    with st.expander("Add whale manually"):  # noqa: SIM117
+    with st.expander("Add whale manually", expanded=False):
         with st.form("add_whale_form", clear_on_submit=True):
             new_addr = st.text_input("Address (0x...)")
             new_label = st.text_input("Label (optional)", value="")
             submitted = st.form_submit_button("Add")
             if submitted:
-                addr = new_addr.strip()
-                if addr.startswith("0x") and len(addr) == 42:
-                    db_reader.insert_tracked_address(
-                        addr, new_label.strip() or "MANUAL"
-                    )
-                    st.rerun()
-                else:
+                addr = normalize_wallet_address(new_addr)
+                if addr is None:
                     st.error("Address must be a 42-character 0x hex string.")
+                else:
+                    actions.add_tracked_address(addr, new_label.strip() or "MANUAL")
+                    st.rerun()
 
-    addresses = db_reader.get_tracked_addresses(limit=100)
-
+    addresses = build_tracked_address_views(db_reader.get_tracked_addresses(limit=100))
     if not addresses:
-        st.info(
-            "No tracked whale addresses yet. "
-            "Threshold: $5M volume or 5% of coin OI in 1h."
+        render_empty_state(
+            "No tracked whale addresses yet. Threshold: $5M volume or 5% of coin OI in 1h."
         )
         return
 
     col_list, col_detail = st.columns([1, 2])
 
     with col_list:
-        st.subheader("Tracked Whales")
-        addr_labels = [
-            f"{row['label'] or 'WHALE'} -- ${row['total_volume_usd']:>,.0f}"
-            for row in addresses
-        ]
+        render_section_header("Tracked Whales", "Highest-volume tracked addresses.")
         selected_idx = st.radio(
             "Select address",
             options=range(len(addresses)),
-            format_func=lambda i: addr_labels[i],
+            format_func=lambda index: addresses[index].radio_label,
             label_visibility="collapsed",
         )
 
-    selected = addresses[selected_idx]  # type: ignore[index]
-    selected_address = str(selected["address"])
-    label = str(selected["label"] or "WHALE")
-
+    selected = addresses[selected_idx]
     with col_detail:
-        st.subheader(label)
-        st.caption(selected_address)
+        render_section_header(selected.label, selected.address)
 
-        col_actions = st.columns([1, 1, 2])
-        with col_actions[0]:
-            if st.button("View wallet", key=f"view_{selected_address}"):
+        action_cols = st.columns([1, 1, 2])
+        with action_cols[0]:
+            if st.button("View wallet", key=f"view_{selected.address}"):
                 st.query_params["page"] = "wallet"
-                st.query_params["address"] = selected_address
+                st.query_params["address"] = selected.address
                 st.rerun()
-        with col_actions[1]:
-            if st.button("Remove", key=f"del_{selected_address}"):
-                db_reader.delete_tracked_address(selected_address)
+        with action_cols[1]:
+            if st.button("Remove", key=f"remove_{selected.address}"):
+                actions.remove_tracked_address(selected.address)
                 st.rerun()
 
-        last_active = int(selected["last_active_ms"] or 0)
-        if last_active:
-            ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_active / 1000))
-            st.caption(f"Last active: {ts}")
+        meta_parts = [f"Source: {selected.source or 'tracked'}"]
+        if selected.last_active_ms is not None:
+            meta_parts.append(
+                "Last active: "
+                + time.strftime(
+                    "%Y-%m-%d %H:%M:%S",
+                    time.localtime(selected.last_active_ms / 1000),
+                )
+            )
+        st.caption(" | ".join(meta_parts))
 
         tab_pos, tab_alerts = st.tabs(["Positions", "Alert History"])
-
         with tab_pos:
-            positions = db_reader.get_whale_positions(selected_address)
+            positions = db_reader.get_whale_positions(selected.address)
             if not positions:
-                st.info("No open positions found.")
+                render_empty_state("No open positions found.")
             else:
-                df = build_positions_df(positions, db_reader.get_latest_oi_per_coin())
                 st.dataframe(
-                    df,
+                    build_positions_table(
+                        positions,
+                        db_reader.get_latest_oi_per_coin(),
+                    ),
                     width="stretch",
                     hide_index=True,
                     column_config={
@@ -134,30 +141,21 @@ def _render_address_panel(db_reader: DashboardReader) -> None:
                 )
 
         with tab_alerts:
-            alert_rows = db_reader.get_alerts_by_address(selected_address)
-            if not alert_rows:
-                st.info("No alerts triggered by this address yet.")
-            else:
-                for r in sort_alerts_by_severity(alert_rows):
-                    st.markdown(
-                        render_alert_line(
-                            severity=str(r["severity"]),
-                            coin=str(r["coin"]),
-                            title=str(r["title"]),
-                            timestamp_ms=int(r["timestamp_ms"]),
-                            alert_type=str(r["alert_type"]),
-                        ),
-                        unsafe_allow_html=True,
-                    )
+            render_alert_feed(
+                build_alert_feed_items(db_reader.get_alerts_by_address(selected.address)),
+                empty_message="No alerts triggered by this address yet.",
+            )
 
 
 def _render_top_traders(db_reader: DashboardReader) -> None:
     """Render top traders by volume for a selected coin."""
-    st.subheader("Top Traders by Coin")
-
+    render_section_header(
+        "Top Traders by Coin",
+        "Compare tracked whales against the heaviest recent traders for a selected market.",
+    )
     coins = db_reader.get_distinct_coins()
     if not coins:
-        st.info("No trade data available yet.")
+        render_empty_state("No trade data available yet.")
         return
 
     col_coin, col_hours = st.columns(2)
@@ -167,43 +165,37 @@ def _render_top_traders(db_reader: DashboardReader) -> None:
         hours = st.selectbox(
             "Lookback",
             options=_HOURS_OPTIONS,
-            format_func=lambda h: f"{h}h",
+            format_func=lambda value: f"{value}h",
             key="top_traders_hours",
         )
 
     if selected_coin is None:
         return
 
-    rows = db_reader.get_top_whales(str(selected_coin), hours=int(hours))  # type: ignore[arg-type]
+    lookback_hours = coerce_select_int(hours, default=1)
+    rows = db_reader.get_top_whales(str(selected_coin), hours=lookback_hours)
     if not rows:
-        st.info(f"No trades for {selected_coin} in the last {hours}h.")
+        render_empty_state(f"No trades for {selected_coin} in the last {lookback_hours}h.")
         return
 
     tracked_set = {
-        str(r["address"]) for r in db_reader.get_tracked_addresses(limit=1000)
+        str(row["address"]) for row in db_reader.get_tracked_addresses(limit=1000)
     }
+    top_rows = build_top_trader_views(rows, tracked_set)
 
-    top10 = rows[:10]
-    total_vol = sum(float(r["volume_usd"]) for r in top10) or 1.0
-
-    # Horizontal Plotly bar chart -- sorted ascending so largest is at top
-    sorted_rows = sorted(top10, key=lambda r: float(r["volume_usd"]))
-    addresses = [str(r["address"]) for r in sorted_rows]
-    volumes = [float(r["volume_usd"]) for r in sorted_rows]
-    colours = [CHART_TEAL if a in tracked_set else CHART_GREY for a in addresses]
-    short_labels = [f"...{a[-10:]}" for a in addresses]
-    hover = [
-        f"<b>{a}</b><br>Volume: ${v:,.0f}"
-        for a, v in zip(addresses, volumes, strict=False)
-    ]
-
+    sorted_rows = sorted(top_rows, key=lambda row: row.volume_usd)
     fig = go.Figure(
         go.Bar(
-            x=volumes,
-            y=short_labels,
+            x=[row.volume_usd for row in sorted_rows],
+            y=[row.short_address for row in sorted_rows],
             orientation="h",
-            marker_color=colours,
-            hovertext=hover,
+            marker_color=[
+                CHART_TEAL if row.tracked else CHART_GREY for row in sorted_rows
+            ],
+            hovertext=[
+                f"<b>{row.address}</b><br>Volume: ${row.volume_usd:,.0f}"
+                for row in sorted_rows
+            ],
             hoverinfo="text",
         )
     )
@@ -224,30 +216,23 @@ def _render_top_traders(db_reader: DashboardReader) -> None:
     )
     st.plotly_chart(fig, width="stretch")
 
-    # Ranked summary table with wallet hotlinks
-    table_header = (
-        f"<table style='width:100%;border-collapse:collapse;"
-        f"font-size:0.9em;color:{CHART_FONT_COLOR}'>"
-        f"<tr style='border-bottom:1px solid {CHART_GRID}'>"
-        "<th>Rank</th><th>Address</th>"
-        "<th>Volume (USD)</th><th>% of Top 10</th>"
-        "<th>Tracked</th></tr>"
+    st.dataframe(
+        build_top_traders_df(top_rows),
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Volume (USD)": st.column_config.NumberColumn(format="$%,.0f"),
+            "% of Top 10": st.column_config.NumberColumn(format="%.1f%%"),
+        },
     )
-    table_html_parts = [table_header]
-    for i, r in enumerate(top10):
-        addr = str(r["address"])
-        vol = float(r["volume_usd"])
-        pct = vol / total_vol * 100
-        tracked = addr in tracked_set
-        link = wallet_link_html(addr)
-        tracked_mark = "Y" if tracked else ""
-        table_html_parts.append(
-            f"<tr style='border-bottom:1px solid #1a1d24'>"
-            f"<td>{i + 1}</td>"
-            f"<td>{link}</td>"
-            f"<td>${vol:,.0f}</td>"
-            f"<td>{pct:.1f}%</td>"
-            f"<td>{tracked_mark}</td></tr>"
-        )
-    table_html_parts.append("</table>")
-    st.markdown("".join(table_html_parts), unsafe_allow_html=True)
+
+    selected_wallet = st.selectbox(
+        "Inspect a top trader wallet",
+        options=[row.address for row in top_rows],
+        format_func=lambda address: address,
+        key="top_trader_wallet",
+    )
+    if st.button("Open selected wallet", key="open_top_trader_wallet"):
+        st.query_params["page"] = "wallet"
+        st.query_params["address"] = selected_wallet
+        st.rerun()

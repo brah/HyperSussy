@@ -11,6 +11,7 @@ from bisect import bisect_left
 from collections import defaultdict, deque
 
 from hypersussy.config import HyperSussySettings
+from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.models import Alert, AssetSnapshot, Trade
 
 # Max entries per coin in price and trade buffers
@@ -91,10 +92,11 @@ class PreMoveEngine:
                 continue
 
             # Cooldown check
-            last_alert = self._last_alert_ms.get(coin)
-            if (
-                last_alert is not None
-                and timestamp_ms - last_alert < self._settings.pre_move_cooldown_ms
+            if is_on_cooldown(
+                self._last_alert_ms,
+                coin,
+                timestamp_ms,
+                self._settings.pre_move_cooldown_ms,
             ):
                 continue
 
@@ -117,7 +119,7 @@ class PreMoveEngine:
                 )
                 if alert:
                     alerts.append(alert)
-                    self._last_alert_ms[coin] = timestamp_ms
+                    record_alert_timestamp(self._last_alert_ms, coin, timestamp_ms)
                     break  # One alert per coin per tick
 
         return alerts

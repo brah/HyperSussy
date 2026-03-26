@@ -10,7 +10,10 @@ from __future__ import annotations
 import streamlit as st
 
 from hypersussy.config import HyperSussySettings
+from hypersussy.dashboard.actions import DashboardActions
+from hypersussy.dashboard.components import apply_dashboard_theme
 from hypersussy.dashboard.db_reader import DashboardReader
+from hypersussy.dashboard.navigation import normalize_wallet_address
 from hypersussy.dashboard.runner import BackgroundRunner
 from hypersussy.dashboard.state import SharedState
 
@@ -23,15 +26,7 @@ def _get_state() -> SharedState:
 
 @st.cache_resource
 def _get_runner(_state: SharedState) -> BackgroundRunner:
-    """Start the orchestrator in a background thread, once per process.
-
-    Args:
-        _state: SharedState — passed as argument so the cache key includes it,
-            ensuring the runner is bound to this state instance.
-
-    Returns:
-        A started BackgroundRunner.
-    """
+    """Start the orchestrator in a background thread, once per process."""
     settings = HyperSussySettings()
     runner = BackgroundRunner(settings=settings, shared_state=_state)
     runner.start()
@@ -45,6 +40,13 @@ def _get_db_reader() -> DashboardReader:
     return DashboardReader(db_path=settings.db_path)
 
 
+@st.cache_resource
+def _get_db_actions() -> DashboardActions:
+    """Open the writable dashboard actions interface once per process."""
+    settings = HyperSussySettings()
+    return DashboardActions(db_path=settings.db_path)
+
+
 def main() -> None:
     """Streamlit application entry point."""
     st.set_page_config(
@@ -53,16 +55,21 @@ def main() -> None:
         layout="wide",
         initial_sidebar_state="expanded",
     )
+    apply_dashboard_theme()
 
     state = _get_state()
     _get_runner(state)  # idempotent start
     db_reader = _get_db_reader()
+    db_actions = _get_db_actions()
 
-    # Sidebar navigation
     st.sidebar.title("HyperSussy")
+    health = state.get_runtime_health()
+    if health.is_running:
+        st.sidebar.success("Monitor online")
+    else:
+        st.sidebar.warning("Monitor offline")
 
     def _clear_wallet_params() -> None:
-        """Clear wallet query params when the sidebar page changes."""
         st.query_params.clear()
 
     page = st.sidebar.radio(
@@ -78,7 +85,6 @@ def main() -> None:
         )
     )
 
-    # Sidebar wallet lookup
     with st.sidebar.expander("Go to wallet"):
         addr_input = st.text_input(
             "Wallet address (0x...)",
@@ -86,15 +92,14 @@ def main() -> None:
             placeholder="0x...",
         )
         if st.button("Go", key="sidebar_wallet_go"):
-            addr = addr_input.strip()
-            if addr.startswith("0x") and len(addr) == 42:
+            addr = normalize_wallet_address(addr_input)
+            if addr is not None:
                 st.query_params["page"] = "wallet"
                 st.query_params["address"] = addr
                 st.rerun()
             else:
-                st.error("Invalid address — must be 0x + 40 hex chars.")
+                st.error("Invalid address. Use a 42-character 0x hex wallet.")
 
-    # Query-param deep-link: ?page=wallet&address=0x...
     if st.query_params.get("page") == "wallet":
         from hypersussy.dashboard._pages.wallet_detail import render_wallet_detail
 
@@ -110,7 +115,7 @@ def main() -> None:
     elif page == "Whale Tracker":
         from hypersussy.dashboard._pages.whale_tracker import render_whale_tracker
 
-        render_whale_tracker(db_reader, refresh_s)
+        render_whale_tracker(db_reader, db_actions, refresh_s)
     elif page == "Charts":
         from hypersussy.dashboard._pages.charts import render_charts
 

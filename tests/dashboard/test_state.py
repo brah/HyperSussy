@@ -166,3 +166,36 @@ def test_get_engine_errors_returns_copy(state: SharedState) -> None:
     copy = state.get_engine_errors()
     del copy["whale_tracker"]
     assert "whale_tracker" in state.get_engine_errors()
+
+
+def test_runtime_errors_latest_wins(state: SharedState) -> None:
+    """Runtime errors keep only the newest message per source."""
+    state.mark_runtime_error("runner", "first")
+    state.mark_runtime_error("runner", "second")
+    assert state.get_runtime_errors()["runner"] == "second"
+
+
+def test_clear_runtime_error_removes_entry(state: SharedState) -> None:
+    """Clearing a runtime error removes it from the public copy."""
+    state.mark_runtime_error("runner", "boom")
+    state.clear_runtime_error("runner")
+    assert "runner" not in state.get_runtime_errors()
+
+
+def test_runtime_health_tracks_last_snapshot_and_alert(state: SharedState) -> None:
+    """Runtime health exposes the latest snapshot and alert timestamps."""
+    state.push_snapshot(_make_snapshot("BTC", timestamp_ms=12_345))
+    state.push_alert(_make_alert(timestamp_ms=67_890))
+    health = state.get_runtime_health()
+    assert health.snapshot_count == 1
+    assert health.last_snapshot_ms == 12_345
+    assert health.last_alert_ms == 67_890
+
+
+def test_runtime_health_exposes_issue_objects(state: SharedState) -> None:
+    """Runtime health returns immutable issue snapshots for UI display."""
+    state.mark_engine_error("oi_concentration", "engine failure")
+    state.mark_runtime_error("runner", "runtime failure")
+    health = state.get_runtime_health()
+    assert health.engine_errors[0].source == "oi_concentration"
+    assert health.runtime_errors[0].source == "runner"

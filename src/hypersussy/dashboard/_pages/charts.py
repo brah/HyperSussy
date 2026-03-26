@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import polars as pl
 import streamlit as st
 
+from hypersussy.dashboard.components import render_empty_state, render_page_header, render_section_header
 from hypersussy.dashboard.db_reader import DashboardReader
 from hypersussy.dashboard.formatting import (
     CHART_FONT_COLOR,
@@ -17,6 +18,7 @@ from hypersussy.dashboard.formatting import (
     CHART_TEAL,
     price_d3_format,
 )
+from hypersussy.dashboard.view_models import coerce_select_int
 
 
 def _base_layout(**kwargs: object) -> dict[str, object]:
@@ -47,11 +49,14 @@ def render_charts(db_reader: DashboardReader) -> None:
     Args:
         db_reader: Read-only SQLite reader.
     """
-    st.header("Historical Charts")
+    render_page_header(
+        "Historical Charts",
+        "Explore open interest, funding, and price history for any monitored market without leaving the dashboard.",
+    )
 
     coins = db_reader.get_distinct_coins()
     if not coins:
-        st.info("No snapshot data available yet.")
+        render_empty_state("No snapshot data available yet.")
         return
 
     col_coin, col_tf = st.columns(2)
@@ -69,7 +74,7 @@ def render_charts(db_reader: DashboardReader) -> None:
         return
 
     coin_str = str(coin)
-    hours_int = int(hours)  # type: ignore[arg-type]
+    hours_int = coerce_select_int(hours, default=24)
 
     _render_oi_chart(db_reader, coin_str, hours_int)
     _render_funding_price_charts(db_reader, coin_str, hours_int)
@@ -85,7 +90,7 @@ def _render_oi_chart(db_reader: DashboardReader, coin: str, hours: int) -> None:
     """
     rows = db_reader.get_oi_history(coin, hours=hours)
     if not rows:
-        st.warning(f"No OI history for {coin} in the last {hours}h.")
+        render_empty_state(f"No OI history for {coin} in the last {hours}h.")
         return
 
     df = (
@@ -99,6 +104,7 @@ def _render_oi_chart(db_reader: DashboardReader, coin: str, hours: int) -> None:
     times = df["time"].to_list()
     oi_vals = df["open_interest_usd"].to_list()
 
+    render_section_header("Open Interest", f"{coin} over the last {hours}h.")
     fig = go.Figure(
         go.Scatter(
             x=times,
@@ -151,6 +157,7 @@ def _render_funding_price_charts(
     col_funding, col_price = st.columns(2)
 
     with col_funding:
+        render_section_header("Funding Rate", f"{coin} over the last {hours}h.")
         pos_y = [max(v, 0.0) for v in funding]
         neg_y = [min(v, 0.0) for v in funding]
         fig_f = go.Figure()
@@ -183,6 +190,7 @@ def _render_funding_price_charts(
         st.plotly_chart(fig_f, width="stretch")
 
     with col_price:
+        render_section_header("Mark vs Oracle", f"{coin} over the last {hours}h.")
         # Determine format from representative price
         rep_price = next((v for v in mark if v > 0), 0.0)
         d3_fmt = price_d3_format(rep_price)

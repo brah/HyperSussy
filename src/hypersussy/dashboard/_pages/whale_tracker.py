@@ -12,6 +12,7 @@ from hypersussy.dashboard.components import (
     render_alert_feed,
     render_empty_state,
     render_page_header,
+    render_positions_table,
     render_section_header,
 )
 from hypersussy.dashboard.db_reader import DashboardReader
@@ -125,19 +126,11 @@ def _render_address_panel(
             if not positions:
                 render_empty_state("No open positions found.")
             else:
-                st.dataframe(
+                render_positions_table(
                     build_positions_table(
                         positions,
                         db_reader.get_latest_oi_per_coin(),
-                    ),
-                    width="stretch",
-                    hide_index=True,
-                    column_config={
-                        "Notional (USD)": st.column_config.NumberColumn(
-                            format="$%,.0f"
-                        ),
-                        "Unr. PnL": st.column_config.NumberColumn(format="$%+,.0f"),
-                    },
+                    )
                 )
 
         with tab_alerts:

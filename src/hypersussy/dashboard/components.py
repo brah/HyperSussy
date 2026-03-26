@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 from collections.abc import Sequence
 
+import polars as pl
 import streamlit as st
 
 from hypersussy.dashboard.state import RuntimeHealth
@@ -122,3 +123,16 @@ def render_alert_feed(
             if alert.address:
                 footer_parts.append(alert.address)
             st.caption(" | ".join(footer_parts))
+
+
+def render_positions_table(dataframe: pl.DataFrame) -> None:
+    """Render the standard positions dataframe with shared formatting."""
+    st.dataframe(
+        dataframe,
+        width="stretch",
+        hide_index=True,
+        column_config={
+            "Notional (USD)": st.column_config.NumberColumn(format="$%,.0f"),
+            "Unr. PnL": st.column_config.NumberColumn(format="$%+,.0f"),
+        },
+    )

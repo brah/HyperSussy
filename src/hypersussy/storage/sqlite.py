@@ -296,7 +296,7 @@ class SqliteStorage:
         Returns:
             List of (address, total_volume_usd) tuples, descending.
         """
-        cursor = await self._conn.execute(
+        rows = await self._fetchall(
             """SELECT address, SUM(vol) as total_vol FROM (
                  SELECT buyer AS address, SUM(price * size) AS vol
                  FROM trades
@@ -313,7 +313,7 @@ class SqliteStorage:
                LIMIT ?""",
             (coin, since_ms, coin, since_ms, limit),
         )
-        return [(row[0], row[1]) for row in await cursor.fetchall()]
+        return [(row[0], row[1]) for row in rows]
 
     async def get_top_addresses_and_total_volume(
         self,
@@ -334,7 +334,8 @@ class SqliteStorage:
         Returns:
             Tuple of (top_addresses, total_volume_usd).
         """
-        cursor = await self._conn.execute(
+        rows = list(
+            await self._fetchall(
             """SELECT address, addr_vol, total_vol FROM (
                  SELECT address, SUM(vol) AS addr_vol,
                         SUM(SUM(vol)) OVER () AS total_vol
@@ -358,8 +359,8 @@ class SqliteStorage:
                  LIMIT ?
                )""",
             (coin, since_ms, coin, since_ms, limit),
+            )
         )
-        rows = list(await cursor.fetchall())
         if not rows:
             return [], 0.0
         top = [(row[0], row[1]) for row in rows]
@@ -376,7 +377,7 @@ class SqliteStorage:
         Returns:
             List of trades ordered by timestamp.
         """
-        cursor = await self._conn.execute(
+        rows = await self._fetchall(
             """SELECT tid, coin, price, size, side, timestamp_ms,
                       buyer, seller, tx_hash, exchange
                FROM trades
@@ -385,7 +386,6 @@ class SqliteStorage:
                ORDER BY timestamp_ms ASC""",
             (address, address, since_ms),
         )
-        rows = await cursor.fetchall()
         return [self._trade_from_row(row) for row in rows]
 
     async def get_total_volume(self, coin: str, since_ms: int) -> float:
@@ -506,18 +506,17 @@ class SqliteStorage:
             Positions ordered by timestamp ascending.
         """
         cutoff = since_ms
-        cursor = await self._conn.execute(
+        rows = await self._fetchall(
             """SELECT address, coin, timestamp_ms, size, entry_price,
                       notional_usd, unrealized_pnl, leverage_value,
                       leverage_type, liquidation_price, mark_price,
                       margin_used
                FROM address_positions
-               WHERE address = ? AND coin = ?
-                 AND timestamp_ms >= ?
+                WHERE address = ? AND coin = ?
+                  AND timestamp_ms >= ?
                ORDER BY timestamp_ms ASC""",
             (address, coin, cutoff),
         )
-        rows = await cursor.fetchall()
         return [self._position_from_row(row) for row in rows]
 
     async def get_latest_positions(self, address: str) -> list[Position]:
@@ -529,7 +528,7 @@ class SqliteStorage:
         Returns:
             Latest position per coin (one entry per coin).
         """
-        cursor = await self._conn.execute(
+        rows = await self._fetchall(
             """SELECT ap.address, ap.coin, ap.timestamp_ms, ap.size,
                       ap.entry_price, ap.notional_usd, ap.unrealized_pnl,
                       ap.leverage_value, ap.leverage_type,
@@ -546,7 +545,6 @@ class SqliteStorage:
                   AND ap.timestamp_ms = latest.max_ts""",
             (address,),
         )
-        rows = await cursor.fetchall()
         return [self._position_from_row(row) for row in rows]
 
     # -- Alerts --
@@ -591,17 +589,16 @@ class SqliteStorage:
         Returns:
             Matching alerts ordered by timestamp.
         """
-        cursor = await self._conn.execute(
+        rows = await self._fetchall(
             """SELECT alert_id, alert_type, severity, coin, title,
                       description, timestamp_ms, metadata_json,
                       exchange
                FROM alerts
-               WHERE alert_type = ? AND coin = ?
-                 AND timestamp_ms >= ?
+                WHERE alert_type = ? AND coin = ?
+                  AND timestamp_ms >= ?
                ORDER BY timestamp_ms ASC""",
             (alert_type, coin, since_ms),
         )
-        rows = await cursor.fetchall()
         return [self._alert_from_row(row) for row in rows]
 
     # -- Candles --
@@ -651,14 +648,13 @@ class SqliteStorage:
         Returns:
             Candle bars ordered by timestamp.
         """
-        cursor = await self._conn.execute(
+        rows = await self._fetchall(
             """SELECT coin, interval_str, timestamp_ms, open, high,
                       low, close, volume, num_trades
                FROM candles
                WHERE coin = ? AND interval_str = ?
-                 AND timestamp_ms >= ? AND timestamp_ms <= ?
+                AND timestamp_ms >= ? AND timestamp_ms <= ?
                ORDER BY timestamp_ms ASC""",
             (coin, interval, start_ms, end_ms),
         )
-        rows = await cursor.fetchall()
         return [self._candle_from_row(row) for row in rows]

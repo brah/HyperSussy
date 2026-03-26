@@ -11,7 +11,7 @@ import logging
 import math
 import sqlite3
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 import requests
 from hyperliquid.utils.error import ClientError, ServerError
@@ -22,7 +22,7 @@ from hypersussy.engines.base import DetectionEngine
 from hypersussy.engines.whale_tracker import WhaleTrackerEngine
 from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.exchange.hyperliquid.websocket import HyperLiquidStream
-from hypersussy.models import Trade
+from hypersussy.models import Alert, Trade
 from hypersussy.protocols import DataBus
 from hypersussy.storage.base import StorageProtocol
 
@@ -114,6 +114,27 @@ class Orchestrator:
         clear = getattr(self._data_bus, "clear_runtime_error", None)
         if callable(clear):
             clear(source)
+
+    async def _dispatch_alerts(self, alerts: list[Alert]) -> None:
+        """Process a batch of alerts through the alert manager."""
+        for alert in alerts:
+            await self._alert_manager.process_alert(alert)
+
+    async def _run_engine_call(
+        self,
+        engine: DetectionEngine,
+        call: Callable[[], Awaitable[list[Alert]]],
+        failure_message: str,
+        *failure_args: object,
+    ) -> None:
+        """Run one engine callback with shared error handling."""
+        try:
+            alerts = await call()
+            self._clear_engine_error(engine.name)
+            await self._dispatch_alerts(alerts)
+        except _RECOVERABLE as exc:
+            self._mark_engine_error(engine.name, exc)
+            logger.exception(failure_message, *failure_args)
 
     async def run(self) -> None:
         """Start all polling and streaming tasks.
@@ -212,17 +233,14 @@ class Orchestrator:
                     if self._data_bus is not None:
                         self._data_bus.push_snapshot(snapshot)
                     for engine in self._engines:
-                        try:
-                            alerts = await engine.on_asset_update(snapshot)
-                            self._clear_engine_error(engine.name)
-                            for alert in alerts:
-                                await self._alert_manager.process_alert(alert)
-                        except _RECOVERABLE as exc:
-                            self._mark_engine_error(engine.name, exc)
-                            logger.exception(
-                                "Error in on_asset_update (meta polling) for %s",
-                                snapshot.coin,
-                            )
+                        await self._run_engine_call(
+                            engine,
+                            lambda engine=engine, snapshot=snapshot: engine.on_asset_update(
+                                snapshot
+                            ),
+                            "Error in on_asset_update (meta polling) for %s",
+                            snapshot.coin,
+                        )
                 self._clear_runtime_error("poll_meta")
             except _RECOVERABLE as exc:
                 self._mark_runtime_error("poll_meta", exc)
@@ -247,17 +265,14 @@ class Orchestrator:
                 if self._data_bus is not None:
                     self._data_bus.push_snapshot(snapshot)
                 for engine in self._engines:
-                    try:
-                        alerts = await engine.on_asset_update(snapshot)
-                        self._clear_engine_error(engine.name)
-                        for alert in alerts:
-                            await self._alert_manager.process_alert(alert)
-                    except _RECOVERABLE as exc:
-                        self._mark_engine_error(engine.name, exc)
-                        logger.exception(
-                            "Error in on_asset_update (asset ctx stream) for %s",
-                            snapshot.coin,
-                        )
+                    await self._run_engine_call(
+                        engine,
+                        lambda engine=engine, snapshot=snapshot: engine.on_asset_update(
+                            snapshot
+                        ),
+                        "Error in on_asset_update (asset ctx stream) for %s",
+                        snapshot.coin,
+                    )
             self._clear_runtime_error("asset_ctx_stream")
         except _RECOVERABLE as exc:
             self._mark_runtime_error("asset_ctx_stream", exc)
@@ -268,14 +283,12 @@ class Orchestrator:
         while self._running:
             now_ms = int(time.time() * 1000)
             for engine in self._engines:
-                try:
-                    alerts = await engine.tick(now_ms)
-                    self._clear_engine_error(engine.name)
-                    for alert in alerts:
-                        await self._alert_manager.process_alert(alert)
-                except _RECOVERABLE as exc:
-                    self._mark_engine_error(engine.name, exc)
-                    logger.exception("Error in engine tick: %s", engine.name)
+                await self._run_engine_call(
+                    engine,
+                    lambda engine=engine, now_ms=now_ms: engine.tick(now_ms),
+                    "Error in engine tick: %s",
+                    engine.name,
+                )
             await asyncio.sleep(self._settings.engine_tick_interval_s)
 
     async def _trade_stream_batch(self, coins: list[str]) -> None:
@@ -441,18 +454,14 @@ class Orchestrator:
                         break
                     now_ms = int(time.time() * 1000)
                     for engine in whale_engines:
-                        try:
-                            pos_alerts = await engine.on_position_update(
+                        await self._run_engine_call(
+                            engine,
+                            lambda engine=engine, address=address, positions=positions, now_ms=now_ms: engine.on_position_update(
                                 address, positions, now_ms
-                            )
-                            self._clear_engine_error(engine.name)
-                            for alert in pos_alerts:
-                                await self._alert_manager.process_alert(alert)
-                        except _RECOVERABLE as exc:
-                            self._mark_engine_error(engine.name, exc)
-                            logger.exception(
-                                "Error in on_position_update for %s", address
-                            )
+                            ),
+                            "Error in on_position_update for %s",
+                            address,
+                        )
                 self._clear_runtime_error("position_stream")
             except _RECOVERABLE as exc:
                 self._mark_runtime_error("position_stream", exc)
@@ -473,14 +482,9 @@ class Orchestrator:
             logger.exception("Failed to store trade")
 
         for engine in self._engines:
-            try:
-                alerts = await engine.on_trade(trade)
-                self._clear_engine_error(engine.name)
-                for alert in alerts:
-                    await self._alert_manager.process_alert(alert)
-            except _RECOVERABLE as exc:
-                self._mark_engine_error(engine.name, exc)
-                logger.exception(
-                    "Error dispatching trade to engine %s",
-                    engine.name,
-                )
+            await self._run_engine_call(
+                engine,
+                lambda engine=engine, trade=trade: engine.on_trade(trade),
+                "Error dispatching trade to engine %s",
+                engine.name,
+            )

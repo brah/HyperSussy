@@ -16,7 +16,7 @@ from hypersussy.dashboard.components import (
     render_status_banner,
 )
 from hypersussy.dashboard.db_reader import DashboardReader
-from hypersussy.dashboard.state import SharedState
+from hypersussy.dashboard.state import LiveSnapshot, SharedState
 from hypersussy.dashboard.view_models import (
     AlertFeedItem,
     MetricCardData,
@@ -65,14 +65,14 @@ def render_overview(
 
 
 def _render_metrics(
-    snapshots: dict[str, object],
+    snapshots: dict[str, LiveSnapshot],
     db_reader: DashboardReader,
     now_ms: int,
 ) -> None:
     """Display top-level metric cards."""
     since_1h_ms = now_ms - 3_600_000
-    total_oi = sum(s.open_interest_usd for s in snapshots.values())  # type: ignore[union-attr]
-    total_vol = sum(s.day_volume_usd for s in snapshots.values())  # type: ignore[union-attr]
+    total_oi = sum(snapshot.open_interest_usd for snapshot in snapshots.values())
+    total_vol = sum(snapshot.day_volume_usd for snapshot in snapshots.values())
     total_alerts_1h = sum(db_reader.get_alert_counts_by_type(since_ms=since_1h_ms).values())
     tracked = db_reader.get_tracked_address_count()
 
@@ -88,11 +88,11 @@ def _render_metrics(
 
 
 def _render_market_table(
-    snapshots: dict[str, object],
+    snapshots: dict[str, LiveSnapshot],
     last_snapshot_ms: int | None,
 ) -> None:
     """Render the live market data table sorted by OI descending."""
-    market_df = build_market_table(snapshots)  # type: ignore[arg-type]
+    market_df = build_market_table(snapshots)
     render_section_header(
         "Live Market",
         (

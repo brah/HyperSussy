@@ -15,6 +15,68 @@ from hypersussy.config import HyperSussySettings
 from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.models import Alert, AssetSnapshot, Trade
 
+
+class FundingAnomalyEngine:
+    """Detect anomalous funding rates via rolling z-score analysis.
+
+    Computes a per-coin rolling z-score over recent funding rate samples.
+    Fires when the z-score exceeds the configured threshold or when the
+    absolute rate breaches its threshold.
+
+    Args:
+        settings: Application settings with funding anomaly thresholds.
+    """
+
+    def __init__(self, settings: HyperSussySettings) -> None:
+        self._settings = settings
+        self._history: dict[str, deque[float]] = defaultdict(
+            lambda: deque(maxlen=settings.funding_rolling_window)
+        )
+        self._latest_rate: dict[str, float] = {}
+        self._last_alert_ms: dict[str, int] = {}
+
+    @property
+    def name(self) -> str:
+        """Unique name identifying this engine."""
+        return "funding_anomaly"
+
+    async def on_asset_update(self, snapshot: AssetSnapshot) -> list[Alert]:
+        """Record the latest funding rate and append to rolling history.
+
+        Args:
+            snapshot: Updated asset snapshot.
+
+        Returns:
+            Empty list.
+        """
+        self._latest_rate[snapshot.coin] = snapshot.funding_rate
+        self._history[snapshot.coin].append(snapshot.funding_rate)
+        return []
+
+    async def on_trade(self, trade: Trade) -> list[Alert]:
+        """Not used by this engine.
+
+        Args:
+            trade: Incoming trade (ignored).
+
+        Returns:
+            Empty list.
+        """
+        return []
+
+    async def tick(self, timestamp_ms: int) -> list[Alert]:
+        """Evaluate z-score anomalies across all tracked coins.
+
+        Args:
+            timestamp_ms: Current timestamp in milliseconds.
+
+        Returns:
+            Alerts for coins with anomalous funding rates.
+        """
+        alerts: list[Alert] = []
+        cooldown_ms = self._settings.alert_cooldown_s * 1000
+
+        for coin, history in self._history.items():
             if len(history) < self._settings.funding_min_samples:
                 continue
 

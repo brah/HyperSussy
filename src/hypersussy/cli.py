@@ -177,6 +177,20 @@ async def _run() -> None:
         log.info("HyperSussy stopped")
 
 
+def _run_api() -> None:
+    """Launch the FastAPI + uvicorn server.
+
+    The FastAPI lifespan starts BackgroundRunner in a daemon thread so the
+    orchestrator runs alongside uvicorn on the same process.  Blocks until
+    the server is stopped.
+    """
+    import uvicorn
+
+    from hypersussy.api.server import app
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
 def _run_streamlit() -> None:
     """Launch the Streamlit dashboard via subprocess.
 
@@ -208,6 +222,8 @@ def main() -> None:
     """Synchronous entry point for the CLI."""
     if "--streamlit" in sys.argv:
         _run_streamlit()
+    elif "--api" in sys.argv:
+        _run_api()
     else:
         asyncio.run(_run())
 

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+import os
+
+from fastapi import APIRouter, Query
+from fastapi.responses import PlainTextResponse
 
 from hypersussy.api.deps import StateDep
 from hypersussy.api.schemas import HealthResponse, RuntimeIssueItem
@@ -43,3 +46,27 @@ def get_health(state: StateDep) -> HealthResponse:
             for i in health.runtime_errors
         ],
     )
+
+
+@router.get("/health/logs", response_class=PlainTextResponse)
+def get_logs(
+    state: StateDep,
+    lines: int = Query(500, ge=1, le=5000),
+) -> str:
+    """Return the tail of the background runner's log file.
+
+    Args:
+        state: Injected SharedState.
+        lines: Maximum number of tail lines to return (1–5000).
+
+    Returns:
+        Plain-text log content, or an explanatory message if unavailable.
+    """
+    path = state.get_log_path()
+    if path is None:
+        return "Log file path not yet set (runner may not have started)."
+    if not os.path.isfile(path):
+        return f"Log file not found: {path}"
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        all_lines = fh.readlines()
+    return "".join(all_lines[-lines:])

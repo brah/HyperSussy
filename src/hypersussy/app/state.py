@@ -56,6 +56,7 @@ class SharedState:
         self._runtime_errors: dict[str, RuntimeIssue] = {}
         self._last_snapshot_ms: int | None = None
         self._last_alert_ms: int | None = None
+        self._log_path: str | None = None
 
     def push_snapshot(self, snapshot: AssetSnapshot) -> None:
         """Store the latest snapshot for one coin."""
@@ -159,3 +160,13 @@ class SharedState:
         """True while the background runner is active."""
         with self._lock:
             return self._running
+
+    def set_log_path(self, path: str) -> None:
+        """Record the path to the background runner's log file."""
+        with self._lock:
+            self._log_path = path
+
+    def get_log_path(self) -> str | None:
+        """Return the log file path, or None if not yet set."""
+        with self._lock:
+            return self._log_path

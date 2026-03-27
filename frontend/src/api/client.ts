@@ -55,6 +55,9 @@ async function del(path: string): Promise<void> {
 
 export const fetchHealth = (): Promise<HealthResponse> => get("/health");
 
+export const fetchLogs = (lines = 500): Promise<string> =>
+  fetch(`/api/health/logs?lines=${lines}`).then((r) => r.text());
+
 // -- Snapshots --
 
 export const fetchCoins = (): Promise<string[]> => get("/snapshots/coins");

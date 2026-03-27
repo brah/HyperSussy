@@ -1,171 +1,240 @@
 # HyperSussy
 
-Monitoring and alerting system for suspicious activity on HyperLiquid perpetual futures.
+HyperSussy is a monitoring and alerting system for suspicious activity on Hyperliquid perpetual futures.
 
-HyperSussy passively monitors all listed perps via REST polling and WebSocket trade streams, discovers whale addresses organically from trade flow, tracks their positions, and fires structured alerts when it detects patterns like OI concentration, large TWAPs, pre-move trading, funding anomalies, or liquidation risk.
+It ingests market data from Hyperliquid REST and WebSocket APIs, stores snapshots and trades in SQLite, discovers high-signal wallets from flow, tracks positions, and exposes the results through a FastAPI backend plus a React dashboard.
 
-## Features
+## What It Does
 
-- **All perps monitored** -- dynamically fetches the full asset list on startup and subscribes to trade streams for every listed perpetual
-- **Passive whale discovery** -- no manual seed list required; addresses trading >$5M in a rolling hour are promoted to a tracked list from the trade stream
-- **Streamlit dashboard** -- live overview, alert feed, charts, and whale tracker with per-address alert history
-- **6 detection engines** running concurrently:
+- Monitors the live Hyperliquid perp universe, including HIP-3 builder-deployed markets when enabled
+- Streams native perp trades and asset-context updates over WebSockets, while polling bulk snapshot data over REST
+- Persists trades, asset snapshots, alerts, tracked addresses, positions, and cached candle data in SQLite
+- Discovers whale wallets automatically from trade flow and lets you add or remove tracked wallets via the API/UI
+- Runs multiple detection engines and routes structured alerts through a deduplicated alert pipeline
+- Serves a REST API, a `/ws/live` push stream, and an optional built frontend from the same backend process
 
-| Engine | What it detects |
-| ------ | --------------- |
-| **OI Concentration** | Rapid OI changes where a small number of addresses account for a disproportionate share of volume |
-| **Whale Tracker** | Orchestrates whale discovery, position tracking, and TWAP detection. |
-| **TWAP Detector** | Detects active TWAP orders from API fill data. |
-| **Pre-Move Correlation** | Addresses that traded heavily in a direction shortly before a large price move |
-| **Funding Anomaly** | Extreme or unusual funding rates (z-score > 3 sigma or absolute rate breach) |
-| **Liquidation Risk** | Tracked whales approaching liquidation with estimated market impact via L2 book depth |
+## Detection Engines
 
-- **Structured alert pipeline** with deduplication, cooldown, global throttling, and pluggable sinks
-- **Multi-DEX extensible** -- protocol-based abstractions (`ExchangeReader`, `ExchangeStream`) allow adding Lighter, dYdX, etc. without touching engine code
+| Engine | Purpose |
+| ------ | ------- |
+| `OiConcentrationEngine` | Flags rapid OI changes where a concentrated set of addresses dominates flow |
+| `WhaleTrackerEngine` | Coordinates whale discovery, position tracking, TWAP detection, and optional position census |
+| `PreMoveEngine` | Looks for wallets trading aggressively before large price moves |
+| `FundingAnomalyEngine` | Detects unusual funding behavior using z-score and absolute-rate thresholds |
+| `LiquidationRiskEngine` | Flags tracked wallets nearing liquidation with estimated impact context |
 
 ## Architecture
 
 ```text
-Orchestrator
-  |-- REST polling (metaAndAssetCtxs every 10s)
-  |-- WebSocket trade streams (per coin)
-  |-- Engine tick loop
+CLI
+  |- `hypersussy`        -> headless monitor
+  |- `hypersussy --api`  -> FastAPI server + background orchestrator
   |
-  +-> Detection Engines (OI, Whale, TWAP, PreMove, Funding, Liquidation)
-  |     |
-  |     +-> Alerts
-  |           |
-  |           +-> AlertManager (dedup, throttle)
-  |                 |
-  |                 +-> Sinks (structured log)
-  |
-  +-> SQLite Storage (WAL mode, async via aiosqlite)
-  |
-  +-> Streamlit Dashboard (reads SQLite directly, live refresh)
+  +-> Orchestrator
+        |- REST polling loops
+        |- WebSocket supervisors
+        |- Engine dispatch
+        |- Alert pipeline
+        |
+        +-> SQLite storage
+        +-> SharedState for live UI/API updates
+        +-> Detection engines
+              |- OI concentration
+              |- Whale tracker
+              |- Pre-move
+              |- Funding anomaly
+              |- Liquidation risk
+
+FastAPI
+  |- `/api/*` REST endpoints
+  |- `/ws/live` WebSocket stream
+  `- Serves `frontend/dist/` when present
+
+React frontend
+  |- Market dashboard
+  `- Wallet tracking views
 ```
 
 ## Quick Start
 
+### 1. Install Python dependencies
+
 ```bash
-# Clone and install
-git clone <repo-url> && cd HyperSussy
+git clone <repo-url>
+cd HyperSussy
 uv sync
-
-# Configure (optional -- defaults work for monitoring all perps)
-cp .env.example .env
-# Edit .env to set thresholds, watched coins, etc.
-
-# Run headless (logs to stdout)
-uv run hypersussy
-
-# Run Streamlit dashboard
-uv sync --extra dashboard
-uv run hypersussy --streamlit
 ```
 
-## Configuration
+### 2. Configure environment
 
-All settings are configurable via environment variables with the `HYPERSUSSY_` prefix. See [.env.example](.env.example) for the full list.
+```bash
+cp .env.example .env
+```
 
-Key settings:
+All settings use the `HYPERSUSSY_` prefix. The authoritative reference is [`src/hypersussy/config.py`](src/hypersussy/config.py).
+
+### 3. Run headless monitoring
+
+```bash
+uv run hypersussy
+```
+
+This starts the orchestrator, writes to the configured SQLite database, and logs to stdout.
+
+### 4. Run the API backend
+
+```bash
+uv sync --extra api
+uv run hypersussy --api
+```
+
+The API listens on `http://localhost:8000` and starts the monitoring orchestrator in a background thread.
+
+### 5. Run the React frontend in development
+
+In a second terminal:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Vite serves the UI on `http://localhost:5173` and proxies `/api` requests to the backend.
+
+### 6. Serve the built frontend from FastAPI
+
+```bash
+cd frontend
+npm run build
+cd ..
+uv run hypersussy --api
+```
+
+When `frontend/dist/` exists, FastAPI mounts it at `/`.
+
+## API Surface
+
+Main routes exposed by the backend:
+
+- `/api/health` and `/api/health/logs`
+- `/api/alerts`, `/api/alerts/counts`, `/api/alerts/by-address/{address}`
+- `/api/snapshots/coins`, `/api/snapshots/oi/{coin}`, `/api/snapshots/funding/{coin}`, `/api/snapshots/latest-oi`
+- `/api/trades/top-whales/{coin}`, `/api/trades/by-address/{address}`, `/api/trades/top-holders/{coin}`, `/api/trades/flow/{coin}`
+- `/api/whales`, `/api/whales/count`, `/api/whales/positions/{address}`, `/api/whales/top/{coin}`
+- `/api/candles/{coin}`
+- `/ws/live`
+
+## Configuration Notes
+
+Selected settings from [`src/hypersussy/config.py`](src/hypersussy/config.py):
 
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
-| `HYPERSUSSY_WATCHED_COINS` | `[]` (all) | Comma-separated list of coins to monitor, empty = all listed perps |
 | `HYPERSUSSY_DB_PATH` | `data/hypersussy.db` | SQLite database path |
-| `HYPERSUSSY_OI_CHANGE_PCT_THRESHOLD` | `0.10` | Minimum OI change % to trigger analysis |
-| `HYPERSUSSY_WHALE_VOLUME_THRESHOLD_USD` | `5000000` | Volume threshold (USD) for whale promotion |
-| `HYPERSUSSY_LARGE_POSITION_OI_PCT` | `0.20` | Position size as fraction of coin OI to trigger alert |
-| `HYPERSUSSY_PRE_MOVE_THRESHOLD_PCT` | `0.02` | Minimum price move % for pre-move analysis |
-| `HYPERSUSSY_ALERT_COOLDOWN_S` | `3600` | Alert deduplication cooldown in seconds |
-| `HYPERSUSSY_LOG_LEVEL` | `INFO` | Log verbosity |
+| `HYPERSUSSY_WATCHED_COINS` | `[]` | Empty means monitor all listed perps |
+| `HYPERSUSSY_INCLUDE_HIP3` | `true` | Include HIP-3 builder-deployed perpetuals |
+| `HYPERSUSSY_HIP3_DEX_FILTER` | `[]` | Restrict HIP-3 markets to selected DEX prefixes |
+| `HYPERSUSSY_ENGINE_OI_CONCENTRATION` | `true` | Enable OI concentration engine |
+| `HYPERSUSSY_ENGINE_WHALE_TRACKER` | `true` | Enable whale discovery and position tracking |
+| `HYPERSUSSY_ENGINE_PRE_MOVE` | `true` | Enable pre-move correlation engine |
+| `HYPERSUSSY_ENGINE_FUNDING_ANOMALY` | `true` | Enable funding anomaly engine |
+| `HYPERSUSSY_ENGINE_LIQUIDATION_RISK` | `true` | Enable liquidation risk engine |
+| `HYPERSUSSY_WHALE_VOLUME_THRESHOLD_USD` | `25000000` | Rolling notional threshold for whale promotion |
+| `HYPERSUSSY_WHALE_DISCOVERY_OI_PCT` | `0.15` | Promote addresses trading a large share of coin OI |
+| `HYPERSUSSY_CENSUS_ENABLED` | `true` | Enable non-whale position census polling |
+| `HYPERSUSSY_POSITION_POLL_INTERVAL_S` | `150.0` | Whale position polling interval |
+| `HYPERSUSSY_ALERT_COOLDOWN_S` | `3600` | Alert deduplication cooldown |
+| `HYPERSUSSY_ALERT_MAX_PER_MINUTE` | `10` | Global alert throttle |
 
 ## Development
 
+### Python
+
 ```bash
-# Install with dev dependencies
 uv sync --extra dev
+uv run pytest -v
+uv run mypy src
+uv run ruff check src tests
+uv run ruff format src tests
+```
 
-# Run tests
-uv run pytest tests/ -v
+### Frontend
 
-# Type checking
-uv run mypy src/
-
-# Lint and format
-uv run ruff check src/ tests/
-uv run ruff format src/ tests/
+```bash
+cd frontend
+npm install
+npm run lint
+npm run typecheck
+npm run build
 ```
 
 ## Project Structure
 
 ```text
 src/hypersussy/
-    config.py                  # Pydantic-settings, all thresholds via env vars
-    models.py                  # Frozen dataclasses: AssetSnapshot, Trade, Position, Alert, etc.
-    orchestrator.py            # Main async loop: WS streams + poll loops + engine dispatch
-    rate_limiter.py            # Async token-bucket for API weight (1200/min)
-    cli.py                     # Entry point (--streamlit flag for dashboard mode)
-
-    exchange/
-        base.py                # Protocols: ExchangeReader, ExchangeStream
-        hyperliquid/
-            client.py          # HyperLiquidReader (wraps SDK + rate limiter)
-            websocket.py       # Async WS manager (trades, allMids, L2 book)
-            parsers.py         # Raw API dicts -> domain models
-
-    storage/
-        base.py                # StorageProtocol
-        sqlite.py              # aiosqlite implementation (WAL mode)
-        schema.sql             # DDL for all tables
-
-    engines/
-        base.py                # DetectionEngine protocol
-        oi_concentration.py    # OI spike + address concentration
-        whale_tracker.py       # Orchestrates whale discovery, position tracking, and TWAP detection
-        whale_discovery.py     # Discovers whales from trade flow
-        position_tracker.py    # Polls positions for tracked whales and detects changes
-        twap_detector.py       # Detects active TWAP orders from API fill data
-        pre_move.py            # Retroactive pre-move correlation
-        funding_anomaly.py     # Extreme funding rate detection
-        liquidation_risk.py    # Whales near liquidation with market impact
+    __main__.py
+    cli.py
+    config.py
+    orchestrator.py
+    models.py
+    rate_limiter.py
 
     alerts/
-        base.py                # AlertSink protocol
-        manager.py             # Dedup, throttle, route
-        sinks/
-            log_sink.py        # Structured JSON logging (default)
+        manager.py
+        sinks/log_sink.py
 
-    dashboard/
-        app.py                 # Streamlit entry point + page routing
-        state.py               # SharedState (DataBus impl, in-process cache)
-        sink.py                # StreamlitSink (AlertSink -> SharedState)
-        db_reader.py           # Read-only SQLite queries for dashboard pages
-        runner.py              # Background thread: runs Orchestrator alongside Streamlit
-        _pages/
-            overview.py        # Live market overview table
-            alerts.py          # Alert feed with filters
-            charts.py          # OI / funding / price charts
-            whale_tracker.py   # Whale positions + per-address alert history
+    api/
+        server.py
+        ws.py
+        candle_service.py
+        routes/
 
-tests/                         # Tests covering all engines, storage, parsers, and dashboard
+    app/
+        runner.py
+        state.py
+        db_reader.py
+        actions.py
+        navigation.py
+        sink.py
+
+    engines/
+        oi_concentration.py
+        whale_tracker.py
+        whale_discovery.py
+        position_tracker.py
+        position_census.py
+        twap_detector.py
+        pre_move.py
+        funding_anomaly.py
+        liquidation_risk.py
+
+    exchange/
+        hyperliquid/
+            client.py
+            websocket.py
+            parsers.py
+
+    storage/
+        sqlite.py
+        schema.sql
+
+frontend/
+    src/
+        components/
+        pages/
+        api/
+        stores/
+
+tests/
 ```
 
-## Dependencies
+## Notes From The Review
 
-- Python >= 3.13
-- [hyperliquid-python-sdk](https://github.com/hyperliquid-dex/hyperliquid-python-sdk) -- REST API client
-- [websockets](https://websockets.readthedocs.io/) -- async WebSocket streams
-- [aiosqlite](https://github.com/omnilib/aiosqlite) -- async SQLite
-- [pydantic-settings](https://docs.pydantic.dev/latest/concepts/pydantic_settings/) -- env-based configuration
-- [structlog](https://www.structlog.org/) -- structured logging
-- [orjson](https://github.com/ijl/orjson) -- fast JSON
-- [polars](https://pola.rs/) -- dataframe analysis (notebooks)
-
-Optional (dashboard):
-
-- [streamlit](https://streamlit.io/) -- dashboard UI
-- [plotly](https://plotly.com/python/) -- interactive charts
+- The README previously described a Streamlit dashboard, but the current codebase uses FastAPI plus a React/Vite frontend.
+- The documented CLI flag `--streamlit` does not exist; the supported alternate mode is `--api`.
+- The old structure section referred to a `dashboard/` package that has since been replaced by the `app/` and `api/` packages.
+- Some older config examples no longer matched the code, so the README now points to `config.py` as the source of truth.
 
 ## License
 

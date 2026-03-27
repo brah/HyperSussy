@@ -16,18 +16,44 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import time
+from collections import deque
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from hypersussy.app.state import LiveSnapshot, SharedState
+from hypersussy.models import Alert
 
 router = APIRouter()
 
 _POLL_INTERVAL = 2.0  # seconds between state polls
+_SEEN_ALERT_IDS_MAX = 500
 
 
 def _snapshot_to_dict(snap: LiveSnapshot) -> dict[str, object]:
     return dataclasses.asdict(snap)
+
+
+def _select_unsent_alerts(
+    recent_alerts: list[Alert],
+    seen_alert_ids: set[str],
+) -> list[Alert]:
+    """Return alerts whose IDs have not yet been sent on this connection."""
+    return [alert for alert in recent_alerts if alert.alert_id not in seen_alert_ids]
+
+
+def _remember_sent_alerts(
+    alerts: list[Alert],
+    seen_alert_ids: set[str],
+    seen_alert_order: deque[str],
+) -> None:
+    """Record sent alert IDs while keeping the de-dup window bounded."""
+    for alert in alerts:
+        if alert.alert_id in seen_alert_ids:
+            continue
+        seen_alert_ids.add(alert.alert_id)
+        seen_alert_order.append(alert.alert_id)
+    while len(seen_alert_order) > _SEEN_ALERT_IDS_MAX:
+        seen_alert_ids.discard(seen_alert_order.popleft())
 
 
 @router.websocket("/ws/live")
@@ -46,7 +72,8 @@ async def ws_live(websocket: WebSocket) -> None:
     state: SharedState = websocket.app.state.shared
 
     last_snapshot_ms: int = -1
-    last_alert_ms: int = -1
+    seen_alert_ids: set[str] = set()
+    seen_alert_order: deque[str] = deque()
 
     try:
         while True:
@@ -101,11 +128,9 @@ async def ws_live(websocket: WebSocket) -> None:
                 )
                 last_snapshot_ms = health.last_snapshot_ms
 
-            # -- new alerts (high-water mark by timestamp) --
+            # -- new alerts (deduplicated by alert ID per connection) --
             recent_alerts = state.get_recent_alerts(limit=50)
-            new_alerts = [
-                a for a in recent_alerts if a.timestamp_ms > last_alert_ms
-            ]
+            new_alerts = _select_unsent_alerts(recent_alerts, seen_alert_ids)
             for alert in reversed(new_alerts):  # send oldest-first
                 await websocket.send_json(
                     {
@@ -125,7 +150,7 @@ async def ws_live(websocket: WebSocket) -> None:
                     }
                 )
             if new_alerts:
-                last_alert_ms = new_alerts[0].timestamp_ms
+                _remember_sent_alerts(new_alerts, seen_alert_ids, seen_alert_order)
 
             await asyncio.sleep(_POLL_INTERVAL)
 

@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from hypersussy.dashboard.db_reader import DashboardReader
+from hypersussy.app.db_reader import DashboardReader
 
 
 @pytest.fixture

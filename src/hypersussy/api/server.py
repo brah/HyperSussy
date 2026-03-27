@@ -8,7 +8,9 @@ production build exists.
 
 from __future__ import annotations
 
+import importlib.resources
 import os
+import sqlite3
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -26,6 +28,21 @@ from hypersussy.app.state import SharedState
 from hypersussy.config import HyperSussySettings
 
 
+def _ensure_db_ready(db_path: str) -> None:
+    """Create the SQLite DB file and schema before opening read-only readers."""
+    schema_sql = (
+        importlib.resources.files("hypersussy.storage")
+        .joinpath("schema.sql")
+        .read_text(encoding="utf-8")
+    )
+    conn = sqlite3.connect(db_path)
+    try:
+        conn.executescript(schema_sql)
+        conn.commit()
+    finally:
+        conn.close()
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     """Start BackgroundRunner on startup; stop and close on shutdown."""
@@ -34,11 +51,9 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     db_dir = os.path.dirname(settings.db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
+    _ensure_db_ready(settings.db_path)
 
     state = SharedState()
-    runner = BackgroundRunner(settings=settings, shared_state=state)
-    runner.start()
-
     reader = DashboardReader(db_path=settings.db_path)
     actions = DashboardActions(db_path=settings.db_path)
     candle_service = CandleService(
@@ -48,12 +63,14 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
         window_seconds=settings.rate_limit_window_s,
     )
     await candle_service.init()
+    runner = BackgroundRunner(settings=settings, shared_state=state)
 
     app.state.shared = state
     app.state.reader = reader
     app.state.actions = actions
     app.state.runner = runner
     app.state.candle_service = candle_service
+    runner.start()
 
     yield
 

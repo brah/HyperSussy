@@ -1,11 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   alertsByAddressQuery,
   tradesByAddressQuery,
   whalePositionsQuery,
 } from "../../api/queries";
+import { usePanelVisible } from "../../stores/panelStore";
 import { AlertFeed } from "../common/AlertFeed";
+import { EmptyState } from "../common/EmptyState";
 import { HoursSelector, type Hours } from "../common/HoursSelector";
 import { PositionsTable } from "./PositionsTable";
 import { TradesTable } from "./TradesTable";
@@ -24,10 +26,22 @@ interface WalletDetailProps {
 export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
   const [tab, setTab] = useState<Tab>("positions");
   const [hours, setHours] = useState<Hours>(24);
+  const showPositions = usePanelVisible("wallet-positions");
+  const showTrades = usePanelVisible("wallet-trades");
+  const showAlerts = usePanelVisible("wallet-alerts");
 
-  const { data: positions = [] } = useQuery(whalePositionsQuery(address));
-  const { data: trades = [] } = useQuery(tradesByAddressQuery(address, hours));
-  const { data: alerts = [] } = useQuery(alertsByAddressQuery(address, 50));
+  const { data: positions = [] } = useQuery({
+    ...whalePositionsQuery(address),
+    enabled: showPositions && address.length === 42,
+  });
+  const { data: trades = [] } = useQuery({
+    ...tradesByAddressQuery(address, hours),
+    enabled: showTrades && address.length === 42,
+  });
+  const { data: alerts = [] } = useQuery({
+    ...alertsByAddressQuery(address, 50),
+    enabled: showAlerts && address.length === 42,
+  });
 
   // Summary metrics derived from positions
   const totalNotional = positions.reduce((s, p) => s + Math.abs(p.notional_usd), 0);
@@ -39,11 +53,25 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
   const shortPct = 100 - longPct;
   const bias = longPct >= shortPct ? "LONG" : "SHORT";
 
-  const tabs: { id: Tab; label: string; count: number }[] = [
+  const allTabs: { id: Tab; label: string; count: number }[] = [
     { id: "positions", label: "Positions", count: positions.length },
     { id: "trades", label: "Trades", count: trades.length },
     { id: "alerts", label: "Alerts", count: alerts.length },
   ];
+  const tabs = allTabs.filter((item) => {
+    if (item.id === "positions") return showPositions;
+    if (item.id === "trades") return showTrades;
+    return showAlerts;
+  });
+
+  useEffect(() => {
+    if (tabs.length === 0) {
+      return;
+    }
+    if (!tabs.some((item) => item.id === tab)) {
+      setTab(tabs[0].id);
+    }
+  }, [tab, tabs]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -133,21 +161,27 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
 
       {/* Tab content */}
       <div className="bg-hs-surface border border-hs-grid rounded-lg">
-        {tab === "positions" && <PositionsTable positions={positions} />}
+        {tabs.length === 0 ? (
+          <EmptyState message="Enable at least one wallet panel above." />
+        ) : (
+          <>
+            {tab === "positions" && <PositionsTable positions={positions} />}
 
-        {tab === "trades" && (
-          <div>
-            <div className="flex justify-end p-3 border-b border-hs-grid">
-              <HoursSelector value={hours} onChange={setHours} />
-            </div>
-            <TradesTable trades={trades} hours={hours} />
-          </div>
-        )}
+            {tab === "trades" && (
+              <div>
+                <div className="flex justify-end p-3 border-b border-hs-grid">
+                  <HoursSelector value={hours} onChange={setHours} />
+                </div>
+                <TradesTable trades={trades} hours={hours} />
+              </div>
+            )}
 
-        {tab === "alerts" && (
-          <div className="p-4">
-            <AlertFeed alerts={alerts} maxRows={50} />
-          </div>
+            {tab === "alerts" && (
+              <div className="p-4">
+                <AlertFeed alerts={alerts} maxRows={50} />
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from hypersussy.config import HyperSussySettings
-from hypersussy.dashboard.runner import BackgroundRunner
-from hypersussy.dashboard.state import SharedState
+from hypersussy.app.runner import BackgroundRunner
+from hypersussy.app.state import SharedState
 
 
 @pytest.fixture

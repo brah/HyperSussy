@@ -28,6 +28,8 @@ dev = [
     "aioresponses>=0.7.0",
     "types-requests>=2.32.0",
     "httpx>=0.27.0",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
 ]
 notebooks = [
     "ipykernel>=6.0",

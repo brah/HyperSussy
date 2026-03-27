@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from hypersussy.dashboard.actions import DashboardActions
+from hypersussy.app.actions import DashboardActions
 
 
 @pytest.fixture

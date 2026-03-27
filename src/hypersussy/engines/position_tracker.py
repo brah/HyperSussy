@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Coroutine
+from collections.abc import Awaitable
 
 from hyperliquid.utils.error import ClientError
 
 from hypersussy.config import HyperSussySettings
 from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.exchange.base import ExchangeReader
-from hypersussy.models import Alert, Position, TwapSliceFill
+from hypersussy.models import Alert, Position
 from hypersussy.storage.base import StorageProtocol
 
 logger = logging.getLogger(__name__)
@@ -74,7 +74,7 @@ class PositionTracker:
                 logger.exception("Failed to poll positions for %s", addr)
                 continue
 
-            positions, _ = result
+            positions = result
             self._last_polled[addr] = now_s
 
             if positions:
@@ -116,7 +116,7 @@ class PositionTracker:
 
         for pos in positions:
             coin_oi = self._coin_oi.get(pos.coin, 0.0)
-            if coin_oi >= self._settings.large_position_min_oi_usd:
+            if coin_oi > 0 and coin_oi >= self._settings.large_position_min_oi_usd:
                 oi_pct = abs(pos.notional_usd) / coin_oi
                 if oi_pct >= self._settings.large_position_oi_pct:
                     key = f"{address}:{pos.coin}"
@@ -156,16 +156,11 @@ class PositionTracker:
 
         return alerts
 
-    def _fetch_addr_data(
-        self, addr: str
-    ) -> Coroutine[Any, Any, tuple[list[Position], list[TwapSliceFill]]]:
-        """Fetch positions and TWAP fills for an address concurrently."""
-        return asyncio.gather(
-            self._reader.get_user_positions(
-                addr,
-                active_dexes=self._whale_active_dexes.get(addr),
-            ),
-            self._reader.get_user_twap_slice_fills(addr),
+    def _fetch_addr_data(self, addr: str) -> Awaitable[list[Position]]:
+        """Fetch positions for an address."""
+        return self._reader.get_user_positions(
+            addr,
+            active_dexes=self._whale_active_dexes.get(addr),
         )
 
     def set_coin_oi(self, coin: str, oi: float) -> None:

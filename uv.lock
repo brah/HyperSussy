@@ -899,6 +899,7 @@ api = [
 ]
 dev = [
     { name = "aioresponses" },
+    { name = "fastapi" },
     { name = "httpx" },
     { name = "mypy" },
     { name = "pytest" },
@@ -906,6 +907,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "ruff" },
     { name = "types-requests" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 notebooks = [
     { name = "ipykernel" },
@@ -918,6 +920,7 @@ requires-dist = [
     { name = "aioresponses", marker = "extra == 'dev'", specifier = ">=0.7.0" },
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "fastapi", marker = "extra == 'api'", specifier = ">=0.115" },
+    { name = "fastapi", marker = "extra == 'dev'", specifier = ">=0.115" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27.0" },
     { name = "hyperliquid-python-sdk", specifier = ">=0.22.0" },
     { name = "ipykernel", marker = "extra == 'notebooks'", specifier = ">=6.0" },
@@ -935,6 +938,7 @@ requires-dist = [
     { name = "tqdm", marker = "extra == 'notebooks'", specifier = ">=4.60" },
     { name = "types-requests", marker = "extra == 'dev'", specifier = ">=2.32.0" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'api'", specifier = ">=0.30" },
+    { name = "uvicorn", extras = ["standard"], marker = "extra == 'dev'", specifier = ">=0.30" },
     { name = "websockets", specifier = ">=13.0" },
 ]
 provides-extras = ["dev", "notebooks", "api"]

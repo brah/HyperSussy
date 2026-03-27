@@ -6,7 +6,7 @@ import threading
 
 import pytest
 
-from hypersussy.dashboard.state import SharedState
+from hypersussy.app.state import SharedState
 from hypersussy.models import Alert, AssetSnapshot
 
 

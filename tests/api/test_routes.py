@@ -8,10 +8,14 @@ injected so no network activity occurs.
 
 from __future__ import annotations
 
+import importlib.resources
+import os
 import sqlite3
 import time
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from hypersussy.api.schemas import (
@@ -29,9 +33,10 @@ from hypersussy.api.schemas import (
     TradeItem,
     WhaleCountResponse,
 )
-from hypersussy.dashboard.actions import DashboardActions
-from hypersussy.dashboard.db_reader import DashboardReader
-from hypersussy.dashboard.state import SharedState
+from hypersussy.api.routes import alerts, candles, health, snapshots, trades, whales
+from hypersussy.app.actions import DashboardActions
+from hypersussy.app.db_reader import DashboardReader
+from hypersussy.app.state import SharedState
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -40,7 +45,6 @@ from hypersussy.dashboard.state import SharedState
 
 def _make_db() -> tuple[sqlite3.Connection, str]:
     """Create an in-memory database with the full schema, returning (conn, path)."""
-    import os
     import tempfile
 
     # Use a named temp file so DashboardReader (mode=ro) can open it
@@ -48,75 +52,12 @@ def _make_db() -> tuple[sqlite3.Connection, str]:
     os.close(fd)
 
     conn = sqlite3.connect(path, isolation_level=None)
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS asset_snapshots (
-            id INTEGER PRIMARY KEY,
-            coin TEXT NOT NULL,
-            timestamp_ms INTEGER NOT NULL,
-            open_interest REAL DEFAULT 0,
-            open_interest_usd REAL DEFAULT 0,
-            mark_price REAL DEFAULT 0,
-            oracle_price REAL DEFAULT 0,
-            funding_rate REAL DEFAULT 0,
-            premium REAL DEFAULT 0,
-            day_volume_usd REAL DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS alerts (
-            alert_id TEXT PRIMARY KEY,
-            alert_type TEXT NOT NULL,
-            severity TEXT NOT NULL,
-            coin TEXT NOT NULL,
-            title TEXT NOT NULL,
-            description TEXT NOT NULL,
-            timestamp_ms INTEGER NOT NULL,
-            exchange TEXT NOT NULL DEFAULT 'hyperliquid',
-            metadata_json TEXT DEFAULT '{}'
-        );
-        CREATE TABLE IF NOT EXISTS trades (
-            tid INTEGER PRIMARY KEY,
-            coin TEXT NOT NULL,
-            price REAL NOT NULL,
-            size REAL NOT NULL,
-            side TEXT NOT NULL,
-            timestamp_ms INTEGER NOT NULL,
-            buyer TEXT NOT NULL DEFAULT '',
-            seller TEXT NOT NULL DEFAULT ''
-        );
-        CREATE TABLE IF NOT EXISTS tracked_addresses (
-            address TEXT PRIMARY KEY,
-            label TEXT,
-            source TEXT NOT NULL DEFAULT 'auto',
-            first_seen_ms INTEGER,
-            total_volume_usd REAL DEFAULT 0,
-            last_active_ms INTEGER,
-            is_manual INTEGER DEFAULT 0
-        );
-        CREATE TABLE IF NOT EXISTS address_positions (
-            id INTEGER PRIMARY KEY,
-            address TEXT NOT NULL,
-            coin TEXT NOT NULL,
-            size REAL NOT NULL,
-            notional_usd REAL NOT NULL,
-            unrealized_pnl REAL NOT NULL,
-            liquidation_price REAL,
-            mark_price REAL NOT NULL,
-            timestamp_ms INTEGER NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS candles (
-            id INTEGER PRIMARY KEY,
-            coin TEXT NOT NULL,
-            interval_str TEXT NOT NULL,
-            timestamp_ms INTEGER NOT NULL,
-            open REAL NOT NULL,
-            high REAL NOT NULL,
-            low REAL NOT NULL,
-            close REAL NOT NULL,
-            volume REAL NOT NULL,
-            num_trades INTEGER NOT NULL
-        );
-        """
+    schema_sql = (
+        importlib.resources.files("hypersussy.storage")
+        .joinpath("schema.sql")
+        .read_text(encoding="utf-8")
     )
+    conn.executescript(schema_sql)
     return conn, path
 
 
@@ -164,10 +105,10 @@ def _seed_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "INSERT INTO address_positions "
-        "(address, coin, size, notional_usd, unrealized_pnl, "
-        "liquidation_price, mark_price, timestamp_ms) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (whale, "BTC", 1.0, 50000.0, 500.0, 40000.0, 50000.0, now_ms),
+        "(address, coin, size, entry_price, notional_usd, unrealized_pnl, "
+        "leverage_value, leverage_type, liquidation_price, mark_price, margin_used, timestamp_ms) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (whale, "BTC", 1.0, 49000.0, 50000.0, 500.0, 5, "cross", 40000.0, 50000.0, 10000.0, now_ms),
     )
     conn.execute(
         "INSERT INTO candles "
@@ -191,21 +132,33 @@ def client(tmp_path: pytest.TempPathFactory) -> TestClient:  # type: ignore[type
     reader = DashboardReader(db_path=db_path)
     actions = DashboardActions(db_path=db_path)
     state = SharedState()
+    candle_rows = [
+        {
+            "timestamp_ms": int(time.time() * 1000) - 3600_000,
+            "open": 49800.0,
+            "high": 50200.0,
+            "low": 49700.0,
+            "close": 50100.0,
+            "volume": 1.5,
+            "num_trades": 42,
+        }
+    ]
+    candle_service = MagicMock()
+    candle_service.get_candles = AsyncMock(return_value=candle_rows)
 
-    from hypersussy.api.server import create_app
-
-    test_app = create_app()
-
-    # Override lifespan by injecting state directly
+    test_app = FastAPI()
+    test_app.include_router(health.router, prefix="/api")
+    test_app.include_router(snapshots.router, prefix="/api")
+    test_app.include_router(alerts.router, prefix="/api")
+    test_app.include_router(trades.router, prefix="/api")
+    test_app.include_router(whales.router, prefix="/api")
+    test_app.include_router(candles.router, prefix="/api")
     test_app.state.reader = reader
     test_app.state.actions = actions
     test_app.state.shared = state
+    test_app.state.candle_service = candle_service
 
     with TestClient(test_app, raise_server_exceptions=True) as c:
-        # Re-inject after TestClient's lifespan runs (lifespan creates new objects)
-        test_app.state.reader = reader
-        test_app.state.actions = actions
-        test_app.state.shared = state
         yield c
 
     conn.close()

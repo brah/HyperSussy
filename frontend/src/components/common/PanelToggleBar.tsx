@@ -22,7 +22,7 @@ const TogglePill = memo(function TogglePill({
 
   return (
     <button
-      onClick={() => toggle(panelKey)}
+      onClick={() => toggle(panelKey, defaultVisible)}
       className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
         visible
           ? "bg-hs-green/20 text-hs-green border border-hs-green/40"

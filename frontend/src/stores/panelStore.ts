@@ -10,16 +10,19 @@ import { persist } from "zustand/middleware";
 
 interface PanelStore {
   panels: Record<string, boolean>;
-  toggle: (key: string) => void;
+  toggle: (key: string, defaultVisible?: boolean) => void;
 }
 
 export const usePanelStore = create<PanelStore>()(
   persist(
     (set) => ({
       panels: {},
-      toggle: (key) =>
+      toggle: (key, defaultVisible = true) =>
         set((s) => ({
-          panels: { ...s.panels, [key]: !s.panels[key] },
+          panels: {
+            ...s.panels,
+            [key]: !(s.panels[key] ?? defaultVisible),
+          },
         })),
     }),
     { name: "hs-panels" }

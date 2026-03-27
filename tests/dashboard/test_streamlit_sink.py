@@ -1,13 +1,14 @@
-"""Tests for StreamlitSink."""
+"""Tests for AppSink."""
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock
 
 import pytest
 
-from hypersussy.dashboard.sink import StreamlitSink
-from hypersussy.dashboard.state import SharedState
+from hypersussy.app.sink import AppSink
+from hypersussy.app.state import SharedState
 from hypersussy.models import Alert
 
 
@@ -26,28 +27,25 @@ def alert() -> Alert:
     )
 
 
-@pytest.mark.asyncio
-async def test_send_calls_push_alert(alert: Alert) -> None:
+def test_send_calls_push_alert(alert: Alert) -> None:
     """send() must call state.push_alert() exactly once with the alert."""
     state = MagicMock(spec=SharedState)
-    sink = StreamlitSink(state)
-    await sink.send(alert)
+    sink = AppSink(state)
+    asyncio.run(sink.send(alert))
     state.push_alert.assert_called_once_with(alert)
 
 
-@pytest.mark.asyncio
-async def test_send_is_awaitable(alert: Alert) -> None:
+def test_send_is_awaitable(alert: Alert) -> None:
     """send() must be awaitable and return None."""
     state = MagicMock(spec=SharedState)
-    sink = StreamlitSink(state)
-    result = await sink.send(alert)
+    sink = AppSink(state)
+    result = asyncio.run(sink.send(alert))
     assert result is None
 
 
-@pytest.mark.asyncio
-async def test_send_does_not_touch_snapshots(alert: Alert) -> None:
+def test_send_does_not_touch_snapshots(alert: Alert) -> None:
     """send() must not call push_snapshot."""
     state = MagicMock(spec=SharedState)
-    sink = StreamlitSink(state)
-    await sink.send(alert)
+    sink = AppSink(state)
+    asyncio.run(sink.send(alert))
     state.push_snapshot.assert_not_called()

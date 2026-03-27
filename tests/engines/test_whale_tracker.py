@@ -228,6 +228,39 @@ class TestWhaleTrackerEngine:
         assert "increased" in change_alerts[0].title
 
     @pytest.mark.asyncio
+    async def test_tick_fetches_twap_fills_once_per_tracked_address(
+        self,
+        storage: SqliteStorage,
+        settings: HyperSussySettings,
+    ) -> None:
+        """tick() should not duplicate TWAP fetches through position polling."""
+        position = Position(
+            coin="BTC",
+            address="0xwhale",
+            size=1.0,
+            entry_price=50000.0,
+            mark_price=50000.0,
+            liquidation_price=40000.0,
+            unrealized_pnl=0.0,
+            margin_used=10000.0,
+            leverage_value=5,
+            leverage_type="cross",
+            notional_usd=50_000.0,
+            timestamp_ms=5000,
+        )
+        reader = _MockReader(positions=[position])
+        engine = WhaleTrackerEngine(storage=storage, reader=reader, settings=settings)
+
+        for i in range(3):
+            await engine.on_trade(
+                _trade("BTC", "0xwhale", f"0xmm{i}", 50_000.0, 1.0, 1000 + i, i)
+            )
+
+        await engine.tick(5000)
+
+        assert reader.get_user_twap_slice_fills.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_volume_pruning(
         self,
         storage: SqliteStorage,

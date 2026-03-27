@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from hypersussy.dashboard.navigation import normalize_wallet_address, short_wallet_label
+from hypersussy.app.navigation import normalize_wallet_address, short_wallet_label
 
 
 def test_normalize_wallet_address_accepts_hex_and_lowercases() -> None:

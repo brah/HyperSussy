@@ -31,6 +31,7 @@ import { SymbolInfoBar } from "../components/common/SymbolInfoBar";
 import { AlertFeed } from "../components/common/AlertFeed";
 import { PageHeader } from "../components/layout/PageHeader";
 import { MarketSummaryTable } from "../components/market/MarketSummaryTable";
+import { TopHoldersTable } from "../components/market/TopHoldersTable";
 import { TopTradersTable } from "../components/market/TopTradersTable";
 import { formatUSD } from "../utils/format";
 
@@ -54,7 +55,8 @@ const MARKET_PANELS = [
   { key: "mark-oracle", label: "Mark/Oracle", defaultVisible: false },
   { key: "top-holders", label: "Holders" },
   { key: "trade-flow", label: "Flow" },
-  { key: "top-traders", label: "Traders" },
+  { key: "top-holders-list", label: "Top Holders" },
+  { key: "top-traders", label: "Volume" },
   { key: "alert-feed", label: "Alerts" },
   { key: "alerts-engine", label: "By Engine", defaultVisible: false },
 ];
@@ -352,6 +354,14 @@ export function MarketPage() {
                   </h2>
                   <MarkOracleChart data={fundingData} height={240} />
                 </div>
+              </PanelWrapper>
+
+              <PanelWrapper panelKey="top-holders-list">
+                <TopHoldersTable
+                  coin={coin}
+                  hours={hours}
+                  holders={topHolders}
+                />
               </PanelWrapper>
 
               <PanelWrapper panelKey="top-traders">

@@ -19,7 +19,7 @@ export function TopTradersTable({
   return (
     <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
       <h2 className="text-hs-text font-medium mb-3">
-        Top Traders — {coin} ({hours}h)
+        Top Volume — {coin} ({hours}h)
       </h2>
       <div className="divide-y divide-hs-grid">
         {traders.slice(0, 10).map((w, idx) => (

@@ -177,6 +177,44 @@ class DashboardReader:
             (address, address),
         )
 
+    def get_top_coin_positions(
+        self,
+        coin: str,
+        limit: int = 25,
+    ) -> list[dict[str, object]]:
+        """Latest position for every tracked address that holds a position in coin.
+
+        Returns the most recent snapshot per address, filtered to non-zero
+        size, ordered by absolute notional descending.
+
+        Args:
+            coin: Asset ticker symbol.
+            limit: Maximum rows to return.
+
+        Returns:
+            List of position dicts ordered by |notional_usd| descending.
+        """
+        return self._fetch_dicts(
+            """
+            SELECT p.address, p.coin, p.size, p.entry_price, p.notional_usd,
+                   p.unrealized_pnl, p.leverage_value, p.leverage_type,
+                   p.liquidation_price, p.mark_price, p.margin_used,
+                   p.timestamp_ms
+            FROM address_positions p
+            INNER JOIN (
+                SELECT address, MAX(timestamp_ms) AS max_ts
+                FROM address_positions
+                WHERE coin = ?
+                GROUP BY address
+            ) latest ON p.address = latest.address
+                     AND p.timestamp_ms = latest.max_ts
+            WHERE p.coin = ? AND p.size != 0
+            ORDER BY ABS(p.notional_usd) DESC
+            LIMIT ?
+            """,
+            (coin, coin, limit),
+        )
+
     def get_alert_counts_by_type(
         self,
         since_ms: int = 0,

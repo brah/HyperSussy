@@ -110,6 +110,23 @@ class PositionItem(_Base):
     timestamp_ms: int
 
 
+class CoinPositionItem(_Base):
+    """Current open position for a tracked address in a specific coin."""
+
+    address: str
+    coin: str
+    size: float
+    entry_price: float | None = None
+    notional_usd: float
+    unrealized_pnl: float
+    leverage_value: float | None = None
+    leverage_type: str | None = None
+    liquidation_price: float | None = None
+    mark_price: float
+    margin_used: float | None = None
+    timestamp_ms: int
+
+
 class CandleItem(_Base):
     """OHLCV candle row."""
 

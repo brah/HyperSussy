@@ -106,6 +106,21 @@ export interface PositionItem {
   timestamp_ms: number;
 }
 
+export interface CoinPositionItem {
+  address: string;
+  coin: string;
+  size: number;
+  entry_price: number | null;
+  notional_usd: number;
+  unrealized_pnl: number;
+  leverage_value: number | null;
+  leverage_type: string | null;
+  liquidation_price: number | null;
+  mark_price: number;
+  margin_used: number | null;
+  timestamp_ms: number;
+}
+
 export interface CandleItem {
   timestamp_ms: number;
   open: number;

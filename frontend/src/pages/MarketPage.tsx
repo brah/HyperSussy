@@ -7,6 +7,7 @@ import {
   coinsQuery,
   fundingQuery,
   oiQuery,
+  topCoinPositionsQuery,
   topHoldersQuery,
   topWhalesQuery,
   tradeFlowQuery,
@@ -209,6 +210,10 @@ export function MarketPage() {
     ...topHoldersQuery(coin, hours, 15),
     enabled: coinMode,
   });
+  const { data: topCoinPositions = [] } = useQuery({
+    ...topCoinPositionsQuery(coin, 25),
+    enabled: coinMode,
+  });
   const { data: tradeFlow = [] } = useQuery({
     ...tradeFlowQuery(coin, hours),
     enabled: coinMode,
@@ -359,8 +364,7 @@ export function MarketPage() {
               <PanelWrapper panelKey="top-holders-list">
                 <TopHoldersTable
                   coin={coin}
-                  hours={hours}
-                  holders={topHolders}
+                  positions={topCoinPositions}
                 />
               </PanelWrapper>
 

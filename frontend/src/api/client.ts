@@ -8,6 +8,7 @@ import type {
   AlertItem,
   AlertSummaryItem,
   CandleItem,
+  CoinPositionItem,
   FundingSnapshotItem,
   HealthResponse,
   OISnapshotItem,
@@ -143,6 +144,12 @@ export const fetchWhaleCount = (): Promise<{ count: number }> =>
 
 export const fetchWhalePositions = (address: string): Promise<PositionItem[]> =>
   get(`/whales/positions/${encodeURIComponent(address)}`);
+
+export const fetchTopCoinPositions = (
+  coin: string,
+  limit = 25
+): Promise<CoinPositionItem[]> =>
+  get(`/whales/top/${encodeURIComponent(coin)}?limit=${limit}`);
 
 export const addWhale = (
   address: string,

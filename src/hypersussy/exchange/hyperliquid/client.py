@@ -68,13 +68,44 @@ class HyperLiquidReader:
         # The weight limiter prevents per-minute exhaustion; this prevents
         # simultaneous bursts that the API rejects regardless of weight.
         self._concurrency = asyncio.Semaphore(4)
+        self._init_lock = asyncio.Lock()
 
     @property
     def _info_client(self) -> Info | Any:
-        """Return the lazily initialized HL SDK client."""
-        if self._info is None:
-            self._info = Info(base_url=self._base_url, skip_ws=True)
+        """Return the cached HL SDK client (must call _ensure_initialized first)."""
         return self._info
+
+    async def _ensure_initialized(self) -> None:
+        """Ensure the HL SDK Info client is initialized inside an executor.
+
+        Runs ``Info.__init__`` (which calls ``spot_meta()``) in a thread
+        executor via the concurrency semaphore, retrying on HTTP 429 with
+        exponential backoff.  Uses a lock to prevent duplicate init races.
+        """
+        if self._info is not None:
+            return
+        async with self._init_lock:
+            if self._info is not None:
+                return
+            for attempt in range(4):
+                try:
+                    self._info = await self._run_sync(
+                        partial(Info, base_url=self._base_url, skip_ws=True),
+                        weight=2,
+                    )
+                    return
+                except ClientError as exc:
+                    if exc.status_code == 429 and attempt < 3:
+                        delay = 2**attempt
+                        logger.warning(
+                            "HL Info init: 429 rate limit, retry %d/3 in %ds",
+                            attempt + 1,
+                            delay,
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error("HL Info init failed after retries: %s", exc)
+                        raise
 
     async def _run_sync(self, func: Callable[[], Any], weight: int) -> Any:
         """Run a synchronous SDK call in an executor with rate limiting.
@@ -107,21 +138,55 @@ class HyperLiquidReader:
         weight: int,
         context: str = "",
     ) -> Any:
-        """Run an HL SDK call with consistent logging and error context."""
-        try:
-            return await self._run_sync(func, weight=weight)
-        except (
-            ClientError,
-            ServerError,
-            requests.RequestException,
-            OSError,
-            ValueError,
-            KeyError,
-            TypeError,
-        ) as exc:
-            suffix = f" [{context}]" if context else ""
-            logger.warning("HL API call failed: %s%s (%s)", operation, suffix, exc)
-            raise
+        """Run an HL SDK call with consistent logging, error context, and 429 retry.
+
+        Ensures the SDK client is initialized before dispatching, then retries
+        the call up to 3 times on HTTP 429 with exponential backoff.
+
+        Args:
+            operation: Human-readable operation name for log messages.
+            func: Zero-argument callable wrapping the SDK method.
+            weight: API weight cost for the rate limiter.
+            context: Optional extra context appended to log messages.
+
+        Returns:
+            The SDK method's return value.
+
+        Raises:
+            ClientError: On non-429 client errors or after retries exhausted.
+            ServerError: On server-side errors.
+            requests.RequestException: On network-level failures.
+        """
+        await self._ensure_initialized()
+        suffix = f" [{context}]" if context else ""
+        for attempt in range(4):
+            try:
+                return await self._run_sync(func, weight=weight)
+            except ClientError as exc:
+                if exc.status_code == 429 and attempt < 3:
+                    delay = 2**attempt
+                    logger.warning(
+                        "HL API 429 on %s%s, retry %d/3 in %ds",
+                        operation,
+                        suffix,
+                        attempt + 1,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.warning("HL API call failed: %s%s (%s)", operation, suffix, exc)
+                raise
+            except (
+                ServerError,
+                requests.RequestException,
+                OSError,
+                ValueError,
+                KeyError,
+                TypeError,
+            ) as exc:
+                logger.warning("HL API call failed: %s%s (%s)", operation, suffix, exc)
+                raise
+        raise RuntimeError(f"_call_info: unreachable after retries for {operation}")
 
     async def refresh_hip3_dexes(self) -> list[str]:
         """Fetch and cache the list of active HIP-3 builder dex names.

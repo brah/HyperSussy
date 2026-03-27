@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from hypersussy.api.deps import ActionsDep, ReaderDep
 from hypersussy.api.schemas import (
     AddWhaleRequest,
+    CoinPositionItem,
     PositionItem,
     TrackedAddressItem,
     WhaleCountResponse,
@@ -72,6 +73,31 @@ def get_whale_positions(
     return [
         PositionItem.model_validate(r)
         for r in reader.get_whale_positions(address=addr)
+    ]
+
+
+@router.get("/top/{coin}")
+def get_top_coin_positions(
+    coin: str,
+    reader: ReaderDep,
+    limit: int = Query(25, ge=1, le=100),
+) -> list[CoinPositionItem]:
+    """Return current open positions for the top tracked addresses in a coin.
+
+    Results are timeframe-independent — always reflects the latest snapshot
+    per address with a non-zero position, ordered by absolute notional descending.
+
+    Args:
+        coin: Asset ticker symbol (e.g. "BTC").
+        reader: Injected DashboardReader.
+        limit: Maximum positions to return (1–100).
+
+    Returns:
+        List of CoinPositionItem ordered by |notional_usd| descending.
+    """
+    return [
+        CoinPositionItem.model_validate(r)
+        for r in reader.get_top_coin_positions(coin=coin, limit=limit)
     ]
 
 

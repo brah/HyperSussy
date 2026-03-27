@@ -54,7 +54,8 @@ class HyperSussySettings(BaseSettings):
     # Whale Tracker engine
     whale_volume_threshold_usd: float = 25_000_000.0
     whale_discovery_oi_pct: float = 0.15  # promote if address trades >= 15% of coin OI
-    whale_oi_min_notional_usd: float = 500_000.0  # OI-path requires this min position size
+    # OI-path requires this minimum position size
+    whale_oi_min_notional_usd: float = 500_000.0
     whale_volume_lookback_ms: int = 3_600_000
     max_tracked_addresses: int = 200
     position_poll_interval_s: float = 150.0
@@ -63,6 +64,14 @@ class HyperSussySettings(BaseSettings):
     large_position_change_usd: float = 1_000_000.0
     whale_poll_batch_size: int = 10
     twap_active_window_multiplier: int = 3
+
+    # Position Census — polls positions for non-whale addresses
+    census_enabled: bool = True
+    census_poll_interval_s: float = 300.0
+    census_poll_batch_size: int = 5
+    census_min_volume_usd: float = 100_000.0
+    census_max_addresses: int = 500
+    census_volume_lookback_ms: int = 3_600_000
 
     # Pre-Move engine
     pre_move_threshold_pct: float = 0.02

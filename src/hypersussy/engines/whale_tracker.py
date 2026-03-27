@@ -7,10 +7,10 @@ positions to detect large or changing holdings.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from hypersussy.config import HyperSussySettings
+from hypersussy.engines.position_census import PositionCensus
 from hypersussy.engines.position_tracker import PositionTracker
 from hypersussy.engines.twap_detector import TwapDetector
 from hypersussy.engines.whale_discovery import WhaleDiscovery
@@ -34,8 +34,15 @@ class WhaleTrackerEngine:
         self._reader = reader
         self._settings = settings
         self._whale_discovery = WhaleDiscovery(storage, settings)
-        self._position_tracker = PositionTracker(storage, reader, settings)
         self._twap_detector = TwapDetector(settings)
+        self._position_tracker = PositionTracker(
+            storage, reader, settings, twap_detector=self._twap_detector
+        )
+        self._position_census: PositionCensus | None = (
+            PositionCensus(storage, reader, settings)
+            if settings.census_enabled
+            else None
+        )
         self._whale_active_dexes: dict[str, set[str]] = {}
 
     @property
@@ -46,6 +53,8 @@ class WhaleTrackerEngine:
     async def on_trade(self, trade: Trade) -> list[Alert]:
         """Accumulate per-address volume and promote whales."""
         await self._whale_discovery.on_trade(trade)
+        if self._position_census is not None:
+            self._position_census.on_trade(trade)
         dex_prefix = trade.coin.split(":", 1)[0] if ":" in trade.coin else ""
         for addr in (trade.buyer, trade.seller):
             if not addr:
@@ -66,8 +75,9 @@ class WhaleTrackerEngine:
         self._whale_discovery.cap_tracked()
 
         db_tracked = set(await self._storage.get_tracked_addresses())
-        self._whale_discovery.set_tracked(self._whale_discovery.get_tracked() | db_tracked)
-        
+        merged = self._whale_discovery.get_tracked() | db_tracked
+        self._whale_discovery.set_tracked(merged)
+
         self._whale_active_dexes = {
             addr: dexes
             for addr, dexes in self._whale_active_dexes.items()
@@ -75,25 +85,14 @@ class WhaleTrackerEngine:
         }
         self._position_tracker.set_whale_active_dexes(self._whale_active_dexes)
 
-        position_alerts = await self._position_tracker.poll_positions(
-            timestamp_ms, self._whale_discovery.get_tracked()
-        )
+        tracked = self._whale_discovery.get_tracked()
 
-        # This part is tricky. The original implementation fetched twap_fills during position polling.
-        # To keep concerns separate, we would ideally fetch them separately.
-        # However, to minimize API calls, we can fetch them together.
-        # For now, we will do a separate fetch, but this could be optimized.
-        twap_alerts = []
-        for addr in self._whale_discovery.get_tracked():
-            try:
-                twap_fills = await self._reader.get_user_twap_slice_fills(addr)
-                twap_alerts.extend(
-                    self._twap_detector.process_twap_fills(addr, twap_fills, timestamp_ms)
-                )
-            except Exception:
-                logger.exception("Failed to get TWAP fills for %s", addr)
+        alerts = await self._position_tracker.poll_positions(timestamp_ms, tracked)
 
-        return position_alerts + twap_alerts
+        if self._position_census is not None:
+            await self._position_census.tick(timestamp_ms, tracked)
+
+        return alerts
 
     async def on_position_update(
         self,

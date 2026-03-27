@@ -5,14 +5,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable
 
 from hyperliquid.utils.error import ClientError
 
 from hypersussy.config import HyperSussySettings
 from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
+from hypersussy.engines.twap_detector import TwapDetector
 from hypersussy.exchange.base import ExchangeReader
-from hypersussy.models import Alert, Position
+from hypersussy.models import Alert, Position, TwapSliceFill
 from hypersussy.storage.base import StorageProtocol
 
 logger = logging.getLogger(__name__)
@@ -26,10 +26,12 @@ class PositionTracker:
         storage: StorageProtocol,
         reader: ExchangeReader,
         settings: HyperSussySettings,
+        twap_detector: TwapDetector | None = None,
     ) -> None:
         self._storage = storage
         self._reader = reader
         self._settings = settings
+        self._twap_detector = twap_detector
         self._last_positions: dict[str, list[tuple[str, float]]] = {}
         self._polled_once: set[str] = set()
         self._last_polled: dict[str, float] = {}
@@ -40,7 +42,18 @@ class PositionTracker:
     async def poll_positions(
         self, timestamp_ms: int, db_tracked: set[str]
     ) -> list[Alert]:
-        """Poll positions for tracked whales due for refresh."""
+        """Poll positions (and TWAP fills) for tracked whales due for refresh.
+
+        TWAP fetching is piggybacked on the same batch/interval to avoid
+        the O(N) per-tick cost of polling every tracked address separately.
+
+        Args:
+            timestamp_ms: Current timestamp in milliseconds.
+            db_tracked: Set of tracked whale addresses.
+
+        Returns:
+            Combined position and TWAP alerts.
+        """
         now_s = timestamp_ms / 1000.0
 
         to_poll = [
@@ -74,7 +87,7 @@ class PositionTracker:
                 logger.exception("Failed to poll positions for %s", addr)
                 continue
 
-            positions = result
+            positions, twap_fills = result
             self._last_polled[addr] = now_s
 
             if positions:
@@ -82,6 +95,13 @@ class PositionTracker:
 
             pos_alerts = self._generate_position_alerts(addr, positions, timestamp_ms)
             alerts.extend(pos_alerts)
+
+            if self._twap_detector and twap_fills:
+                alerts.extend(
+                    self._twap_detector.process_twap_fills(
+                        addr, twap_fills, timestamp_ms
+                    )
+                )
 
             self._last_positions[addr] = [(p.coin, p.notional_usd) for p in positions]
             self._polled_once.add(addr)
@@ -156,12 +176,28 @@ class PositionTracker:
 
         return alerts
 
-    def _fetch_addr_data(self, addr: str) -> Awaitable[list[Position]]:
-        """Fetch positions for an address."""
-        return self._reader.get_user_positions(
+    async def _fetch_addr_data(
+        self, addr: str
+    ) -> tuple[list[Position], list[TwapSliceFill]]:
+        """Fetch positions and TWAP fills for an address concurrently.
+
+        Args:
+            addr: The 0x wallet address.
+
+        Returns:
+            Tuple of (positions, twap_fills).
+        """
+        pos_coro = self._reader.get_user_positions(
             addr,
             active_dexes=self._whale_active_dexes.get(addr),
         )
+        if self._twap_detector is not None:
+            twap_coro = self._reader.get_user_twap_slice_fills(addr)
+            positions, twap_fills = await asyncio.gather(
+                pos_coro, twap_coro, return_exceptions=False
+            )
+            return positions, twap_fills
+        return await pos_coro, []
 
     def set_coin_oi(self, coin: str, oi: float) -> None:
         self._coin_oi[coin] = oi

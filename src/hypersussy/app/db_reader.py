@@ -181,21 +181,33 @@ class DashboardReader:
         self,
         coin: str,
         limit: int = 25,
+        max_age_ms: int = 3_600_000,
     ) -> list[dict[str, object]]:
-        """Latest position for every tracked address that holds a position in coin.
+        """Latest position for every address that holds a position in coin.
 
         Returns the most recent snapshot per address, filtered to non-zero
-        size, ordered by absolute notional descending.
+        size and not older than ``max_age_ms``, ordered by absolute
+        notional descending.
 
         Args:
             coin: Asset ticker symbol.
             limit: Maximum rows to return.
+            max_age_ms: Exclude snapshots older than this (default 1 hour).
+                Pass 0 to disable the staleness filter.
 
         Returns:
             List of position dicts ordered by |notional_usd| descending.
         """
+        staleness_clause = ""
+        params: list[object] = [coin]
+        if max_age_ms > 0:
+            cutoff = int(time.time() * 1000) - max_age_ms
+            staleness_clause = "AND timestamp_ms >= ?"
+            params.append(cutoff)
+
+        params.extend([coin, limit])
         return self._fetch_dicts(
-            """
+            f"""
             SELECT p.address, p.coin, p.size, p.entry_price, p.notional_usd,
                    p.unrealized_pnl, p.leverage_value, p.leverage_type,
                    p.liquidation_price, p.mark_price, p.margin_used,
@@ -204,7 +216,7 @@ class DashboardReader:
             INNER JOIN (
                 SELECT address, MAX(timestamp_ms) AS max_ts
                 FROM address_positions
-                WHERE coin = ?
+                WHERE coin = ? {staleness_clause}
                 GROUP BY address
             ) latest ON p.address = latest.address
                      AND p.timestamp_ms = latest.max_ts
@@ -212,7 +224,7 @@ class DashboardReader:
             ORDER BY ABS(p.notional_usd) DESC
             LIMIT ?
             """,
-            (coin, coin, limit),
+            tuple(params),
         )
 
     def get_alert_counts_by_type(

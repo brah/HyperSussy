@@ -277,13 +277,17 @@ class HyperLiquidStream:
             Each trade as it occurs, with buyer/seller addresses.
         """
         subscriptions = [{"type": "trades", "coin": coin} for coin in coins]
-        async for data in self._iter_multiplexed_messages(
+        gen = self._iter_multiplexed_messages(
             subscriptions,
             expected_channel="trades",
             log_label="Trade WS",
-        ):
-            for trade in parse_ws_trades(data):
-                yield trade
+        )
+        try:
+            async for data in gen:
+                for trade in parse_ws_trades(data):
+                    yield trade
+        finally:
+            await gen.aclose()
 
     async def stream_all_mids(
         self,
@@ -395,14 +399,18 @@ class HyperLiquidStream:
             AssetSnapshot on each push update (including initial snapshots).
         """
         subscriptions = [{"type": "activeAssetCtx", "coin": coin} for coin in coins]
-        async for data in self._iter_multiplexed_messages(
+        gen = self._iter_multiplexed_messages(
             subscriptions,
             expected_channel="activeAssetCtx",
             log_label="Asset ctx WS",
-        ):
-            snapshot = parse_ws_active_asset_ctx(data)
-            if snapshot is not None:
-                yield snapshot
+        )
+        try:
+            async for data in gen:
+                snapshot = parse_ws_active_asset_ctx(data)
+                if snapshot is not None:
+                    yield snapshot
+        finally:
+            await gen.aclose()
 
     async def stream_l2_book(self, coin: str) -> AsyncIterator[L2Book]:
         """Yield L2 book updates for a coin.

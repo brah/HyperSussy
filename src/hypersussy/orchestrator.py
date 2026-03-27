@@ -178,6 +178,7 @@ class Orchestrator:
             raise
         finally:
             self._running = False
+            await self._cancel_tasks(tasks)
 
     def stop(self) -> None:
         """Signal the orchestrator to stop."""

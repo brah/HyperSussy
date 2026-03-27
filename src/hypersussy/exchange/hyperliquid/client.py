@@ -196,7 +196,7 @@ class HyperLiquidReader:
         """
         raw = await self._call_info(
             "perp_dexs",
-            partial(self._info_client.perp_dexs),
+            lambda: self._info_client.perp_dexs(),
             weight=2,
         )
         names: list[str] = []
@@ -254,7 +254,7 @@ class HyperLiquidReader:
             payload["dex"] = dex
         raw = await self._call_info(
             "metaAndAssetCtxs",
-            partial(self._info_client.post, _INFO_PATH, payload),
+            lambda: self._info_client.post(_INFO_PATH, payload),
             weight=2,
             context=f"dex={dex or 'native'}",
         )
@@ -310,7 +310,7 @@ class HyperLiquidReader:
         """
         raw = await self._call_info(
             "user_state",
-            partial(self._info_client.user_state, address, dex=dex),
+            lambda: self._info_client.user_state(address, dex=dex),
             weight=2,
             context=f"address={address}, dex={dex or 'native'}",
         )
@@ -335,19 +335,14 @@ class HyperLiquidReader:
         if start_ms is not None:
             raw = await self._call_info(
                 "user_fills_by_time",
-                partial(
-                    self._info_client.user_fills_by_time,
-                    address,
-                    start_ms,
-                    end_ms,
-                ),
+                lambda: self._info_client.user_fills_by_time(address, start_ms, end_ms),
                 weight=20,
                 context=f"address={address}",
             )
         else:
             raw = await self._call_info(
                 "user_fills",
-                partial(self._info_client.user_fills, address),
+                lambda: self._info_client.user_fills(address),
                 weight=20,
                 context=f"address={address}",
             )
@@ -367,7 +362,7 @@ class HyperLiquidReader:
         """
         raw = await self._call_info(
             "l2Book",
-            partial(self._info_client.post, _INFO_PATH, {"type": "l2Book", "coin": coin}),
+            lambda: self._info_client.post(_INFO_PATH, {"type": "l2Book", "coin": coin}),
             weight=2,
             context=f"coin={coin}",
         )
@@ -393,13 +388,7 @@ class HyperLiquidReader:
         """
         raw = await self._call_info(
             "candles_snapshot",
-            partial(
-                self._info_client.candles_snapshot,
-                coin,
-                interval,
-                start_ms,
-                end_ms,
-            ),
+            lambda: self._info_client.candles_snapshot(coin, interval, start_ms, end_ms),
             weight=20,
             context=f"coin={coin}, interval={interval}",
         )
@@ -420,7 +409,7 @@ class HyperLiquidReader:
         """
         raw = await self._call_info(
             "user_twap_slice_fills",
-            partial(self._info_client.user_twap_slice_fills, address),
+            lambda: self._info_client.user_twap_slice_fills(address),
             weight=2,
             context=f"address={address}",
         )
@@ -454,7 +443,7 @@ class HyperLiquidReader:
             payload["endTime"] = end_ms
         raw = await self._call_info(
             "fundingHistory",
-            partial(self._info_client.post, _INFO_PATH, payload),
+            lambda: self._info_client.post(_INFO_PATH, payload),
             weight=20,
             context=f"coin={coin}",
         )

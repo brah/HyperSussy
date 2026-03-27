@@ -27,12 +27,15 @@ class FundingAnomalyEngine:
         settings: Application settings with funding anomaly thresholds.
     """
 
+    _SAMPLE_INTERVAL_MS: int = 3_600_000  # one sample per hour maximum
+
     def __init__(self, settings: HyperSussySettings) -> None:
         self._settings = settings
         self._history: dict[str, deque[float]] = defaultdict(
             lambda: deque(maxlen=settings.funding_rolling_window)
         )
         self._latest_rate: dict[str, float] = {}
+        self._last_sampled_ms: dict[str, int] = {}
         self._last_alert_ms: dict[str, int] = {}
 
     @property
@@ -50,7 +53,10 @@ class FundingAnomalyEngine:
             Empty list.
         """
         self._latest_rate[snapshot.coin] = snapshot.funding_rate
-        self._history[snapshot.coin].append(snapshot.funding_rate)
+        last = self._last_sampled_ms.get(snapshot.coin, -self._SAMPLE_INTERVAL_MS)
+        if snapshot.timestamp_ms - last >= self._SAMPLE_INTERVAL_MS:
+            self._history[snapshot.coin].append(snapshot.funding_rate)
+            self._last_sampled_ms[snapshot.coin] = snapshot.timestamp_ms
         return []
 
     async def on_trade(self, trade: Trade) -> list[Alert]:

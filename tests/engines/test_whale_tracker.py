@@ -276,7 +276,7 @@ class TestWhaleTrackerEngine:
 
         # Tick at ts=2000 should prune the trade (100 < 2000-1000)
         await engine.tick(2000)
-        assert engine._address_volume.get("0xaddr") is None
+        assert engine._whale_discovery._address_volume.get("0xaddr") is None
 
     @pytest.mark.asyncio
     async def test_on_asset_update_tracks_oi(
@@ -288,7 +288,7 @@ class TestWhaleTrackerEngine:
         reader = _MockReader()
         engine = WhaleTrackerEngine(storage=storage, reader=reader, settings=settings)
         await engine.on_asset_update(_snapshot("SOL", 1000, 5_000_000.0))
-        assert engine._coin_oi["SOL"] == 5_000_000.0
+        assert engine._position_tracker._coin_oi["SOL"] == 5_000_000.0
 
     @pytest.mark.asyncio
     async def test_oi_whale_discovery_blocked_below_min_notional(

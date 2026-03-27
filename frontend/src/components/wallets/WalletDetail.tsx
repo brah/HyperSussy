@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   alertsByAddressQuery,
@@ -53,16 +53,18 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
   const shortPct = 100 - longPct;
   const bias = longPct >= shortPct ? "LONG" : "SHORT";
 
-  const allTabs: { id: Tab; label: string; count: number }[] = [
-    { id: "positions", label: "Positions", count: positions.length },
-    { id: "trades", label: "Trades", count: trades.length },
-    { id: "alerts", label: "Alerts", count: alerts.length },
-  ];
-  const tabs = allTabs.filter((item) => {
-    if (item.id === "positions") return showPositions;
-    if (item.id === "trades") return showTrades;
-    return showAlerts;
-  });
+  const tabs = useMemo(() => {
+    const all: { id: Tab; label: string; count: number }[] = [
+      { id: "positions", label: "Positions", count: positions.length },
+      { id: "trades", label: "Trades", count: trades.length },
+      { id: "alerts", label: "Alerts", count: alerts.length },
+    ];
+    return all.filter(({ id }) => {
+      if (id === "positions") return showPositions;
+      if (id === "trades") return showTrades;
+      return showAlerts;
+    });
+  }, [positions.length, trades.length, alerts.length, showPositions, showTrades, showAlerts]);
 
   useEffect(() => {
     if (tabs.length === 0) {

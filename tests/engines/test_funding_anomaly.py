@@ -62,7 +62,7 @@ class TestFundingAnomalyEngine:
             count: Number of samples.
         """
         for _ in range(count):
-            engine._funding_history[coin].append(rate)
+            engine._history[coin].append(rate)
 
     @pytest.mark.asyncio
     async def test_detects_zscore_anomaly(
@@ -93,7 +93,7 @@ class TestFundingAnomalyEngine:
 
         # Seed varied history so z-score alone might not trigger
         for i in range(30):
-            engine._funding_history["ETH"].append(0.0005 + i * 0.00001)
+            engine._history["ETH"].append(0.0005 + i * 0.00001)
 
         # Absolute rate > 0.001
         engine._latest_rate["ETH"] = 0.002
@@ -142,11 +142,11 @@ class TestFundingAnomalyEngine:
         await engine.on_asset_update(_snapshot("BTC", 0, 0.0001))
         await engine.on_asset_update(_snapshot("BTC", 1_800_000, 0.0002))
 
-        assert len(engine._funding_history["BTC"]) == 1
+        assert len(engine._history["BTC"]) == 1
 
         # Update at 1h should be sampled
         await engine.on_asset_update(_snapshot("BTC", 3_600_000, 0.0003))
-        assert len(engine._funding_history["BTC"]) == 2
+        assert len(engine._history["BTC"]) == 2
 
     @pytest.mark.asyncio
     async def test_on_trade_is_noop(

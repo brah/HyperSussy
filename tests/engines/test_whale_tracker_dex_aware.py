@@ -99,7 +99,6 @@ class TestActiveDexesPassedToReader:
         """New whale with no observed trades passes active_dexes=None."""
         engine = _make_engine()
         addr = "0xnewwhale"
-        engine._tracked.add(addr)
 
         storage = AsyncMock(spec=SqliteStorage)
         storage.get_tracked_addresses = AsyncMock(return_value=[addr])
@@ -107,7 +106,7 @@ class TestActiveDexesPassedToReader:
         storage.insert_positions = AsyncMock()
         engine._storage = storage
         # Stamp last poll as expired
-        engine._last_polled[addr] = 0.0
+        engine._position_tracker._last_polled[addr] = 0.0
 
         await engine.tick(timestamp_ms=1_000_000)
 
@@ -121,14 +120,13 @@ class TestActiveDexesPassedToReader:
         engine = _make_engine()
         addr = "0xwhale"
         await engine.on_trade(_trade("xyz:GOLD", addr, "0xother"))
-        engine._tracked.add(addr)
 
         storage = AsyncMock(spec=SqliteStorage)
         storage.get_tracked_addresses = AsyncMock(return_value=[addr])
         storage.upsert_tracked_address = AsyncMock()
         storage.insert_positions = AsyncMock()
         engine._storage = storage
-        engine._last_polled[addr] = 0.0
+        engine._position_tracker._last_polled[addr] = 0.0
 
         await engine.tick(timestamp_ms=1_000_000)
 

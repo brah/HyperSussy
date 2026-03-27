@@ -63,7 +63,7 @@ def _make_engine() -> tuple[WhaleTrackerEngine, MagicMock]:
     )
     engine = WhaleTrackerEngine(storage=storage, reader=reader, settings=settings)
     # Seed OI so position-vs-OI alerts can fire
-    engine._coin_oi["BTC"] = 50_000_000.0
+    engine._position_tracker._coin_oi["BTC"] = 50_000_000.0
     return engine, storage
 
 
@@ -116,7 +116,7 @@ class TestOnPositionUpdateAlerts:
 
         await engine.on_position_update("0xwhale", [pos], timestamp_ms=1_000)
 
-        stored = dict(engine._last_positions["0xwhale"])
+        stored = dict(engine._position_tracker._last_positions["0xwhale"])
         assert stored["BTC"] == pytest.approx(5_000_000.0)
 
     @pytest.mark.asyncio
@@ -125,9 +125,9 @@ class TestOnPositionUpdateAlerts:
         engine, _ = _make_engine()
         pos = _make_position("BTC", "0xwhale", notional=1_000.0)
 
-        assert "0xwhale" not in engine._polled_once
+        assert "0xwhale" not in engine._position_tracker._polled_once
         await engine.on_position_update("0xwhale", [pos], timestamp_ms=1_000)
-        assert "0xwhale" in engine._polled_once
+        assert "0xwhale" in engine._position_tracker._polled_once
 
     @pytest.mark.asyncio
     async def test_inserts_positions_to_storage(self) -> None:
@@ -150,7 +150,7 @@ class TestOnPositionUpdateAlerts:
 
         await engine.on_position_update("0xwhale", [pos], timestamp_ms=1_000)
 
-        assert "0xwhale" not in engine._last_polled
+        assert "0xwhale" not in engine._position_tracker._last_polled
 
     @pytest.mark.asyncio
     async def test_cooldown_suppresses_duplicate_alert(self) -> None:
@@ -169,7 +169,7 @@ class TestOnPositionUpdateAlerts:
         reader.get_user_twap_slice_fills = AsyncMock(return_value=[])
 
         engine = WhaleTrackerEngine(storage=storage, reader=reader, settings=settings)
-        engine._coin_oi["BTC"] = 50_000_000.0
+        engine._position_tracker._coin_oi["BTC"] = 50_000_000.0
 
         addr = "0xwhale"
         pos = _make_position("BTC", addr, notional=15_000_000.0)

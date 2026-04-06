@@ -1,4 +1,6 @@
+import { Link } from "react-router-dom";
 import type { AlertItem, AlertSummaryItem } from "../../api/types";
+import { AddressLink } from "./AddressLink";
 import { severityColor } from "../../theme/colors";
 import { fmtDatetime } from "../../utils/time";
 
@@ -13,7 +15,7 @@ function isAlertItem(a: AnyAlert): a is AlertItem {
   return "alert_id" in a;
 }
 
-export function AlertFeed({ alerts, maxRows = 50 }: AlertFeedProps) {
+export function AlertFeed({ alerts, maxRows = 50 }: Readonly<AlertFeedProps>) {
   const displayed = alerts.slice(0, maxRows);
   if (displayed.length === 0) {
     return (
@@ -34,7 +36,12 @@ export function AlertFeed({ alerts, maxRows = 50 }: AlertFeedProps) {
             >
               {alert.severity}
             </span>
-            <span className="text-xs text-hs-grey">{alert.coin}</span>
+            <Link
+              to={`/?coin=${alert.coin}`}
+              className="text-xs font-medium text-hs-teal hover:underline"
+            >
+              {alert.coin}
+            </Link>
             <span className="ml-auto text-xs text-hs-grey">
               {fmtDatetime(alert.timestamp_ms)}
             </span>
@@ -44,6 +51,11 @@ export function AlertFeed({ alerts, maxRows = 50 }: AlertFeedProps) {
             <p className="mt-0.5 line-clamp-2 text-xs text-hs-grey">
               {alert.description}
             </p>
+          )}
+          {isAlertItem(alert) && alert.address && (
+            <div className="mt-0.5">
+              <AddressLink address={alert.address} />
+            </div>
           )}
         </div>
       ))}

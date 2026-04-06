@@ -1,37 +1,53 @@
 import { memo, useMemo } from "react";
 import {
-  BarChart,
+  ComposedChart,
   Bar,
+  Line,
   XAxis,
   YAxis,
   CartesianGrid,
   Tooltip,
   Cell,
   ReferenceLine,
+  Legend,
   ResponsiveContainer,
 } from "recharts";
 import type { FundingSnapshotItem } from "../../api/types";
 import { colors } from "../../theme/colors";
 import { fmtTime } from "../../utils/time";
 import { formatFundingRate } from "../../utils/format";
+import { mergeTimeSeries } from "../../utils/timeseries";
 
 interface FundingChartProps {
   data: FundingSnapshotItem[];
   height?: number;
+  label1?: string;
+  data2?: FundingSnapshotItem[];
+  label2?: string;
 }
 
 export const FundingChart = memo(function FundingChart({
   data,
   height = 220,
+  label1,
+  data2,
+  label2,
 }: Readonly<FundingChartProps>) {
+  const comparing = data2 != null && data2.length > 0;
+
   const cellColors = useMemo(
     () => data.map((d) => (d.funding_rate >= 0 ? colors.teal : colors.red)),
-    [data]
+    [data],
   );
+
+  const merged = useMemo(() => {
+    if (!comparing) return data;
+    return mergeTimeSeries(data, data2!, "funding_rate", "funding_rate2");
+  }, [comparing, data, data2]);
 
   return (
     <ResponsiveContainer width="100%" height={height}>
-      <BarChart data={data} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
+      <ComposedChart data={merged} margin={{ top: 4, right: comparing ? 16 : 72, bottom: 0, left: 8 }}>
         <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
         <XAxis
           dataKey="timestamp_ms"
@@ -41,13 +57,24 @@ export const FundingChart = memo(function FundingChart({
           minTickGap={60}
         />
         <YAxis
+          yAxisId="rate"
           tickFormatter={(v: number) => formatFundingRate(v)}
           stroke={colors.grey}
           tick={{ fill: colors.grey, fontSize: 11 }}
           width={80}
         />
+        {!comparing && (
+          <YAxis
+            yAxisId="premium"
+            orientation="right"
+            tickFormatter={(v: number) => formatFundingRate(v)}
+            stroke={colors.grey}
+            tick={{ fill: colors.grey, fontSize: 11 }}
+            width={80}
+          />
+        )}
         <Tooltip
-          formatter={(v: number) => [formatFundingRate(v), "Funding Rate"]}
+          formatter={(v: number, name: string) => [formatFundingRate(v), name]}
           labelFormatter={(ms: number) => fmtTime(ms)}
           contentStyle={{
             background: colors.bg,
@@ -57,13 +84,45 @@ export const FundingChart = memo(function FundingChart({
             fontSize: 12,
           }}
         />
-        <ReferenceLine y={0} stroke={colors.grey} strokeDasharray="3 3" />
-        <Bar dataKey="funding_rate" isAnimationActive={false}>
+        {comparing && (
+          <Legend
+            formatter={(value) => (
+              <span style={{ color: colors.text, fontSize: 12 }}>{value}</span>
+            )}
+          />
+        )}
+        <ReferenceLine yAxisId="rate" y={0} stroke={colors.grey} strokeDasharray="3 3" />
+        <Bar yAxisId="rate" dataKey="funding_rate" name={label1 ?? "Funding Rate"} isAnimationActive={false}>
           {cellColors.map((fill, idx) => (
             <Cell key={data[idx].timestamp_ms} fill={fill} />
           ))}
         </Bar>
-      </BarChart>
+        {comparing ? (
+          <Line
+            yAxisId="rate"
+            type="monotone"
+            dataKey="funding_rate2"
+            name={label2 ?? "Compare"}
+            stroke={colors.orange}
+            strokeWidth={1.5}
+            strokeDasharray="4 2"
+            dot={false}
+            isAnimationActive={false}
+          />
+        ) : (
+          <Line
+            yAxisId="premium"
+            type="monotone"
+            dataKey="premium"
+            name="Premium"
+            stroke={colors.orange}
+            strokeWidth={1.5}
+            strokeDasharray="4 2"
+            dot={false}
+            isAnimationActive={false}
+          />
+        )}
+      </ComposedChart>
     </ResponsiveContainer>
   );
 });

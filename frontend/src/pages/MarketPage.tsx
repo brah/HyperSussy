@@ -164,6 +164,7 @@ const StatusInfo = memo(function StatusInfo() {
 export function MarketPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const coin = searchParams.get("coin") ?? "";
+  const coin2 = searchParams.get("coin2") ?? "";
   const interval = parseIntervalParam(searchParams.get("interval"));
   const [hours, setHours] = useState<Hours>(24);
 
@@ -175,6 +176,8 @@ export function MarketPage() {
       if (c && c !== ALL) {
         next.coin = c;
         next.interval = interval;
+        // Drop coin2 if it would become a self-compare
+        if (coin2 && coin2 !== c) next.coin2 = coin2;
       }
       setSearchParams(next, { replace: true });
     });
@@ -182,10 +185,23 @@ export function MarketPage() {
 
   const handleIntervalChange = (iv: Interval) => {
     startTransition(() => {
-      setSearchParams(
-        { coin, interval: iv },
-        { replace: true },
-      );
+      const next: Record<string, string> = { coin, interval: iv };
+      if (coin2) next.coin2 = coin2;
+      setSearchParams(next, { replace: true });
+    });
+  };
+
+  const handleCoin2Change = (c: string) => {
+    startTransition(() => {
+      const next: Record<string, string> = { coin, interval };
+      if (c && c !== ALL && c !== coin) next.coin2 = c;
+      setSearchParams(next, { replace: true });
+    });
+  };
+
+  const clearCoin2 = () => {
+    startTransition(() => {
+      setSearchParams({ coin, interval }, { replace: true });
     });
   };
 
@@ -223,6 +239,16 @@ export function MarketPage() {
     enabled: coinMode,
   });
 
+  const compare = coinMode && coin2 !== "" && coin2 !== coin;
+  const { data: oiData2 = [] } = useQuery({
+    ...oiQuery(coin2, hours),
+    enabled: compare,
+  });
+  const { data: fundingData2 = [] } = useQuery({
+    ...fundingQuery(coin2, hours),
+    enabled: compare,
+  });
+
   const allCoins = useMemo(
     () => (coins.length > 0 ? [ALL, ...coins] : []),
     [coins]
@@ -238,6 +264,30 @@ export function MarketPage() {
           value={coinSelectorValue}
           onChange={handleCoinChange}
         />
+        {coinMode && (
+          <div className="flex items-center gap-1">
+            <select
+              value={coin2}
+              onChange={(e) => handleCoin2Change(e.target.value)}
+              className="rounded-[10px] border border-hs-grid bg-hs-surface px-3 py-1.5 text-sm
+                         text-hs-text focus:border-hs-green focus:outline-none"
+            >
+              <option value="">Compare…</option>
+              {coins.filter((c) => c !== coin).map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            {coin2 && (
+              <button
+                onClick={clearCoin2}
+                className="text-xs text-hs-grey hover:text-hs-red px-1"
+                title="Clear comparison"
+              >
+                ×
+              </button>
+            )}
+          </div>
+        )}
         {coinMode && (
           <IntervalSelector value={interval} onChange={handleIntervalChange} />
         )}
@@ -292,10 +342,16 @@ export function MarketPage() {
                 <PanelWrapper panelKey="oi-chart">
                   <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
                     <h2 className="text-hs-text font-medium mb-3">
-                      Open Interest — {hours}h
+                      Open Interest{compare ? ` — ${coin} vs ${coin2}` : ""} — {hours}h
                     </h2>
                     {oiData.length > 0 ? (
-                      <OIChart data={oiData} height={200} />
+                      <OIChart
+                        data={oiData}
+                        height={200}
+                        label1={coin}
+                        data2={compare ? oiData2 : undefined}
+                        label2={coin2 || undefined}
+                      />
                     ) : (
                       <p className="text-hs-grey text-sm py-6 text-center">
                         No OI data.
@@ -307,10 +363,16 @@ export function MarketPage() {
                 <PanelWrapper panelKey="funding-chart">
                   <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
                     <h2 className="text-hs-text font-medium mb-3">
-                      Funding Rate — {hours}h
+                      Funding Rate{compare ? ` — ${coin} vs ${coin2}` : ""} — {hours}h
                     </h2>
                     {fundingData.length > 0 ? (
-                      <FundingChart data={fundingData} height={200} />
+                      <FundingChart
+                        data={fundingData}
+                        height={200}
+                        label1={coin}
+                        data2={compare ? fundingData2 : undefined}
+                        label2={coin2 || undefined}
+                      />
                     ) : (
                       <p className="text-hs-grey text-sm py-6 text-center">
                         No funding data.

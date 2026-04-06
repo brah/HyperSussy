@@ -14,6 +14,7 @@ from hypersussy.config import HyperSussySettings
 from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.models import Alert, AssetSnapshot, Trade
 
+
 class PreMoveEngine:
     """Retroactively identify pre-move trading activity.
 

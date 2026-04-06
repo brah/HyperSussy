@@ -9,7 +9,6 @@ import pytest
 from hypersussy.app.state import SharedState
 from hypersussy.models import Alert, AssetSnapshot
 
-
 # -- Fixtures --
 
 @pytest.fixture

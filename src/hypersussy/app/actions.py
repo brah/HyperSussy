@@ -31,7 +31,10 @@ class DashboardActions:
 
     def remove_tracked_address(self, address: str) -> None:
         """Remove a tracked whale address."""
-        self._conn.execute("DELETE FROM tracked_addresses WHERE address = ?", (address,))
+        self._conn.execute(
+            "DELETE FROM tracked_addresses WHERE address = ?",
+            (address,),
+        )
         self._conn.commit()
 
     def close(self) -> None:

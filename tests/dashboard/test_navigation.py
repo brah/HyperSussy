@@ -15,7 +15,8 @@ def test_normalize_wallet_address_rejects_invalid_input() -> None:
     """Malformed addresses return None."""
     assert normalize_wallet_address("not-an-address") is None
     assert normalize_wallet_address("0x123") is None
-    assert normalize_wallet_address("0xzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz") is None
+    bad = "0xzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+    assert normalize_wallet_address(bad) is None
 
 
 def test_short_wallet_label_uses_suffix() -> None:

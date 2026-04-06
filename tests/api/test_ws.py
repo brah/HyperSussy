@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from collections import deque
 
+import pytest
+
+pytest.importorskip("fastapi", reason="fastapi not installed")
+
 from hypersussy.api.ws import _remember_sent_alerts, _select_unsent_alerts
 from hypersussy.models import Alert
 

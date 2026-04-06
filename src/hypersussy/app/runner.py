@@ -11,8 +11,8 @@ import threading
 import requests
 from hyperliquid.utils.error import ClientError, ServerError
 
-from hypersussy.config import HyperSussySettings
 from hypersussy.app.state import SharedState
+from hypersussy.config import HyperSussySettings
 
 logger = logging.getLogger(__name__)
 
@@ -109,8 +109,8 @@ class BackgroundRunner:
         """Wire and run all components inside the background event loop."""
         from hypersussy.alerts.manager import AlertManager
         from hypersussy.alerts.sinks.log_sink import LogSink
-        from hypersussy.cli import _build_components, _configure_logging
         from hypersussy.app.sink import AppSink
+        from hypersussy.cli import _build_components, _configure_logging
         from hypersussy.orchestrator import Orchestrator
 
         db_dir = os.path.dirname(self._settings.db_path)

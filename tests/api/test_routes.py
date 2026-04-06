@@ -15,6 +15,9 @@ import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+
+pytest.importorskip("fastapi", reason="fastapi not installed")
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -105,10 +108,14 @@ def _seed_db(conn: sqlite3.Connection) -> None:
     )
     conn.execute(
         "INSERT INTO address_positions "
-        "(address, coin, size, entry_price, notional_usd, unrealized_pnl, "
-        "leverage_value, leverage_type, liquidation_price, mark_price, margin_used, timestamp_ms) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-        (whale, "BTC", 1.0, 49000.0, 50000.0, 500.0, 5, "cross", 40000.0, 50000.0, 10000.0, now_ms),
+        "(address, coin, size, entry_price, notional_usd,"
+        " unrealized_pnl, leverage_value, leverage_type,"
+        " liquidation_price, mark_price, margin_used,"
+        " timestamp_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            whale, "BTC", 1.0, 49000.0, 50000.0, 500.0,
+            5, "cross", 40000.0, 50000.0, 10000.0, now_ms,
+        ),
     )
     conn.execute(
         "INSERT INTO candles "

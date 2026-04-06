@@ -5,6 +5,10 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
+pytest.importorskip("fastapi", reason="fastapi not installed")
+
 from hypersussy.api.server import _ensure_db_ready
 
 

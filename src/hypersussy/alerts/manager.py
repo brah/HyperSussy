@@ -71,7 +71,10 @@ class AlertManager:
             alert.alert_type, alert.coin, since_ms
         )
         fingerprint = self._dedupe_fingerprint(alert)
-        return any(self._dedupe_fingerprint(existing) == fingerprint for existing in recent)
+        return any(
+            self._dedupe_fingerprint(existing) == fingerprint
+            for existing in recent
+        )
 
     @staticmethod
     def _dedupe_fingerprint(alert: Alert) -> tuple[str, ...]:

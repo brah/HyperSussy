@@ -316,7 +316,7 @@ class TestWhaleTrackerEngine:
         storage: SqliteStorage,
         settings: HyperSussySettings,
     ) -> None:
-        """OI-path discovery promotes address when coin volume meets both OI pct and notional floor."""
+        """OI-path discovery promotes when volume meets OI pct and notional floor."""
         settings.whale_volume_threshold_usd = 10_000_000.0  # unreachable
         settings.whale_discovery_oi_pct = 0.01
         settings.whale_oi_min_notional_usd = 500_000.0

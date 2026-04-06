@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import threading
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from hypersussy.config import HyperSussySettings
 from hypersussy.app.runner import BackgroundRunner
 from hypersussy.app.state import SharedState
+from hypersussy.config import HyperSussySettings
 
 
 @pytest.fixture

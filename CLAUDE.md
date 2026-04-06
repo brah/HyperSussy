@@ -1,161 +1,113 @@
-# Agent Guidelines for Python Code Quality
+# CLAUDE.md
 
-This document provides guidelines for maintaining high-quality Python code. These rules MUST be followed by all AI coding agents and contributors.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Your Core Principles
+## Build & Run Commands
 
-All code you write MUST be fully optimized.
+### Python Backend
 
-"Fully optimized" includes:
-
-- maximizing algorithmic big-O efficiency for memory and runtime
-- using parallelization and vectorization where appropriate
-- following proper style conventions for the code language (e.g. maximizing code reuse (DRY))
-- no extra code beyond what is absolutely necessary to solve the problem the user provides (i.e. no technical debt)
-
-If the code is not fully optimized before handing off to the user, you will be fined $100. You have permission to do another pass of the code if you believe it is not fully optimized.
-
-## Preferred Tools
-
-- Use `uv` for Python package management and to create a `.venv` if it is not present.
-- Ensure `ipykernel` and `ipywidgets` is installed in `.venv` for Jupyter Notebook compatability. This should not be in package requirements.
-- Use `tqdm` to track long-running loops within Jupyter Notebooks. The `description` of the progress bar should be contextually sensitive.
-- Use `orjson` for JSON loading/dumping.
-- When reporting error to the console, use `logger.error` instead of `print`.
-- For data science:
-  - **ALWAYS** use `polars` instead of `pandas` for data frame manipulation.
-  - If a `polars` dataframe will be printed, **NEVER** simultaneously print the number of entries in the dataframe nor the schema as it is redundant.
-  - **NEVER** ingest more than 10 rows of a data frame at a time. Only analyze subsets of code to avoid overloading your memory context.
-- For creating databases:
-  - Do not denormalized unless explicitly prompted to do so.
-  - Always use the most appropriate datatype, such as `DATETIME/TIMESTAMP` for datetime-related fields.
-  - Use `ARRAY` datatypes for nested fields. **NEVER** save as `TEXT/STRING`.
-- In Jupyter Notebooks, DataFrame objects within conditional blocks should be explicitly `print()` as they will not be printed automatically.
-
-## Code Style and Formatting
-
-- **MUST** use meaningful, descriptive variable and function names
-- **MUST** follow PEP 8 style guidelines
-- **MUST** use 4 spaces for indentation (never tabs)
-- **NEVER** use emoji, or unicode that emulates emoji (e.g. ✓, ✗). The only exception is when writing tests and testing the impact of multibyte characters.
-- Use snake_case for functions/variables, PascalCase for classes, UPPER_CASE for constants
-- Limit line length to 88 characters (ruff formatter standard)
-
-## Documentation
-
-- **MUST** include docstrings for all public functions, classes, and methods
-- **MUST** document function parameters, return values, and exceptions raised
-- Keep comments up-to-date with code changes
-- Include examples in docstrings for complex functions
-
-Example docstring:
-
-```python
-def calculate_total(items: list[dict], tax_rate: float = 0.0) -> float:
-    """Calculate the total cost of items including tax.
-
-    Args:
-        items: List of item dictionaries with 'price' keys
-        tax_rate: Tax rate as decimal (e.g., 0.08 for 8%)
-
-    Returns:
-        Total cost including tax
-
-    Raises:
-        ValueError: If items is empty or tax_rate is negative
-    """
+```bash
+uv sync                      # Install core deps
+uv sync --extra dev          # Install dev deps (pytest, mypy, ruff, fastapi, uvicorn)
+uv sync --extra api          # Install API deps only
+uv run hypersussy            # Headless monitoring
+uv run hypersussy --api      # FastAPI server + background orchestrator (port 8000)
 ```
 
-## Type Hints
+### Frontend (React)
 
-- **MUST** use type hints for all function signatures (parameters and return values)
-- **NEVER** use `Any` type unless absolutely necessary
-- **MUST** run mypy and resolve all type errors
-- Use `Optional[T]` or `T | None` for nullable types
+```bash
+cd frontend
+npm install
+npm run dev                  # Vite dev server on :5173, proxies /api to :8000
+npm run build                # tsc -b && vite build → frontend/dist/
+npm run typecheck            # tsc --noEmit
+npm run lint                 # eslint src
+```
 
-## Error Handling
+When `frontend/dist/` exists, the FastAPI server serves it at `/`.
 
-- **NEVER** silently swallow exceptions without logging
-- **MUST** never use bare `except:` clauses
-- **MUST** catch specific exceptions rather than broad exception types
-- **MUST** use context managers (`with` statements) for resource cleanup
-- Provide meaningful error messages
+### Testing & Quality
 
-## Function Design
+```bash
+uv run pytest -v                                          # All tests
+uv run pytest tests/engines/test_oi_concentration.py -v   # Single file
+uv run pytest tests/alerts/test_manager.py::test_name     # Single test
+uv run mypy src                                           # Type check (strict mode)
+uv run ruff check src tests                               # Lint
+uv run ruff format src tests                              # Format
+```
 
-- **MUST** keep functions focused on a single responsibility
-- **NEVER** use mutable objects (lists, dicts) as default argument values
-- Limit function parameters to 5 or fewer
-- Return early to reduce nesting
+Pytest uses `asyncio_mode = "auto"` — async test functions are detected automatically.
 
-## Class Design
+## Architecture
 
-- **MUST** keep classes focused on a single responsibility
-- **MUST** keep `__init__` simple; avoid complex logic
-- Use dataclasses for simple data containers
-- Prefer composition over inheritance
-- Avoid creating additional class functions if they are not necessary
-- Use `@property` for computed attributes
+### Data Flow
 
-## Testing
+```text
+Hyperliquid API (REST + WebSocket)
+    → Orchestrator (event loop)
+        → Storage (SQLite via aiosqlite)
+        → Detection Engines (5 engines, each implements DetectionEngine protocol)
+            → AlertManager (dedup → throttle → persist → dispatch to sinks)
+        → SharedState (thread-safe in-memory bus for live UI data)
+    → FastAPI (/api/* REST + /ws/live WebSocket)
+    → React Dashboard (TanStack Query + Zustand WS store)
+```
 
-- **MUST** write unit tests for all new functions and classes
-- **MUST** mock external dependencies (APIs, databases, file systems)
-- **MUST** use pytest as the testing framework
-- **NEVER** run tests you generate without first saving them as their own discrete file
-- **NEVER** delete files created as a part of testing.
-- Ensure the folder used for test outputs is present in `.gitignore`
-- Follow the Arrange-Act-Assert pattern
-- Do not commit commented-out tests
+### Orchestrator (`orchestrator.py`)
 
-## Imports and Dependencies
+Runs concurrent async loops: REST polling, WebSocket streams (asset context + trades + positions), periodic engine ticks, and dynamic coin universe refresh. Engines are instantiated in `cli.py:_build_components()` based on settings toggles and passed as a list to the Orchestrator constructor.
 
-- **MUST** avoid wildcard imports (`from module import *`)
-- **MUST** document dependencies in `pyproject.toml`
-- Use `uv` for fast package management and dependency resolution
-- Organize imports: standard library, third-party, local imports
-- Use `isort` to automate import formatting
+**DetectionEngine protocol**: engines implement `tick()`, `on_trade()`, and `on_asset_update()`, each returning `list[Alert]`. The orchestrator dispatches alerts through the AlertManager.
 
-## Python Best Practices
+### Alert Pipeline (`alerts/manager.py`)
 
-- **NEVER** use mutable default arguments
-- **MUST** use context managers (`with` statement) for file/resource management
-- **MUST** use `is` for comparing with `None`, `True`, `False`
-- **MUST** use f-strings for string formatting
-- Use list comprehensions and generator expressions
-- Use `enumerate()` instead of manual counter variables
+Alerts go through: fingerprint-based dedup (cooldown window per alert_type+coin+address) → global rate limit (max N per minute) → SQLite persist → async dispatch to all sinks. Fingerprint keys include `alert_type`, `coin`, and optional metadata fields (`address`, `twap_id`, `direction`).
 
-## Security
+### Single-Process API Mode
 
-- **NEVER** store secrets, API keys, or passwords in code. Only store them in `.env`.
-  - Ensure `.env` is declared in `.gitignore`.
-  - **NEVER** print or log URLs to console if they contain an API key.
-- **MUST** use environment variables for sensitive configuration
-- **NEVER** log sensitive information (passwords, tokens, PII)
+`hypersussy --api` starts FastAPI with a lifespan that launches a `BackgroundRunner` (daemon thread running the Orchestrator). All components share a `SharedState` instance attached to `app.state`. The WebSocket endpoint (`/ws/live`) polls SharedState every 2s and pushes snapshots, alerts, and health.
 
-## Version Control
+### Frontend State
 
-- **MUST** write clear, descriptive commit messages
-- **NEVER** commit commented-out code; delete it
-- **NEVER** commit debug print statements or breakpoints
-- **NEVER** commit credentials or sensitive data
+- **Zustand store** (`api/websocket.ts`): holds live snapshots, alerts, health from WebSocket. Auto-reconnects with exponential backoff.
+- **TanStack React Query** (`api/queries.ts`): manages all REST data fetching with stale times (5s–30s) and refetch intervals.
+- **Panel visibility** (`stores/panelStore.ts`): persisted to localStorage, each panel subscribes independently.
 
-## Tools
+### Configuration (`config.py`)
 
-- **MUST** use Ruff for code formatting and linting (replaces Black, isort, flake8)
-- **MUST** use mypy for static type checking
-- Use `uv` for package management (faster alternative to pip)
-- Use pytest for testing
+`HyperSussySettings` extends Pydantic `BaseSettings` with env prefix `HYPERSUSSY_`. All 60+ settings are overridable via environment variables (e.g., `HYPERSUSSY_DB_PATH`, `HYPERSUSSY_ENGINE_WHALE_TRACKER=false`).
 
-## Before Committing
+### Frontend Design System
 
-- [ ] All tests pass
-- [ ] Type checking passes (mypy)
-- [ ] Code formatter and linter pass (Ruff)
-- [ ] All functions have docstrings and type hints
-- [ ] No commented-out code or debug statements
-- [ ] No hardcoded credentials
+The dashboard uses a Wise-inspired light theme defined in `DESIGN.md`. Key conventions:
 
----
+- **Color tokens** defined in `index.css` `@theme` block and mirrored in `theme/colors.ts`
+- **Brand accent** (`hs-green` / `#9fe870`): buttons, active nav, toggles only — never as text on white (fails WCAG)
+- **Semantic positive** (`hs-teal` / `#054d28`): long positions, +PnL, +funding rate
+- **Semantic negative** (`hs-red` / `#d03238`): short positions, -PnL, danger
+- Pill-shaped buttons (`rounded-full`) with `wise-interactive` class for scale(1.05) hover
+- Cards use `rounded-2xl` (16px) with `border-hs-grid`
+- LogModal is the sole dark-themed component (hardcoded terminal colors)
 
-**Remember:** Prioritize clarity and maintainability over cleverness.
+## Code Conventions
+
+### Python
+
+- Python >=3.13, line length 88 (ruff)
+- All models are frozen dataclasses with `slots=True`
+- Use `orjson` for JSON, `structlog` for logging, `logger.error()` not `print()`
+- Type hints on all signatures; `mypy --strict`
+- Docstrings (Google-style Args/Returns/Raises) on all public functions
+- No emoji or unicode emoji-equivalents in code
+- No mutable default arguments; use `field(default_factory=...)`
+- Tests use pytest with in-memory SQLite fixtures from `conftest.py`
+- Never delete test output files; ensure test output dirs are in `.gitignore`
+
+### Frontend
+
+- React 19, TypeScript 5.7, Tailwind CSS 4, Vite 6
+- Use design tokens (`hs-*` classes) — never hardcode hex values in components (exception: LogModal terminal)
+- Memoize with `memo()` and `useMemo()` for chart/table components
+- Zustand selectors subscribe to specific state slices to prevent unnecessary re-renders

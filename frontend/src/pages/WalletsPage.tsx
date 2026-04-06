@@ -15,7 +15,7 @@ const WALLET_PANELS = [
   { key: "add-whale-form", label: "Add Form" },
   { key: "whale-list", label: "List" },
   { key: "wallet-positions", label: "Positions" },
-  { key: "wallet-trades", label: "Trades" },
+  { key: "wallet-fills", label: "Fills" },
   { key: "wallet-alerts", label: "Alerts" },
 ];
 

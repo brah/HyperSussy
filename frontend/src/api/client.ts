@@ -9,14 +9,15 @@ import type {
   AlertSummaryItem,
   CandleItem,
   CoinPositionItem,
+  FillPageResponse,
   FundingSnapshotItem,
   HealthResponse,
   OISnapshotItem,
   PositionItem,
+  RealizedPnlResponse,
   TopHolderItem,
   TopWhaleItem,
   TradeFlowItem,
-  TradeItem,
   TrackedAddressItem,
 } from "./types";
 
@@ -108,12 +109,6 @@ export const fetchTopWhales = (
 ): Promise<TopWhaleItem[]> =>
   get(`/trades/top-whales/${encodeURIComponent(coin)}?hours=${hours}`);
 
-export const fetchTradesByAddress = (
-  address: string,
-  hours = 24
-): Promise<TradeItem[]> =>
-  get(`/trades/by-address/${encodeURIComponent(address)}?hours=${hours}`);
-
 export const fetchTopHolders = (
   coin: string,
   hours = 24,
@@ -164,3 +159,18 @@ export const addWhale = (
 
 export const removeWhale = (address: string): Promise<void> =>
   del(`/whales/${encodeURIComponent(address)}`);
+
+export const fetchRealizedPnl = (
+  address: string,
+): Promise<RealizedPnlResponse> =>
+  get(`/whales/pnl/${encodeURIComponent(address)}`);
+
+export const fetchFills = (
+  address: string,
+  beforeMs?: number,
+  limit = 50,
+): Promise<FillPageResponse> => {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (beforeMs != null) params.set("before_ms", String(beforeMs));
+  return get(`/whales/fills/${encodeURIComponent(address)}?${params}`);
+};

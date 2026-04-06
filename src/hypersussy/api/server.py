@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from hypersussy.api.candle_service import CandleService
+from hypersussy.api.pnl_service import PnlService
 from hypersussy.api.routes import alerts, candles, health, snapshots, trades, whales
 from hypersussy.api.ws import router as ws_router
 from hypersussy.app.actions import DashboardActions
@@ -63,6 +64,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
         window_seconds=settings.rate_limit_window_s,
     )
     await candle_service.init()
+    pnl_service = PnlService(base_url=settings.hl_api_url)
     runner = BackgroundRunner(settings=settings, shared_state=state)
 
     app.state.shared = state
@@ -70,6 +72,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.actions = actions
     app.state.runner = runner
     app.state.candle_service = candle_service
+    app.state.pnl_service = pnl_service
     runner.start()
 
     yield

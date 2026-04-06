@@ -2,45 +2,43 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   alertsByAddressQuery,
-  tradesByAddressQuery,
+  realizedPnlQuery,
   whalePositionsQuery,
 } from "../../api/queries";
 import { usePanelVisible } from "../../stores/panelStore";
 import { AlertFeed } from "../common/AlertFeed";
 import { EmptyState } from "../common/EmptyState";
-import { HoursSelector, type Hours } from "../common/HoursSelector";
+import { FillHistoryTable } from "./FillHistoryTable";
 import { PositionsTable } from "./PositionsTable";
-import { TradesTable } from "./TradesTable";
 import { shortAddress, formatUSD } from "../../utils/format";
 
-type Tab = "positions" | "trades" | "alerts";
+type Tab = "positions" | "fills" | "alerts";
 
 interface WalletDetailProps {
   address: string;
 }
 
 /**
- * Embeddable wallet detail panel: summary cards + positions/trades/alerts tabs.
+ * Embeddable wallet detail panel: summary cards + positions/fills/alerts tabs.
  * Inspired by the Hyperliquid portfolio page layout.
  */
 export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
   const [tab, setTab] = useState<Tab>("positions");
-  const [hours, setHours] = useState<Hours>(24);
   const showPositions = usePanelVisible("wallet-positions");
-  const showTrades = usePanelVisible("wallet-trades");
+  const showFills = usePanelVisible("wallet-fills");
   const showAlerts = usePanelVisible("wallet-alerts");
 
   const { data: positions = [] } = useQuery({
     ...whalePositionsQuery(address),
     enabled: showPositions && address.length === 42,
   });
-  const { data: trades = [] } = useQuery({
-    ...tradesByAddressQuery(address, hours),
-    enabled: showTrades && address.length === 42,
-  });
   const { data: alerts = [] } = useQuery({
     ...alertsByAddressQuery(address, 50),
     enabled: showAlerts && address.length === 42,
+  });
+  const { data: pnlData } = useQuery({
+    ...realizedPnlQuery(address),
+    enabled: address.length === 42,
   });
 
   // Summary metrics derived from positions
@@ -56,15 +54,15 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
   const tabs = useMemo(() => {
     const all: { id: Tab; label: string; count: number }[] = [
       { id: "positions", label: "Positions", count: positions.length },
-      { id: "trades", label: "Trades", count: trades.length },
+      { id: "fills", label: "Fills", count: 0 },
       { id: "alerts", label: "Alerts", count: alerts.length },
     ];
     return all.filter(({ id }) => {
       if (id === "positions") return showPositions;
-      if (id === "trades") return showTrades;
+      if (id === "fills") return showFills;
       return showAlerts;
     });
-  }, [positions.length, trades.length, alerts.length, showPositions, showTrades, showAlerts]);
+  }, [positions.length, alerts.length, showPositions, showFills, showAlerts]);
 
   useEffect(() => {
     if (tabs.length === 0) {
@@ -90,56 +88,85 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
         </span>
       </div>
 
-      {/* Summary cards -- inspired by HL portfolio layout */}
-      {positions.length > 0 && (
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
-            <p className="text-hs-grey text-xs mb-1">Total Notional</p>
-            <p className="text-hs-text font-semibold tabular-nums">
-              {formatUSD(totalNotional)}
-            </p>
-          </div>
-          <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
-            <p className="text-hs-grey text-xs mb-1">Direction Bias</p>
-            <p
-              className={`font-semibold ${
-                bias === "LONG" ? "text-hs-teal" : "text-hs-red"
-              }`}
-            >
-              {bias}
-            </p>
-          </div>
-          <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
-            <p className="text-hs-grey text-xs mb-1">Position Split</p>
-            <div className="flex items-center gap-1 mt-1.5">
-              <div
-                className="h-1.5 rounded-l bg-hs-teal"
-                style={{ width: `${longPct}%` }}
-              />
-              <div
-                className="h-1.5 rounded-r bg-hs-red"
-                style={{ width: `${shortPct}%` }}
-              />
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        {positions.length > 0 && (
+          <>
+            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
+              <p className="text-hs-grey text-xs mb-1">Total Notional</p>
+              <p className="text-hs-text font-semibold tabular-nums">
+                {formatUSD(totalNotional)}
+              </p>
             </div>
-            <p className="text-xs text-hs-grey mt-1">
-              <span className="text-hs-teal">{longPct.toFixed(0)}%</span>
-              {" / "}
-              <span className="text-hs-red">{shortPct.toFixed(0)}%</span>
-            </p>
-          </div>
-          <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
-            <p className="text-hs-grey text-xs mb-1">Unrealized PnL</p>
-            <p
-              className={`font-semibold tabular-nums ${
-                totalPnl >= 0 ? "text-hs-teal" : "text-hs-red"
-              }`}
-            >
-              {totalPnl >= 0 ? "+" : ""}
-              {formatUSD(totalPnl)}
-            </p>
-          </div>
-        </div>
-      )}
+            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
+              <p className="text-hs-grey text-xs mb-1">Direction Bias</p>
+              <div className="flex items-center gap-2">
+                <p
+                  className={`font-semibold ${
+                    bias === "LONG" ? "text-hs-teal" : "text-hs-red"
+                  }`}
+                >
+                  {bias}
+                </p>
+                <span className="text-xs text-hs-grey">
+                  <span className="text-hs-teal">{longPct.toFixed(0)}%</span>
+                  {" / "}
+                  <span className="text-hs-red">{shortPct.toFixed(0)}%</span>
+                </span>
+              </div>
+            </div>
+            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
+              <p className="text-hs-grey text-xs mb-1">Unrealized PnL</p>
+              <p
+                className={`font-semibold tabular-nums ${
+                  totalPnl >= 0 ? "text-hs-teal" : "text-hs-red"
+                }`}
+              >
+                {totalPnl >= 0 ? "+" : ""}
+                {formatUSD(totalPnl)}
+              </p>
+            </div>
+          </>
+        )}
+        {pnlData != null && (
+          <>
+            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
+              <p className="text-hs-grey text-xs mb-1">Realized PnL (7d)</p>
+              <p
+                className={`font-semibold tabular-nums ${
+                  pnlData.pnl_7d >= 0 ? "text-hs-teal" : "text-hs-red"
+                }`}
+              >
+                {pnlData.pnl_7d >= 0 ? "+" : ""}
+                {formatUSD(pnlData.pnl_7d)}
+              </p>
+              <p className="text-xs text-hs-grey mt-0.5">
+                {pnlData.is_complete_7d ? "" : "~"}
+                {pnlData.fills_7d.toLocaleString()} fill{pnlData.fills_7d !== 1 ? "s" : ""}
+                {pnlData.is_complete_7d ? "" : "+"}
+              </p>
+            </div>
+            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
+              <p className="text-hs-grey text-xs mb-1">
+                Realized PnL (All){pnlData.is_complete_all_time ? "" : "*"}
+              </p>
+              <p
+                className={`font-semibold tabular-nums ${
+                  pnlData.pnl_all_time >= 0 ? "text-hs-teal" : "text-hs-red"
+                }`}
+              >
+                {pnlData.pnl_all_time >= 0 ? "+" : ""}
+                {formatUSD(pnlData.pnl_all_time)}
+              </p>
+              <p className="text-xs text-hs-grey mt-0.5">
+                {pnlData.is_complete_all_time ? "" : "~"}
+                {pnlData.fills_all_time.toLocaleString()} fill{pnlData.fills_all_time !== 1 ? "s" : ""}
+                {pnlData.is_complete_all_time ? "" : "+"}
+              </p>
+            </div>
+          </>
+        )}
+      </div>
 
       {/* Tabs */}
       <div className="flex gap-1 border-b border-hs-grid">
@@ -168,16 +195,7 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
         ) : (
           <>
             {tab === "positions" && <PositionsTable positions={positions} />}
-
-            {tab === "trades" && (
-              <div>
-                <div className="flex justify-end p-3 border-b border-hs-grid">
-                  <HoursSelector value={hours} onChange={setHours} />
-                </div>
-                <TradesTable trades={trades} hours={hours} />
-              </div>
-            )}
-
+            {tab === "fills" && <FillHistoryTable address={address} />}
             {tab === "alerts" && (
               <div className="p-4">
                 <AlertFeed alerts={alerts} maxRows={50} />

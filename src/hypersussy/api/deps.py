@@ -12,6 +12,7 @@ from typing import Annotated
 from fastapi import Depends, Request
 
 from hypersussy.api.candle_service import CandleService
+from hypersussy.api.pnl_service import PnlService
 from hypersussy.app.actions import DashboardActions
 from hypersussy.app.db_reader import DashboardReader
 from hypersussy.app.state import SharedState
@@ -41,7 +42,14 @@ def get_candle_service(request: Request) -> CandleService:
     return service
 
 
+def get_pnl_service(request: Request) -> PnlService:
+    """Return the application-scoped PnL service."""
+    service: PnlService = request.app.state.pnl_service
+    return service
+
+
 ReaderDep = Annotated[DashboardReader, Depends(get_reader)]
 ActionsDep = Annotated[DashboardActions, Depends(get_actions)]
 StateDep = Annotated[SharedState, Depends(get_state)]
 CandleServiceDep = Annotated[CandleService, Depends(get_candle_service)]
+PnlServiceDep = Annotated[PnlService, Depends(get_pnl_service)]

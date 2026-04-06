@@ -165,6 +165,40 @@ class AddWhaleRequest(BaseModel):
     label: str = ""
 
 
+class RealizedPnlResponse(_Base):
+    """Realized PnL summary for a wallet address."""
+
+    pnl_7d: float
+    pnl_all_time: float
+    fills_7d: int
+    fills_all_time: int
+    is_complete_7d: bool = True
+    is_complete_all_time: bool = True
+
+
+class FillItem(_Base):
+    """A single user fill from the Hyperliquid API."""
+
+    coin: str
+    side: str
+    dir: str
+    px: float
+    sz: float
+    closed_pnl: float
+    start_position: float
+    oid: int
+    hash: str
+    time: int
+    crossed: bool
+
+
+class FillPageResponse(_Base):
+    """Paginated fill history response."""
+
+    fills: list[FillItem]
+    next_cursor: int | None = None
+
+
 class WhaleCountResponse(BaseModel):
     """Response for GET /api/whales/count."""
 

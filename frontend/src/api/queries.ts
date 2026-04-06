@@ -8,7 +8,7 @@
  *   - static lists (coins, whales): 30 s
  */
 
-import { queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 import * as api from "./client";
 
 export const healthQuery = () =>
@@ -82,14 +82,6 @@ export const topWhalesQuery = (coin: string, hours: number) =>
     enabled: coin.length > 0,
   });
 
-export const tradesByAddressQuery = (address: string, hours: number) =>
-  queryOptions({
-    queryKey: ["trades-by-address", address, hours],
-    queryFn: () => api.fetchTradesByAddress(address, hours),
-    staleTime: 10_000,
-    enabled: address.length === 42,
-  });
-
 export const topHoldersQuery = (coin: string, hours: number, limit: number) =>
   queryOptions({
     queryKey: ["top-holders", coin, hours, limit],
@@ -134,6 +126,25 @@ export const whalePositionsQuery = (address: string) =>
     queryKey: ["whale-positions", address],
     queryFn: () => api.fetchWhalePositions(address),
     staleTime: 10_000,
+    enabled: address.length === 42,
+  });
+
+export const fillsInfiniteQuery = (address: string) =>
+  infiniteQueryOptions({
+    queryKey: ["fills", address],
+    queryFn: ({ pageParam }: { pageParam: number | undefined }) =>
+      api.fetchFills(address, pageParam),
+    initialPageParam: undefined as number | undefined,
+    getNextPageParam: (lastPage) => lastPage.next_cursor ?? undefined,
+    staleTime: 60_000,
+    enabled: address.length === 42,
+  });
+
+export const realizedPnlQuery = (address: string) =>
+  queryOptions({
+    queryKey: ["realized-pnl", address],
+    queryFn: () => api.fetchRealizedPnl(address),
+    staleTime: 60_000,
     enabled: address.length === 42,
   });
 

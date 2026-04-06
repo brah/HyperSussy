@@ -131,6 +131,34 @@ export interface CandleItem {
   num_trades: number;
 }
 
+export interface FillItem {
+  coin: string;
+  side: string;
+  dir: string;
+  px: number;
+  sz: number;
+  closed_pnl: number;
+  start_position: number;
+  oid: number;
+  hash: string;
+  time: number;
+  crossed: boolean;
+}
+
+export interface FillPageResponse {
+  fills: FillItem[];
+  next_cursor: number | null;
+}
+
+export interface RealizedPnlResponse {
+  pnl_7d: number;
+  pnl_all_time: number;
+  fills_7d: number;
+  fills_all_time: number;
+  is_complete_7d: boolean;
+  is_complete_all_time: boolean;
+}
+
 export type WsMessage =
   | { type: "snapshots"; data: Record<string, LiveSnapshot>; timestamp_ms: number }
   | { type: "alert"; data: AlertItem; timestamp_ms: number }

@@ -63,8 +63,9 @@ export const TopHoldersChart = memo(function TopHoldersChart({
           ]}
           labelFormatter={(addr: string) => addr}
           contentStyle={{
-            background: colors.surface,
+            background: colors.bg,
             border: `1px solid ${colors.grid}`,
+            boxShadow: "rgba(14,15,12,0.12) 0px 0px 0px 1px",
             color: colors.text,
             fontSize: 12,
           }}

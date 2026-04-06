@@ -12,14 +12,14 @@ export function IntervalSelector({
   onChange,
 }: Readonly<IntervalSelectorProps>) {
   return (
-    <div className="flex rounded border border-hs-grid overflow-hidden">
+    <div className="flex rounded-full border border-hs-grid overflow-hidden">
       {INTERVAL_OPTIONS.map((iv) => (
         <button
           key={iv}
           onClick={() => onChange(iv)}
           className={`px-2.5 py-1.5 text-xs font-medium transition-colors ${
             value === iv
-              ? "bg-hs-green text-hs-bg"
+              ? "bg-hs-green text-hs-green-dark"
               : "bg-hs-surface text-hs-grey hover:text-hs-text hover:bg-hs-bg"
           }`}
         >

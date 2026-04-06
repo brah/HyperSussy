@@ -69,8 +69,8 @@ export function WhaleListTable({
                   onClick={() => onSelect(w.address)}
                   className={`border-b border-hs-grid cursor-pointer transition-colors ${
                     isSelected
-                      ? "bg-hs-green/10"
-                      : "hover:bg-hs-bg"
+                      ? "bg-hs-mint"
+                      : "hover:bg-hs-mint/50"
                   }`}
                 >
                   <td className="py-2 px-3">

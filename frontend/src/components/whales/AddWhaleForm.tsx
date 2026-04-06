@@ -38,7 +38,7 @@ export function AddWhaleForm() {
   }
 
   return (
-    <div className="mb-6 rounded-lg border border-hs-grid bg-hs-surface p-4">
+    <div className="mb-6 rounded-2xl border border-hs-grid bg-hs-surface p-4">
       <div className="mb-3">
         <h2 className="font-medium text-hs-text">Add Address</h2>
         <p className="mt-1 text-sm text-hs-grey">
@@ -66,7 +66,7 @@ export function AddWhaleForm() {
             autoComplete="off"
             spellCheck={false}
             aria-invalid={formError.length > 0}
-            className="w-full rounded border border-hs-grid bg-hs-bg px-3 py-1.5 text-sm text-hs-text
+            className="w-full rounded-[10px] border border-hs-grid bg-hs-bg px-3 py-1.5 text-sm text-hs-text
                        placeholder-hs-grey focus:border-hs-green focus:outline-none"
           />
           <p className="mt-1 text-xs text-hs-grey">
@@ -88,7 +88,7 @@ export function AddWhaleForm() {
             onChange={(e) => setNewLabel(e.target.value)}
             placeholder="Optional label"
             autoComplete="off"
-            className="w-full rounded border border-hs-grid bg-hs-bg px-3 py-1.5 text-sm text-hs-text
+            className="w-full rounded-[10px] border border-hs-grid bg-hs-bg px-3 py-1.5 text-sm text-hs-text
                        placeholder-hs-grey focus:border-hs-green focus:outline-none"
           />
         </div>
@@ -96,8 +96,8 @@ export function AddWhaleForm() {
         <button
           type="submit"
           disabled={addMutation.isPending}
-          className="rounded bg-hs-green px-4 py-1.5 text-sm font-semibold text-hs-bg
-                     transition-colors hover:bg-hs-green/80 disabled:opacity-50"
+          className="rounded-full bg-hs-green px-4 py-1.5 text-sm font-semibold text-hs-green-dark
+                     transition-all wise-interactive disabled:opacity-50"
         >
           {addMutation.isPending ? "Adding..." : "Add"}
         </button>

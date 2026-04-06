@@ -7,7 +7,7 @@ const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low"];
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: colors.red,
   high: colors.orange,
-  medium: "#f59e0b",
+  medium: "#946800",
   low: colors.grey,
 };
 

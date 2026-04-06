@@ -12,7 +12,7 @@ export function CoinSelector({ coins, value, onChange }: Readonly<CoinSelectorPr
       value={value}
       onChange={(e) => onChange(e.target.value)}
       disabled={isLoading}
-      className="rounded border border-hs-grid bg-hs-surface px-3 py-1.5 text-sm text-hs-text
+      className="rounded-[10px] border border-hs-grid bg-hs-surface px-3 py-1.5 text-sm text-hs-text
                  focus:border-hs-green focus:outline-none disabled:cursor-not-allowed
                  disabled:text-hs-grey"
     >

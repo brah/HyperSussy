@@ -17,7 +17,7 @@ export function TopTradersTable({
   if (traders.length === 0) return null;
 
   return (
-    <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+    <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
       <h2 className="text-hs-text font-medium mb-3">
         Top Volume — {coin} ({hours}h)
       </h2>

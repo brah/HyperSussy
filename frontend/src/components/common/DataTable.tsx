@@ -56,12 +56,12 @@ export function DataTable<T extends Record<string, unknown>>({
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-[#2a2d35] text-[#4a4e69]">
+          <tr className="border-b border-hs-grid text-hs-grey">
             {columns.map((col) => (
               <th
                 key={String(col.key)}
                 className={`py-2 px-3 font-medium cursor-pointer select-none
-                  hover:text-[#fafafa] transition-colors
+                  hover:text-hs-text transition-colors
                   ${col.align === "right" ? "text-right" : "text-left"}`}
                 onClick={() => toggleSort(col.key)}
               >
@@ -77,12 +77,12 @@ export function DataTable<T extends Record<string, unknown>>({
           {displayed.map((row) => (
             <tr
               key={String(row[rowKey])}
-              className="border-b border-[#2a2d35] hover:bg-[#141a22] transition-colors"
+              className="border-b border-hs-grid hover:bg-hs-mint/50 transition-colors"
             >
               {columns.map((col) => (
                 <td
                   key={String(col.key)}
-                  className={`py-2 px-3 text-[#fafafa]
+                  className={`py-2 px-3 text-hs-text
                     ${col.align === "right" ? "text-right tabular-nums" : ""}`}
                 >
                   {col.render
@@ -96,7 +96,7 @@ export function DataTable<T extends Record<string, unknown>>({
             <tr>
               <td
                 colSpan={columns.length}
-                className="py-8 text-center text-[#4a4e69]"
+                className="py-8 text-center text-hs-grey"
               >
                 No data
               </td>

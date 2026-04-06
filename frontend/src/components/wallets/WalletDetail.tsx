@@ -93,27 +93,27 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
       {/* Summary cards -- inspired by HL portfolio layout */}
       {positions.length > 0 && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div className="bg-hs-surface border border-hs-grid rounded-lg p-3">
+          <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
             <p className="text-hs-grey text-xs mb-1">Total Notional</p>
             <p className="text-hs-text font-semibold tabular-nums">
               {formatUSD(totalNotional)}
             </p>
           </div>
-          <div className="bg-hs-surface border border-hs-grid rounded-lg p-3">
+          <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
             <p className="text-hs-grey text-xs mb-1">Direction Bias</p>
             <p
               className={`font-semibold ${
-                bias === "LONG" ? "text-hs-green" : "text-hs-red"
+                bias === "LONG" ? "text-hs-teal" : "text-hs-red"
               }`}
             >
               {bias}
             </p>
           </div>
-          <div className="bg-hs-surface border border-hs-grid rounded-lg p-3">
+          <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
             <p className="text-hs-grey text-xs mb-1">Position Split</p>
             <div className="flex items-center gap-1 mt-1.5">
               <div
-                className="h-1.5 rounded-l bg-hs-green"
+                className="h-1.5 rounded-l bg-hs-teal"
                 style={{ width: `${longPct}%` }}
               />
               <div
@@ -122,16 +122,16 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
               />
             </div>
             <p className="text-xs text-hs-grey mt-1">
-              <span className="text-hs-green">{longPct.toFixed(0)}%</span>
+              <span className="text-hs-teal">{longPct.toFixed(0)}%</span>
               {" / "}
               <span className="text-hs-red">{shortPct.toFixed(0)}%</span>
             </p>
           </div>
-          <div className="bg-hs-surface border border-hs-grid rounded-lg p-3">
+          <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
             <p className="text-hs-grey text-xs mb-1">Unrealized PnL</p>
             <p
               className={`font-semibold tabular-nums ${
-                totalPnl >= 0 ? "text-hs-green" : "text-hs-red"
+                totalPnl >= 0 ? "text-hs-teal" : "text-hs-red"
               }`}
             >
               {totalPnl >= 0 ? "+" : ""}
@@ -162,7 +162,7 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
       </div>
 
       {/* Tab content */}
-      <div className="bg-hs-surface border border-hs-grid rounded-lg">
+      <div className="bg-hs-surface border border-hs-grid rounded-2xl">
         {tabs.length === 0 ? (
           <EmptyState message="Enable at least one wallet panel above." />
         ) : (

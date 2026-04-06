@@ -46,8 +46,9 @@ export const OIChart = memo(function OIChart({ data, height = 260 }: Readonly<OI
           formatter={(v: number) => [formatUSD(v), "OI (USD)"]}
           labelFormatter={(ms: number) => fmtTime(ms)}
           contentStyle={{
-            background: colors.surface,
+            background: colors.bg,
             border: `1px solid ${colors.grid}`,
+            boxShadow: "rgba(14,15,12,0.12) 0px 0px 0px 1px",
             color: colors.text,
             fontSize: 12,
           }}

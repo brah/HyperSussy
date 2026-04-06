@@ -12,7 +12,7 @@ export function MetricCard({
   valueClassName,
 }: MetricCardProps) {
   return (
-    <div className="rounded-lg border border-hs-grid bg-hs-surface p-4">
+    <div className="rounded-2xl border border-hs-grid bg-hs-surface p-4">
       <p className="mb-1 text-xs uppercase tracking-wider text-hs-grey">
         {label}
       </p>

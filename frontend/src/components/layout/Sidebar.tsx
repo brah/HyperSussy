@@ -27,12 +27,12 @@ export function Sidebar() {
 
   const dotColor =
     connected && health?.is_running
-      ? "bg-[#00d4aa]"
+      ? "bg-hs-teal"
       : connected && hasErrors
-      ? "bg-[#ff4b4b]"
+      ? "bg-hs-red"
       : connected
-      ? "bg-[#ffa500]"
-      : "bg-[#ff4b4b]";
+      ? "bg-hs-orange"
+      : "bg-hs-red";
 
   const statusLabel = !connected
     ? "Offline"
@@ -43,9 +43,9 @@ export function Sidebar() {
     : "Stopped";
 
   return (
-    <aside className="sticky top-0 flex h-screen w-52 shrink-0 flex-col border-r border-[#2a2d35] bg-[#141a22]">
-      <div className="border-b border-[#2a2d35] p-4">
-        <span className="text-lg font-bold tracking-tight text-[#fafafa]">
+    <aside className="sticky top-0 flex h-screen w-52 shrink-0 flex-col border-r border-hs-grid bg-white">
+      <div className="border-b border-hs-grid p-4">
+        <span className="text-lg font-black tracking-tight text-hs-text">
           HyperSussy
         </span>
       </div>
@@ -57,10 +57,10 @@ export function Sidebar() {
             to={to}
             end={to === "/"}
             className={({ isActive }) =>
-              `block rounded px-3 py-2 text-sm transition-colors ${
+              `block rounded-full px-4 py-2 text-sm transition-all wise-interactive ${
                 isActive
-                  ? "bg-[#00d4aa]/10 text-[#00d4aa]"
-                  : "text-[#4a4e69] hover:bg-[#0e1117] hover:text-[#fafafa]"
+                  ? "bg-hs-mint text-hs-green-dark font-semibold"
+                  : "text-hs-grey hover:bg-[rgba(211,242,192,0.4)] hover:text-hs-text"
               }`
             }
           >
@@ -69,20 +69,20 @@ export function Sidebar() {
         ))}
       </nav>
 
-      <div className="border-t border-[#2a2d35] p-3">
+      <div className="border-t border-hs-grid p-3">
         <form onSubmit={handleSearch}>
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="0x wallet..."
-            className="w-full rounded border border-[#2a2d35] bg-[#0e1117] px-2 py-1.5 text-xs text-[#fafafa]
-                       placeholder-[#4a4e69] focus:border-[#00d4aa] focus:outline-none"
+            className="w-full rounded-[10px] border border-hs-grid bg-hs-bg px-2 py-1.5 text-xs text-hs-text
+                       placeholder-hs-grey focus:border-hs-green focus:outline-none"
           />
         </form>
         <div className="mt-3 flex items-center gap-2">
           <span className={`h-2 w-2 rounded-full ${dotColor}`} />
-          <span className="text-xs text-[#4a4e69]">{statusLabel}</span>
+          <span className="text-xs text-hs-grey">{statusLabel}</span>
         </div>
       </div>
     </aside>

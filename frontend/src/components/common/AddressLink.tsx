@@ -12,7 +12,7 @@ export function AddressLink({ address, label, width = 10 }: AddressLinkProps) {
   return (
     <Link
       to={`/wallets/${address}`}
-      className="text-[#00d4aa] hover:underline font-mono text-sm"
+      className="text-hs-green-dark hover:underline font-mono text-sm"
       title={address}
     >
       {display}

@@ -112,7 +112,7 @@ export function TopHoldersTable({
 
   if (positions.length === 0) {
     return (
-      <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+      <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
         <h2 className="text-hs-text font-medium mb-3">Top Positions — {coin}</h2>
         <p className="text-hs-grey text-sm py-6 text-center">No open positions tracked.</p>
       </div>
@@ -120,7 +120,7 @@ export function TopHoldersTable({
   }
 
   return (
-    <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+    <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
       <h2 className="text-hs-text font-medium mb-3">Top Positions — {coin}</h2>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -154,13 +154,13 @@ export function TopHoldersTable({
               return (
                 <tr
                   key={p.address}
-                  className="border-b border-hs-grid hover:bg-hs-bg"
+                  className="border-b border-hs-grid hover:bg-hs-mint/50"
                 >
                   <td className="py-2 px-3">
                     <AddressLink address={p.address} />
                   </td>
                   <td
-                    className={`py-2 px-3 font-medium ${isLong ? "text-hs-green" : "text-hs-red"}`}
+                    className={`py-2 px-3 font-medium ${isLong ? "text-hs-teal" : "text-hs-red"}`}
                   >
                     {isLong ? "L" : "S"}
                   </td>
@@ -203,7 +203,7 @@ export function TopHoldersTable({
                   </td>
                   <td
                     className={`py-2 px-3 tabular-nums ${
-                      p.unrealized_pnl >= 0 ? "text-hs-green" : "text-hs-red"
+                      p.unrealized_pnl >= 0 ? "text-hs-teal" : "text-hs-red"
                     }`}
                   >
                     {formatUSD(p.unrealized_pnl)}

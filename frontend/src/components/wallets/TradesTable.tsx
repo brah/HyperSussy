@@ -30,7 +30,7 @@ export function TradesTable({ trades, hours }: Readonly<TradesTableProps>) {
           {trades.map((t) => (
             <tr
               key={t.tid}
-              className="border-b border-hs-grid hover:bg-hs-bg"
+              className="border-b border-hs-grid hover:bg-hs-mint/50"
             >
               <td className="py-2 px-3 text-hs-grey text-xs">
                 {fmtDatetime(t.timestamp_ms)}
@@ -38,7 +38,7 @@ export function TradesTable({ trades, hours }: Readonly<TradesTableProps>) {
               <td className="py-2 px-3 text-hs-text">{t.coin}</td>
               <td
                 className={`py-2 px-3 font-medium ${
-                  t.side === "B" ? "text-hs-green" : "text-hs-red"
+                  t.side === "B" ? "text-hs-teal" : "text-hs-red"
                 }`}
               >
                 {t.side === "B" ? "Buy" : "Sell"}

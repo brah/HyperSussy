@@ -14,7 +14,7 @@ export function App() {
   return (
     <div className="flex h-full">
       <Sidebar />
-      <main className="flex-1 overflow-y-auto p-6 bg-[#0e1117] min-w-0">
+      <main className="flex-1 overflow-y-auto p-6 bg-hs-bg min-w-0">
         <Routes>
           <Route path="/" element={<MarketPage />} />
           <Route path="/wallets" element={<WalletsPage />} />

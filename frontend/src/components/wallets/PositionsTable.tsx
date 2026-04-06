@@ -120,12 +120,12 @@ export function PositionsTable({ positions }: Readonly<PositionsTableProps>) {
             return (
               <tr
                 key={p.coin}
-                className="border-b border-hs-grid hover:bg-hs-bg"
+                className="border-b border-hs-grid hover:bg-hs-mint/50"
               >
                 <td className="py-2 px-3 text-hs-text font-medium">{p.coin}</td>
                 <td
                   className={`py-2 px-3 tabular-nums ${
-                    p.size >= 0 ? "text-hs-green" : "text-hs-red"
+                    p.size >= 0 ? "text-hs-teal" : "text-hs-red"
                   }`}
                 >
                   {p.size.toFixed(4)}
@@ -138,7 +138,7 @@ export function PositionsTable({ positions }: Readonly<PositionsTableProps>) {
                 </td>
                 <td
                   className={`py-2 px-3 tabular-nums ${
-                    p.unrealized_pnl >= 0 ? "text-hs-green" : "text-hs-red"
+                    p.unrealized_pnl >= 0 ? "text-hs-teal" : "text-hs-red"
                   }`}
                 >
                   {formatUSD(p.unrealized_pnl)}

@@ -1,8 +1,10 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useWsStore } from "../api/websocket";
 import { normalizeAddress } from "../utils/format";
 import { AddWhaleForm } from "../components/whales/AddWhaleForm";
 import { EmptyState } from "../components/common/EmptyState";
+import { StatusBanner } from "../components/common/StatusBanner";
 import { PageHeader } from "../components/layout/PageHeader";
 import { PanelToggleBar } from "../components/common/PanelToggleBar";
 import { PanelWrapper } from "../components/common/PanelWrapper";
@@ -20,6 +22,8 @@ const WALLET_PANELS = [
 export function WalletsPage() {
   const { address: routeAddress = "" } = useParams<{ address: string }>();
   const navigate = useNavigate();
+  const health = useWsStore((s) => s.health);
+  const connected = useWsStore((s) => s.connected);
   const [selected, setSelected] = useState(routeAddress);
   const [searchInput, setSearchInput] = useState("");
 
@@ -45,6 +49,7 @@ export function WalletsPage() {
   return (
     <div>
       <PageHeader title="Wallets">
+        <StatusBanner health={health} connected={connected} />
         <form onSubmit={handleSearch} className="flex gap-2">
           <input
             type="text"
@@ -52,13 +57,13 @@ export function WalletsPage() {
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="0x address..."
             className="bg-hs-surface border border-hs-grid text-hs-text text-sm
-                       rounded px-3 py-1.5 placeholder-hs-grey
+                       rounded-[10px] px-3 py-1.5 placeholder-hs-grey
                        focus:outline-none focus:border-hs-green w-56"
           />
           <button
             type="submit"
-            className="px-3 py-1.5 text-sm rounded bg-hs-green/20 text-hs-green
-                       border border-hs-green/40 hover:bg-hs-green/30 transition-colors"
+            className="px-3 py-1.5 text-sm rounded-full bg-hs-green text-hs-green-dark
+                       font-semibold transition-all wise-interactive"
           >
             Go
           </button>
@@ -74,7 +79,7 @@ export function WalletsPage() {
           </PanelWrapper>
 
           <PanelWrapper panelKey="whale-list">
-            <div className="bg-hs-surface border border-hs-grid rounded-lg">
+            <div className="bg-hs-surface border border-hs-grid rounded-2xl">
               <div className="border-b border-hs-grid px-4 py-3">
                 <h2 className="text-hs-text font-medium">Tracked Addresses</h2>
               </div>
@@ -89,7 +94,7 @@ export function WalletsPage() {
         {/* Detail column */}
         <div className="flex-1 min-w-0">
           {!selected ? (
-            <div className="bg-hs-surface border border-hs-grid rounded-lg">
+            <div className="bg-hs-surface border border-hs-grid rounded-2xl">
               <EmptyState message="Select a wallet from the list or search by address." />
             </div>
           ) : (

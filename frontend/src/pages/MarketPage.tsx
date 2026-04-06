@@ -129,7 +129,7 @@ const AlertSidebar = memo(function AlertSidebar() {
   return (
     <>
       <PanelWrapper panelKey="alert-feed">
-        <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+        <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
           <h2 className="text-hs-text font-medium mb-3">Live Alerts</h2>
           <SeverityFilterBar
             counts={severityCounts}
@@ -141,7 +141,7 @@ const AlertSidebar = memo(function AlertSidebar() {
       </PanelWrapper>
 
       <PanelWrapper panelKey="alerts-engine" defaultVisible={false}>
-        <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+        <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
           <h2 className="text-hs-text font-medium mb-3">Alerts by Engine</h2>
           <AlertsByEngineChart counts={alertCounts} height={180} />
         </div>
@@ -249,7 +249,7 @@ export function MarketPage() {
 
       {/* Symbol info bar */}
       {coinMode && (
-        <div className="bg-hs-surface border border-hs-grid rounded-lg px-4 py-1 mb-4">
+        <div className="bg-hs-surface border border-hs-grid rounded-2xl px-4 py-1 mb-4">
           <SymbolInfoBar coin={coin} />
         </div>
       )}
@@ -261,7 +261,7 @@ export function MarketPage() {
           {/* Overview mode: market summary table */}
           {!coinMode && (
             <PanelWrapper panelKey="market-table">
-              <div className="bg-hs-surface border border-hs-grid rounded-lg">
+              <div className="bg-hs-surface border border-hs-grid rounded-2xl">
                 <div className="border-b border-hs-grid px-4 py-3">
                   <h2 className="text-hs-text font-medium">Market Overview</h2>
                 </div>
@@ -274,7 +274,7 @@ export function MarketPage() {
           {coinMode && (
             <>
               <PanelWrapper panelKey="candlestick">
-                <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
                   <h2 className="text-hs-text font-medium mb-3">
                     {coin} / {interval}
                   </h2>
@@ -290,7 +290,7 @@ export function MarketPage() {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <PanelWrapper panelKey="oi-chart">
-                  <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                  <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
                     <h2 className="text-hs-text font-medium mb-3">
                       Open Interest — {hours}h
                     </h2>
@@ -305,7 +305,7 @@ export function MarketPage() {
                 </PanelWrapper>
 
                 <PanelWrapper panelKey="funding-chart">
-                  <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                  <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
                     <h2 className="text-hs-text font-medium mb-3">
                       Funding Rate — {hours}h
                     </h2>
@@ -322,7 +322,7 @@ export function MarketPage() {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <PanelWrapper panelKey="top-holders">
-                  <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                  <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
                     <h2 className="text-hs-text font-medium mb-3">
                       Top Holder Concentration — {hours}h
                     </h2>
@@ -337,7 +337,7 @@ export function MarketPage() {
                 </PanelWrapper>
 
                 <PanelWrapper panelKey="trade-flow">
-                  <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                  <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
                     <h2 className="text-hs-text font-medium mb-3">
                       Trade Flow — {hours}h
                     </h2>
@@ -353,7 +353,7 @@ export function MarketPage() {
               </div>
 
               <PanelWrapper panelKey="mark-oracle" defaultVisible={false}>
-                <div className="bg-hs-surface border border-hs-grid rounded-lg p-4">
+                <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
                   <h2 className="text-hs-text font-medium mb-3">
                     Mark vs Oracle — {hours}h
                   </h2>

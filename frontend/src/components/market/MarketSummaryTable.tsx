@@ -44,9 +44,9 @@ export function MarketSummaryTable({
             <tr
               key={snap.coin}
               onClick={() => onSelectCoin(snap.coin)}
-              className="border-b border-hs-grid hover:bg-hs-surface cursor-pointer"
+              className="border-b border-hs-grid hover:bg-hs-mint/50 cursor-pointer"
             >
-              <td className="py-2 px-3 text-hs-green font-medium">
+              <td className="py-2 px-3 text-hs-green-dark font-medium">
                 {snap.coin}
               </td>
               <td className="py-2 px-3 text-hs-text tabular-nums">
@@ -57,7 +57,7 @@ export function MarketSummaryTable({
               </td>
               <td
                 className={`py-2 px-3 tabular-nums ${
-                  snap.funding_rate >= 0 ? "text-hs-green" : "text-hs-red"
+                  snap.funding_rate >= 0 ? "text-hs-teal" : "text-hs-red"
                 }`}
               >
                 {formatFundingRate(snap.funding_rate)}

@@ -1,4 +1,4 @@
-import { memo, startTransition, useEffect, useMemo, useState } from "react";
+import { memo, startTransition, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -163,30 +163,30 @@ const StatusInfo = memo(function StatusInfo() {
 
 export function MarketPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const coinParam = searchParams.get("coin") ?? ALL;
-  const intervalParam = parseIntervalParam(searchParams.get("interval"));
-
-  const [coin, setCoin] = useState(coinParam === ALL ? "" : coinParam);
-  const [activeInterval, setActiveInterval] = useState<Interval>(intervalParam);
+  const coin = searchParams.get("coin") ?? "";
+  const interval = parseIntervalParam(searchParams.get("interval"));
   const [hours, setHours] = useState<Hours>(24);
 
   const coinMode = coin !== "";
-  const interval = activeInterval;
-
-  // Sync URL params
-  useEffect(() => {
-    const params: Record<string, string> = {};
-    if (coin) params.coin = coin;
-    if (coin) params.interval = activeInterval;
-    setSearchParams(params, { replace: true });
-  }, [coin, activeInterval, setSearchParams]);
 
   const handleCoinChange = (c: string) => {
-    startTransition(() => setCoin(c === ALL ? "" : c));
+    startTransition(() => {
+      const next: Record<string, string> = {};
+      if (c && c !== ALL) {
+        next.coin = c;
+        next.interval = interval;
+      }
+      setSearchParams(next, { replace: true });
+    });
   };
 
   const handleIntervalChange = (iv: Interval) => {
-    startTransition(() => setActiveInterval(iv));
+    startTransition(() => {
+      setSearchParams(
+        { coin, interval: iv },
+        { replace: true },
+      );
+    });
   };
 
   const candleHours = HOURS_FOR_INTERVAL[interval];

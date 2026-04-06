@@ -35,9 +35,12 @@ export function formatFundingRate(rate: number): string {
   return `${(rate * 100).toFixed(4)}%`;
 }
 
-/** Shorten a 0x address to the last N characters. */
-export function shortAddress(address: string, width = 10): string {
-  return `...${address.slice(-width)}`;
+/** Shorten a 0x address to prefix..suffix form (e.g. "0xab4f..ef35"). */
+export function shortAddress(address: string, chars = 4): string {
+  if (address.length <= 2 + chars * 2) return address;
+  const prefix = address.slice(0, 2 + chars);
+  const suffix = address.slice(-chars);
+  return `${prefix}..${suffix}`;
 }
 
 /** Validate a 0x wallet address string. */

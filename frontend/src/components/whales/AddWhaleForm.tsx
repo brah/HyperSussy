@@ -46,11 +46,8 @@ export function AddWhaleForm() {
         </p>
       </div>
 
-      <form
-        onSubmit={handleAdd}
-        className="flex flex-col gap-4 lg:flex-row lg:items-end"
-      >
-        <div className="min-w-64 flex-1">
+      <form onSubmit={handleAdd} className="flex flex-col gap-3">
+        <div>
           <label
             htmlFor="whale-address"
             className="mb-1 block text-xs font-medium uppercase tracking-wider text-hs-grey"
@@ -69,38 +66,37 @@ export function AddWhaleForm() {
             className="w-full rounded-[10px] border border-hs-grid bg-hs-bg px-3 py-1.5 text-sm text-hs-text
                        placeholder-hs-grey focus:border-hs-green focus:outline-none"
           />
-          <p className="mt-1 text-xs text-hs-grey">
-            Use the canonical 42-character 0x wallet address.
-          </p>
         </div>
 
-        <div className="w-full lg:w-52">
-          <label
-            htmlFor="whale-label"
-            className="mb-1 block text-xs font-medium uppercase tracking-wider text-hs-grey"
+        <div className="flex gap-3">
+          <div className="flex-1 min-w-0">
+            <label
+              htmlFor="whale-label"
+              className="mb-1 block text-xs font-medium uppercase tracking-wider text-hs-grey"
+            >
+              Label
+            </label>
+            <input
+              id="whale-label"
+              type="text"
+              value={newLabel}
+              onChange={(e) => setNewLabel(e.target.value)}
+              placeholder="Optional"
+              autoComplete="off"
+              className="w-full rounded-[10px] border border-hs-grid bg-hs-bg px-3 py-1.5 text-sm text-hs-text
+                         placeholder-hs-grey focus:border-hs-green focus:outline-none"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={addMutation.isPending}
+            className="self-end rounded-full bg-hs-green px-4 py-1.5 text-sm font-semibold text-hs-green-dark
+                       transition-all wise-interactive disabled:opacity-50 shrink-0"
           >
-            Label
-          </label>
-          <input
-            id="whale-label"
-            type="text"
-            value={newLabel}
-            onChange={(e) => setNewLabel(e.target.value)}
-            placeholder="Optional label"
-            autoComplete="off"
-            className="w-full rounded-[10px] border border-hs-grid bg-hs-bg px-3 py-1.5 text-sm text-hs-text
-                       placeholder-hs-grey focus:border-hs-green focus:outline-none"
-          />
+            {addMutation.isPending ? "..." : "Add"}
+          </button>
         </div>
-
-        <button
-          type="submit"
-          disabled={addMutation.isPending}
-          className="rounded-full bg-hs-green px-4 py-1.5 text-sm font-semibold text-hs-green-dark
-                     transition-all wise-interactive disabled:opacity-50"
-        >
-          {addMutation.isPending ? "Adding..." : "Add"}
-        </button>
       </form>
 
       {formError && <p className="mt-2 text-xs text-hs-red">{formError}</p>}

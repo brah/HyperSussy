@@ -4,11 +4,11 @@ import { shortAddress } from "../../utils/format";
 interface AddressLinkProps {
   address: string;
   label?: string | null;
-  width?: number;
+  chars?: number;
 }
 
-export function AddressLink({ address, label, width = 10 }: AddressLinkProps) {
-  const display = label || shortAddress(address, width);
+export function AddressLink({ address, label, chars = 4 }: AddressLinkProps) {
+  const display = label || shortAddress(address, chars);
   return (
     <Link
       to={`/wallets/${address}`}

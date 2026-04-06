@@ -15,6 +15,16 @@ def normalize_wallet_address(address: str) -> str | None:
     return address
 
 
-def short_wallet_label(address: str, width: int = 10) -> str:
-    """Return a compact label showing the wallet suffix."""
-    return f"...{address[-width:]}"
+def short_wallet_label(address: str, chars: int = 4) -> str:
+    """Return a compact label in prefix..suffix form (e.g. '0xab4f..ef35').
+
+    Args:
+        address: Full 0x wallet address.
+        chars: Number of hex characters to show on each side of '..'.
+
+    Returns:
+        Shortened address string.
+    """
+    if len(address) <= 2 + chars * 2:
+        return address
+    return f"{address[:2 + chars]}..{address[-chars:]}"

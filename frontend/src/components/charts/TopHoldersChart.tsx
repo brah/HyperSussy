@@ -24,7 +24,7 @@ export const TopHoldersChart = memo(function TopHoldersChart({
   const chartData = useMemo(
     () =>
       data.map((d) => ({
-        address: shortAddress(d.address, 8),
+        address: shortAddress(d.address, 4),
         volume_usd: d.volume_usd,
         pct:
           d.total_volume > 0

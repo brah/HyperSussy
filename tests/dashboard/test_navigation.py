@@ -20,8 +20,7 @@ def test_normalize_wallet_address_rejects_invalid_input() -> None:
 
 
 def test_short_wallet_label_uses_suffix() -> None:
-    """Compact labels show only the suffix by default."""
-    assert (
-        short_wallet_label("0x1234567890abcdef1234567890abcdef12345678")
-        == "...ef12345678"
-    )
+    """Compact labels show prefix..suffix form."""
+    addr = "0x1234567890abcdef1234567890abcdef12345678"
+    assert short_wallet_label(addr) == "0x1234..5678"
+    assert short_wallet_label(addr, chars=6) == "0x123456..345678"

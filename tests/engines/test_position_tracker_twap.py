@@ -9,6 +9,7 @@ import pytest
 from hypersussy.config import HyperSussySettings
 from hypersussy.engines.position_tracker import PositionTracker
 from hypersussy.engines.twap_detector import TwapDetector
+from hypersussy.exchange.hyperliquid.client import PositionFetchRateLimitError
 from hypersussy.models import Position
 
 
@@ -178,3 +179,19 @@ class TestTwapPiggybacking:
             timestamp_ms=t0 + 61_000, db_tracked={"0xaddr"}
         )
         assert reader.get_user_twap_slice_fills.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_rate_limited_position_fetch_marks_address_polled(self) -> None:
+        """Rate-limited address fetches back off instead of retrying immediately."""
+        tracker, reader, storage = _make_tracker()
+        reader.get_user_positions = AsyncMock(
+            side_effect=PositionFetchRateLimitError("0xaddr1", ["xyz"])
+        )
+
+        await tracker.poll_positions(
+            timestamp_ms=1_000,
+            db_tracked={"0xaddr1"},
+        )
+
+        assert "0xaddr1" in tracker._last_polled
+        storage.insert_positions.assert_not_called()

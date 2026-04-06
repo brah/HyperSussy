@@ -11,6 +11,8 @@ import logging
 import time
 
 import aiosqlite
+import requests
+from hyperliquid.utils.error import ClientError, ServerError
 
 from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.rate_limiter import WeightRateLimiter
@@ -128,8 +130,8 @@ class CandleService:
                 start_ms=start_ms,
                 end_ms=now_ms,
             )
-        except Exception:
-            logger.warning(
+        except (ClientError, ServerError, requests.RequestException, OSError):
+            logger.error(
                 "HL candle fetch failed for %s (%s); falling back to cache",
                 coin,
                 interval,

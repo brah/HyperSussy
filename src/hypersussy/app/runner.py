@@ -16,6 +16,25 @@ from hypersussy.app.state import SharedState
 
 logger = logging.getLogger(__name__)
 
+# Transient infrastructure failures — expected and recoverable.
+_NETWORK_ERRORS: tuple[type[Exception], ...] = (
+    ClientError,
+    ServerError,
+    requests.RequestException,
+    sqlite3.Error,
+    OSError,
+)
+
+# Programming/data errors — indicate bugs; caught only to prevent crashes.
+_LOGIC_ERRORS: tuple[type[Exception], ...] = (
+    ValueError,
+    KeyError,
+    TypeError,
+    RuntimeError,
+)
+
+_RECOVERABLE = _NETWORK_ERRORS + _LOGIC_ERRORS
+
 
 class BackgroundRunner:
     """Manages a daemon thread running the async orchestrator."""
@@ -78,17 +97,7 @@ class BackgroundRunner:
             loop.run_until_complete(self._async_main())
         except asyncio.CancelledError:
             pass
-        except (
-            ClientError,
-            ServerError,
-            requests.RequestException,
-            sqlite3.Error,
-            OSError,
-            ValueError,
-            KeyError,
-            TypeError,
-            RuntimeError,
-        ) as exc:
+        except _RECOVERABLE as exc:
             self._state.mark_runtime_error("background_runner", str(exc))
             logger.exception("BackgroundRunner crashed")
         finally:

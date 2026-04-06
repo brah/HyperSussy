@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from hypersussy.models import Alert, AssetSnapshot, Position, Trade
@@ -136,3 +138,34 @@ class TestSqliteStorage:
         assert len(recent) == 1
         assert recent[0].alert_id == "test-1"
         assert recent[0].metadata["delta_pct"] == 0.15
+
+    @pytest.mark.asyncio
+    async def test_executemany_write_retries_transient_lock(self) -> None:
+        """Transient SQLite locks are retried before surfacing as errors."""
+
+        class _FakeConn:
+            def __init__(self) -> None:
+                self.executemany_calls = 0
+                self.commit_calls = 0
+
+            async def executemany(
+                self,
+                query: str,
+                rows: list[tuple[object, ...]],
+            ) -> None:
+                self.executemany_calls += 1
+                if self.executemany_calls == 1:
+                    raise sqlite3.OperationalError("database is locked")
+
+            async def commit(self) -> None:
+                self.commit_calls += 1
+
+        storage = SqliteStorage(":memory:")
+        storage._db = _FakeConn()  # type: ignore[assignment]
+
+        await storage._executemany_write("INSERT INTO t VALUES (?)", [(1,)])  # noqa: SLF001
+
+        fake = storage._db
+        assert fake is not None
+        assert fake.executemany_calls == 2
+        assert fake.commit_calls == 1

@@ -56,8 +56,14 @@ async function del(path: string): Promise<void> {
 
 export const fetchHealth = (): Promise<HealthResponse> => get("/health");
 
-export const fetchLogs = (lines = 500): Promise<string> =>
-  fetch(`/api/health/logs?lines=${lines}`).then((r) => r.text());
+export async function fetchLogs(lines = 500): Promise<string> {
+  const res = await fetch(`/api/health/logs?lines=${lines}`);
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`API ${res.status}: ${text || res.statusText}`);
+  }
+  return text;
+}
 
 // -- Snapshots --
 

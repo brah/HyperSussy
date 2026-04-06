@@ -5,8 +5,9 @@ from __future__ import annotations
 import asyncio
 import importlib.resources
 import logging
+import sqlite3
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 
 import aiosqlite
 import orjson
@@ -20,6 +21,14 @@ from hypersussy.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+_WRITE_RETRY_DELAYS_S = (0.25, 0.5, 1.0, 2.0)
+
+
+def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
+    """Return True when SQLite reports a lock/busy condition."""
+    text = str(exc).lower()
+    return "database is locked" in text or "database table is locked" in text
 
 
 class SqliteStorage:
@@ -81,7 +90,9 @@ class SqliteStorage:
     ) -> None:
         """Execute a single write statement under the shared write lock."""
         async with self._write_lock:
-            await self._conn.execute(query, params)
+            await self._run_write_with_retry(
+                lambda: self._conn.execute(query, params),
+            )
             await self._conn.commit()
 
     async def _executemany_write(
@@ -91,8 +102,26 @@ class SqliteStorage:
     ) -> None:
         """Execute a batch write statement under the shared write lock."""
         async with self._write_lock:
-            await self._conn.executemany(query, rows)
+            await self._run_write_with_retry(
+                lambda: self._conn.executemany(query, rows),
+            )
             await self._conn.commit()
+
+    async def _run_write_with_retry(
+        self,
+        action: Callable[[], Awaitable[object]],
+    ) -> None:
+        """Retry locked SQLite writes a few times before surfacing the error."""
+        for attempt, delay in enumerate((0.0, *_WRITE_RETRY_DELAYS_S), start=1):
+            try:
+                await action()
+                return
+            except sqlite3.OperationalError as exc:
+                is_retryable = _is_locked_error(exc)
+                is_last = attempt > len(_WRITE_RETRY_DELAYS_S)
+                if not is_retryable or is_last:
+                    raise
+                await asyncio.sleep(delay)
 
     async def _fetchall(
         self,

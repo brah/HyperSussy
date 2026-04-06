@@ -6,8 +6,12 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from hyperliquid.utils.error import ClientError
 
-from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
+from hypersussy.exchange.hyperliquid.client import (
+    HyperLiquidReader,
+    PositionFetchRateLimitError,
+)
 
 
 def _make_user_state(coin: str = "BTC") -> dict[str, Any]:
@@ -132,6 +136,39 @@ class TestActiveDexesIntersection:
         # Only native queried; unknown_dex filtered out
         assert all(p.coin == "BTC" for p in positions)
         assert reader._info.user_state.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_rate_limited_dex_returns_partial_results(self) -> None:
+        """A 429 on one dex returns partial results from other dexes."""
+        reader = _make_reader(["xyz"])
+
+        def fake_user_state(address: str, dex: str = "") -> Any:
+            if dex == "xyz":
+                raise ClientError(429, None, "null", None, {})
+            return _make_user_state("BTC")
+
+        reader._info.user_state.side_effect = fake_user_state
+
+        positions = await reader.get_user_positions("0xabc", active_dexes={"xyz"})
+
+        # Native dex positions should be returned despite xyz 429
+        assert len(positions) == 1
+        assert positions[0].coin == "BTC"
+
+    @pytest.mark.asyncio
+    async def test_all_dexes_rate_limited_raises(self) -> None:
+        """A 429 on every queried dex raises PositionFetchRateLimitError."""
+        reader = _make_reader([])
+
+        reader._info.user_state.side_effect = ClientError(
+            429, None, "null", None, {}
+        )
+
+        with pytest.raises(PositionFetchRateLimitError) as excinfo:
+            await reader.get_user_positions("0xabc", active_dexes=set())
+
+        assert excinfo.value.address == "0xabc"
+        assert excinfo.value.dexes == ("native",)
 
 
 class TestActiveDexesHip3Disabled:

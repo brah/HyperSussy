@@ -6,12 +6,12 @@ import asyncio
 import logging
 import uuid
 
-from hyperliquid.utils.error import ClientError
-
 from hypersussy.config import HyperSussySettings
 from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
 from hypersussy.engines.twap_detector import TwapDetector
 from hypersussy.exchange.base import ExchangeReader
+from hypersussy.exchange.hyperliquid.client import PositionFetchRateLimitError
+from hypersussy.logging_utils import LogFloodGuard
 from hypersussy.models import Alert, Position, TwapSliceFill
 from hypersussy.storage.base import StorageProtocol
 
@@ -38,6 +38,7 @@ class PositionTracker:
         self._coin_oi: dict[str, float] = {}
         self._whale_active_dexes: dict[str, set[str]] = {}
         self._last_alert_ms: dict[str, int] = {}
+        self._log_guard = LogFloodGuard(window_s=60.0)
 
     async def poll_positions(
         self, timestamp_ms: int, db_tracked: set[str]
@@ -74,17 +75,29 @@ class PositionTracker:
 
         alerts: list[Alert] = []
         for addr, result in zip(batch, results, strict=True):
-            if isinstance(result, ClientError):
-                if result.status_code == 429:
-                    logger.warning(
-                        "Rate-limited polling positions for %s — backing off", addr
-                    )
-                    self._last_polled[addr] = now_s
-                else:
-                    logger.exception("Client error polling positions for %s", addr)
+            if isinstance(result, PositionFetchRateLimitError):
+                self._log_guard.log(
+                    logger,
+                    logging.WARNING,
+                    f"position_tracker_429:{addr}",
+                    (
+                        "Rate-limited polling positions for %s on %d dex(es); "
+                        "backing off"
+                    ),
+                    addr,
+                    len(result.dexes),
+                )
+                self._last_polled[addr] = now_s
                 continue
             if isinstance(result, BaseException):
-                logger.exception("Failed to poll positions for %s", addr)
+                self._log_guard.log(
+                    logger,
+                    logging.WARNING,
+                    f"position_tracker_error:{addr}:{type(result).__name__}",
+                    "Failed to poll positions for %s (%s)",
+                    addr,
+                    result,
+                )
                 continue
 
             positions, twap_fills = result

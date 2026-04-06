@@ -12,10 +12,10 @@ import asyncio
 import logging
 from collections import deque
 
-from hyperliquid.utils.error import ClientError
-
 from hypersussy.config import HyperSussySettings
 from hypersussy.exchange.base import ExchangeReader
+from hypersussy.exchange.hyperliquid.client import PositionFetchRateLimitError
+from hypersussy.logging_utils import LogFloodGuard
 from hypersussy.models import Trade
 from hypersussy.storage.base import StorageProtocol
 
@@ -48,6 +48,7 @@ class PositionCensus:
         self._address_volume: dict[str, float] = {}
         self._trade_buffer: deque[tuple[int, str, str, float]] = deque()
         self._last_polled: dict[str, float] = {}
+        self._log_guard = LogFloodGuard(window_s=60.0)
 
     def on_trade(self, trade: Trade) -> None:
         """Accumulate per-address volume from the trade stream.
@@ -123,13 +124,28 @@ class PositionCensus:
         )
 
         for addr, result in zip(batch, results, strict=True):
-            if isinstance(result, ClientError):
-                if result.status_code == 429:
-                    logger.debug("Census rate-limited for %s — backing off", addr)
-                    self._last_polled[addr] = now_s
+            if isinstance(result, PositionFetchRateLimitError):
+                self._log_guard.log(
+                    logger,
+                    logging.INFO,
+                    f"position_census_429:{addr}",
+                    (
+                        "Census rate-limited for %s on %d dex(es); backing off"
+                    ),
+                    addr,
+                    len(result.dexes),
+                )
+                self._last_polled[addr] = now_s
                 continue
             if isinstance(result, BaseException):
-                logger.debug("Census failed for %s: %s", addr, result)
+                self._log_guard.log(
+                    logger,
+                    logging.INFO,
+                    f"position_census_error:{addr}:{type(result).__name__}",
+                    "Census failed for %s (%s)",
+                    addr,
+                    result,
+                )
                 continue
 
             positions = result

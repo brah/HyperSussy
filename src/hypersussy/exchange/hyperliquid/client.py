@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from functools import partial
 from typing import Any
@@ -25,6 +26,7 @@ from hypersussy.exchange.hyperliquid.parsers import (
     parse_user_fills,
     parse_user_state,
 )
+from hypersussy.logging_utils import LogFloodGuard
 from hypersussy.models import (
     AssetSnapshot,
     CandleBar,
@@ -39,6 +41,16 @@ from hypersussy.rate_limiter import WeightRateLimiter
 logger = logging.getLogger(__name__)
 
 _INFO_PATH = "/info"
+
+
+class PositionFetchRateLimitError(RuntimeError):
+    """Raised when one or more per-dex user-state calls exhaust 429 retries."""
+
+    def __init__(self, address: str, dexes: list[str]) -> None:
+        self.address = address
+        self.dexes = tuple(dexes)
+        dex_list = ", ".join(dexes)
+        super().__init__(f"user_state rate-limited for {address} on dexes: {dex_list}")
 
 
 class HyperLiquidReader:
@@ -69,6 +81,8 @@ class HyperLiquidReader:
         # simultaneous bursts that the API rejects regardless of weight.
         self._concurrency = asyncio.Semaphore(4)
         self._init_lock = asyncio.Lock()
+        self._log_guard = LogFloodGuard(window_s=30.0)
+        self._rate_limited_until = 0.0
 
     @property
     def _info_client(self) -> Info | Any:
@@ -130,6 +144,19 @@ class HyperLiquidReader:
             logger.debug("_run_sync: executor returned")
             return result
 
+    async def _await_global_cooldown(self) -> None:
+        """Pause outbound REST calls while the reader is in global cooldown."""
+        delay = self._rate_limited_until - time.monotonic()
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    def _extend_global_cooldown(self, delay_s: float) -> None:
+        """Push the global cooldown window out if a longer one is required."""
+        self._rate_limited_until = max(
+            self._rate_limited_until,
+            time.monotonic() + delay_s,
+        )
+
     async def _call_info(
         self,
         operation: str,
@@ -160,12 +187,17 @@ class HyperLiquidReader:
         await self._ensure_initialized()
         suffix = f" [{context}]" if context else ""
         for attempt in range(4):
+            await self._await_global_cooldown()
             try:
                 return await self._run_sync(func, weight=weight)
             except ClientError as exc:
                 if exc.status_code == 429 and attempt < 3:
                     delay = 2**attempt
-                    logger.warning(
+                    self._extend_global_cooldown(delay)
+                    self._log_guard.log(
+                        logger,
+                        logging.WARNING,
+                        f"hl429:{operation}:{suffix}",
                         "HL API 429 on %s%s, retry %d/3 in %ds",
                         operation,
                         suffix,
@@ -174,17 +206,32 @@ class HyperLiquidReader:
                     )
                     await asyncio.sleep(delay)
                     continue
-                logger.warning("HL API call failed: %s%s (%s)", operation, suffix, exc)
+                if exc.status_code == 429:
+                    self._extend_global_cooldown(8.0)
+                self._log_guard.log(
+                    logger,
+                    logging.WARNING,
+                    f"hlfail:{operation}:{suffix}:{type(exc).__name__}",
+                    "HL API call failed: %s%s (%s)",
+                    operation,
+                    suffix,
+                    exc,
+                )
                 raise
             except (
                 ServerError,
                 requests.RequestException,
                 OSError,
-                ValueError,
-                KeyError,
-                TypeError,
             ) as exc:
-                logger.warning("HL API call failed: %s%s (%s)", operation, suffix, exc)
+                self._log_guard.log(
+                    logger,
+                    logging.WARNING,
+                    f"hlfail:{operation}:{suffix}:{type(exc).__name__}",
+                    "HL API call failed: %s%s (%s)",
+                    operation,
+                    suffix,
+                    exc,
+                )
                 raise
         raise RuntimeError(f"_call_info: unreachable after retries for {operation}")
 
@@ -291,11 +338,46 @@ class HyperLiquidReader:
         )
 
         positions: list[Position] = []
-        for result in results:
+        rate_limited_dexes: list[str] = []
+        other_failures: list[tuple[str, BaseException]] = []
+        for dex, result in zip(dexes, results, strict=True):
             if isinstance(result, BaseException):
-                logger.warning("Failed to fetch positions from a dex: %s", result)
+                if isinstance(result, ClientError) and result.status_code == 429:
+                    rate_limited_dexes.append(dex or "native")
+                else:
+                    other_failures.append((dex or "native", result))
                 continue
             positions.extend(result)
+
+        if rate_limited_dexes:
+            if positions:
+                # Partial success: return what we have, log the gaps.
+                self._log_guard.log(
+                    logger,
+                    logging.WARNING,
+                    f"user_state_partial_429:{address}",
+                    "Partial user_state for %s; %d dex(es) rate-limited: %s",
+                    address,
+                    len(rate_limited_dexes),
+                    ", ".join(rate_limited_dexes),
+                )
+            else:
+                # Every dex was rate-limited — nothing to return.
+                raise PositionFetchRateLimitError(address, rate_limited_dexes)
+
+        if other_failures:
+            if positions:
+                self._log_guard.log(
+                    logger,
+                    logging.WARNING,
+                    f"user_state_partial:{address}",
+                    "Partial user_state fetch for %s; %d dex call(s) failed",
+                    address,
+                    len(other_failures),
+                )
+            else:
+                raise other_failures[0][1]
+
         return positions
 
     async def _fetch_user_positions(self, address: str, dex: str) -> list[Position]:
@@ -362,7 +444,10 @@ class HyperLiquidReader:
         """
         raw = await self._call_info(
             "l2Book",
-            lambda: self._info_client.post(_INFO_PATH, {"type": "l2Book", "coin": coin}),
+            lambda: self._info_client.post(
+                _INFO_PATH,
+                {"type": "l2Book", "coin": coin},
+            ),
             weight=2,
             context=f"coin={coin}",
         )
@@ -388,7 +473,18 @@ class HyperLiquidReader:
         """
         raw = await self._call_info(
             "candles_snapshot",
-            lambda: self._info_client.candles_snapshot(coin, interval, start_ms, end_ms),
+            lambda: self._info_client.post(
+                _INFO_PATH,
+                {
+                    "type": "candleSnapshot",
+                    "req": {
+                        "coin": coin,
+                        "interval": interval,
+                        "startTime": start_ms,
+                        "endTime": end_ms,
+                    },
+                },
+            ),
             weight=20,
             context=f"coin={coin}, interval={interval}",
         )

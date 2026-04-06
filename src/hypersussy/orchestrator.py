@@ -11,6 +11,7 @@ import logging
 import math
 import sqlite3
 import time
+from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 
 import requests
@@ -22,6 +23,7 @@ from hypersussy.engines.base import DetectionEngine
 from hypersussy.engines.whale_tracker import WhaleTrackerEngine
 from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.exchange.hyperliquid.websocket import HyperLiquidStream
+from hypersussy.logging_utils import LogFloodGuard
 from hypersussy.models import Alert, Trade
 from hypersussy.protocols import DataBus
 from hypersussy.storage.base import StorageProtocol
@@ -36,18 +38,24 @@ _MAX_POSITION_WS_USERS = 1000
 # Periodic reconciliation cadence for dynamic market stream subscriptions.
 _STREAM_RECONCILE_S = 1.0
 
-# Exceptions from REST calls, storage, and engine logic that the
-# orchestrator must survive without crashing.
-_RECOVERABLE: tuple[type[Exception], ...] = (
+# Transient infrastructure failures — expected and recoverable.
+_NETWORK_ERRORS: tuple[type[Exception], ...] = (
     ClientError,
     ServerError,
     requests.RequestException,
     sqlite3.Error,
     OSError,
+)
+
+# Programming/data errors — indicate bugs; caught only to prevent
+# daemon crashes. Each occurrence should be investigated.
+_LOGIC_ERRORS: tuple[type[Exception], ...] = (
     ValueError,
     KeyError,
     TypeError,
 )
+
+_RECOVERABLE = _NETWORK_ERRORS + _LOGIC_ERRORS
 
 
 class Orchestrator:
@@ -82,6 +90,10 @@ class Orchestrator:
         self._coins: list[str] = []
         self._native_coins: list[str] = []
         self._running = False
+        self._log_guard = LogFloodGuard(window_s=60.0)
+        self._trade_storage_backoff_until = 0.0
+        self._trade_storage_failures = 0
+        self._trade_buffer: deque[Trade] = deque(maxlen=50_000)
 
     def _mark_engine_error(self, engine_name: str, exc: Exception) -> None:
         """Forward engine errors to the dashboard state when available."""
@@ -236,8 +248,8 @@ class Orchestrator:
                     for engine in self._engines:
                         await self._run_engine_call(
                             engine,
-                            lambda engine=engine, snapshot=snapshot: engine.on_asset_update(
-                                snapshot
+                            lambda engine=engine, snapshot=snapshot: (
+                                engine.on_asset_update(snapshot)
                             ),
                             "Error in on_asset_update (meta polling) for %s",
                             snapshot.coin,
@@ -349,7 +361,10 @@ class Orchestrator:
             return []
         n_conns = min(_MAX_TRADE_WS_CONNECTIONS, len(coins))
         batch_size = math.ceil(len(coins) / n_conns)
-        return [list(coins[i : i + batch_size]) for i in range(0, len(coins), batch_size)]
+        return [
+            list(coins[i : i + batch_size])
+            for i in range(0, len(coins), batch_size)
+        ]
 
     async def _trade_stream_supervisor_loop(self) -> None:
         """Keep trade stream subscriptions aligned with the current coin universe."""
@@ -438,7 +453,9 @@ class Orchestrator:
                 self._clear_runtime_error("position_stream")
             except _RECOVERABLE as exc:
                 self._mark_runtime_error("position_stream", exc)
-                logger.exception("Failed to fetch tracked addresses for position stream")
+                logger.exception(
+                    "Failed to fetch tracked addresses for position stream"
+                )
                 await asyncio.sleep(2)
                 continue
             logger.debug("_position_stream_loop: %d tracked addresses", len(tracked))
@@ -448,17 +465,21 @@ class Orchestrator:
             users = tracked[:_MAX_POSITION_WS_USERS]
             logger.info("Starting position WS stream for %d addresses", len(users))
             try:
-                async for address, positions in self._stream.stream_clearinghouse_states(
-                    users
-                ):
+                position_stream = self._stream.stream_clearinghouse_states(users)
+                async for address, positions in position_stream:
                     if not self._running:
                         break
                     now_ms = int(time.time() * 1000)
                     for engine in whale_engines:
                         await self._run_engine_call(
                             engine,
-                            lambda engine=engine, address=address, positions=positions, now_ms=now_ms: engine.on_position_update(
-                                address, positions, now_ms
+                            lambda engine=engine,
+                            address=address,
+                            positions=positions,
+                            now_ms=now_ms: engine.on_position_update(
+                                address,
+                                positions,
+                                now_ms,
                             ),
                             "Error in on_position_update for %s",
                             address,
@@ -472,15 +493,19 @@ class Orchestrator:
     async def _dispatch_trade(self, trade: Trade) -> None:
         """Fan out a trade to storage and all engines.
 
+        Trades that arrive during a storage backoff window are buffered
+        and flushed on the next successful write, preventing permanent
+        gaps in the trades table from transient DB issues.
+
         Args:
             trade: The incoming trade.
         """
-        try:
-            await self._storage.insert_trades([trade])
-            self._clear_runtime_error("trade_storage")
-        except _RECOVERABLE as exc:
-            self._mark_runtime_error("trade_storage", exc)
-            logger.exception("Failed to store trade")
+        now = time.monotonic()
+        if now >= self._trade_storage_backoff_until:
+            self._trade_buffer.append(trade)
+            await self._flush_trade_buffer()
+        else:
+            self._trade_buffer.append(trade)
 
         for engine in self._engines:
             await self._run_engine_call(
@@ -488,4 +513,39 @@ class Orchestrator:
                 lambda engine=engine, trade=trade: engine.on_trade(trade),
                 "Error dispatching trade to engine %s",
                 engine.name,
+            )
+
+    async def _flush_trade_buffer(self) -> None:
+        """Attempt to write all buffered trades to storage."""
+        if not self._trade_buffer:
+            return
+        batch = list(self._trade_buffer)
+        try:
+            await self._storage.insert_trades(batch)
+            self._trade_buffer.clear()
+            self._trade_storage_failures = 0
+            self._trade_storage_backoff_until = 0.0
+            self._clear_runtime_error("trade_storage")
+        except _RECOVERABLE as exc:
+            self._mark_runtime_error("trade_storage", exc)
+            self._trade_storage_failures += 1
+            delay = min(30.0, 2 ** min(self._trade_storage_failures - 1, 5))
+            self._trade_storage_backoff_until = time.monotonic() + delay
+            is_db_lock = isinstance(exc, sqlite3.OperationalError) and (
+                "locked" in str(exc).lower()
+            )
+            self._log_guard.log(
+                logger,
+                logging.WARNING if is_db_lock else logging.ERROR,
+                (
+                    "trade_storage_locked"
+                    if is_db_lock
+                    else f"trade_storage:{type(exc).__name__}"
+                ),
+                "Trade storage unavailable (%d buffered); "
+                "retrying in %.1fs (%s)",
+                len(self._trade_buffer),
+                delay,
+                exc,
+                exc_info=not is_db_lock,
             )

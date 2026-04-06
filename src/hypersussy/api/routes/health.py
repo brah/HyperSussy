@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 
 from fastapi import APIRouter, Query
@@ -67,6 +68,40 @@ def get_logs(
         return "Log file path not yet set (runner may not have started)."
     if not os.path.isfile(path):
         return f"Log file not found: {path}"
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        all_lines = fh.readlines()
-    return "".join(all_lines[-lines:])
+    return _tail_file(path, lines)
+
+
+def _tail_file(path: str, lines: int) -> str:
+    """Read the last *lines* lines from a file efficiently.
+
+    Seeks backwards from the end in growing chunks, avoiding the cost
+    of reading the entire file into memory on every request.
+
+    Args:
+        path: Filesystem path to the log file.
+        lines: Number of tail lines to return.
+
+    Returns:
+        The last *lines* lines as a single string.
+    """
+    with open(path, "rb") as fh:
+        fh.seek(0, io.SEEK_END)
+        file_size = fh.tell()
+        if file_size == 0:
+            return ""
+
+        chunk_size = 8192
+        found_lines = 0
+        position = file_size
+        buf = b""
+
+        while position > 0 and found_lines <= lines:
+            read_size = min(chunk_size, position)
+            position -= read_size
+            fh.seek(position)
+            buf = fh.read(read_size) + buf
+            found_lines = buf.count(b"\n")
+
+    text = buf.decode("utf-8", errors="replace")
+    tail = text.splitlines(keepends=True)
+    return "".join(tail[-lines:])

@@ -14,7 +14,9 @@ import {
 } from "../api/queries";
 import { useWsStore } from "../api/websocket";
 import { AlertsByEngineChart } from "../components/charts/AlertsByEngineChart";
-import { CandlestickChart } from "../components/charts/CandlestickChart";
+import { CandlestickChart, type OverlayLine } from "../components/charts/CandlestickChart";
+import { ChartHeader } from "../components/charts/ChartHeader";
+import { ChartToolbar } from "../components/charts/ChartToolbar";
 import { FundingChart } from "../components/charts/FundingChart";
 import { MarkOracleChart } from "../components/charts/MarkOracleChart";
 import { OIChart } from "../components/charts/OIChart";
@@ -22,19 +24,28 @@ import { TopHoldersChart } from "../components/charts/TopHoldersChart";
 import { TradeFlowChart } from "../components/charts/TradeFlowChart";
 import { CoinSelector } from "../components/common/CoinSelector";
 import { HoursSelector, type Hours } from "../components/common/HoursSelector";
-import { IntervalSelector, type Interval } from "../components/common/IntervalSelector";
+import { type Interval } from "../components/common/IntervalSelector";
 import { MetricCard } from "../components/common/MetricCard";
 import { PanelToggleBar } from "../components/common/PanelToggleBar";
 import { PanelWrapper } from "../components/common/PanelWrapper";
 import { SeverityFilterBar, type Severity } from "../components/common/SeverityFilterBar";
 import { StatusBanner } from "../components/common/StatusBanner";
-import { SymbolInfoBar } from "../components/common/SymbolInfoBar";
 import { AlertFeed } from "../components/common/AlertFeed";
 import { PageHeader } from "../components/layout/PageHeader";
 import { MarketSummaryTable } from "../components/market/MarketSummaryTable";
 import { TopHoldersTable } from "../components/market/TopHoldersTable";
 import { TopTradersTable } from "../components/market/TopTradersTable";
 import { formatUSD } from "../utils/format";
+import { useIndicator } from "../stores/indicatorStore";
+import {
+  computeSMA,
+  computeEMA,
+  computeVWAP,
+  SMA_7_COLOR,
+  SMA_20_COLOR,
+  EMA_50_COLOR,
+  VWAP_COLOR,
+} from "../utils/indicators";
 
 const ALL = "All";
 
@@ -249,6 +260,35 @@ export function MarketPage() {
     enabled: compare,
   });
 
+  // Indicator toggles
+  const showSMA7 = useIndicator("sma7");
+  const showSMA20 = useIndicator("sma20", true);
+  const showEMA50 = useIndicator("ema50");
+  const showVWAP = useIndicator("vwap");
+  const showOI = useIndicator("oi");
+  const showFunding = useIndicator("funding");
+
+  // OI/funding queries spanning the candle time window (for chart overlays).
+  // Only fetched when the corresponding indicator is enabled — on long intervals
+  // (e.g. 1d → 2160h) these are large series we shouldn't pull eagerly.
+  const { data: oiForChart = [] } = useQuery({
+    ...oiQuery(coin, candleHours),
+    enabled: coinMode && showOI,
+  });
+  const { data: fundingForChart = [] } = useQuery({
+    ...fundingQuery(coin, candleHours),
+    enabled: coinMode && showFunding,
+  });
+
+  const chartOverlays = useMemo<OverlayLine[]>(() => {
+    const lines: OverlayLine[] = [];
+    if (showSMA7) lines.push({ key: "sma7", data: computeSMA(candles, 7), color: SMA_7_COLOR });
+    if (showSMA20) lines.push({ key: "sma20", data: computeSMA(candles, 20), color: SMA_20_COLOR });
+    if (showEMA50) lines.push({ key: "ema50", data: computeEMA(candles, 50), color: EMA_50_COLOR });
+    if (showVWAP) lines.push({ key: "vwap", data: computeVWAP(candles), color: VWAP_COLOR });
+    return lines;
+  }, [candles, showSMA7, showSMA20, showEMA50, showVWAP]);
+
   const allCoins = useMemo(
     () => (coins.length > 0 ? [ALL, ...coins] : []),
     [coins]
@@ -289,20 +329,13 @@ export function MarketPage() {
           </div>
         )}
         {coinMode && (
-          <IntervalSelector value={interval} onChange={handleIntervalChange} />
-        )}
-        {coinMode && (
-          <HoursSelector value={hours} onChange={setHours} />
+          <HoursSelector
+            value={hours}
+            onChange={(h) => startTransition(() => setHours(h))}
+          />
         )}
         <PanelToggleBar panels={MARKET_PANELS} />
       </PageHeader>
-
-      {/* Symbol info bar */}
-      {coinMode && (
-        <div className="bg-hs-surface border border-hs-grid rounded-2xl px-4 py-1 mb-4">
-          <SymbolInfoBar coin={coin} />
-        </div>
-      )}
 
       <div className="flex flex-col lg:flex-row gap-4">
         {/* Main column */}
@@ -324,14 +357,25 @@ export function MarketPage() {
           {coinMode && (
             <>
               <PanelWrapper panelKey="candlestick">
-                <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
-                  <h2 className="text-hs-text font-medium mb-3">
-                    {coin} / {interval}
-                  </h2>
+                <div className="bg-black border border-[#1a1a1a] rounded-2xl overflow-hidden">
+                  <ChartHeader
+                    coin={coin}
+                    interval={interval}
+                    onIntervalChange={handleIntervalChange}
+                  />
+                  <ChartToolbar />
                   {candles.length > 0 ? (
-                    <CandlestickChart candles={candles} height={420} />
+                    <CandlestickChart
+                      candles={candles}
+                      height={460}
+                      overlays={chartOverlays}
+                      oiData={oiForChart}
+                      showOI={showOI}
+                      fundingData={fundingForChart}
+                      showFundingMarkers={showFunding}
+                    />
                   ) : (
-                    <p className="text-hs-grey text-sm py-8 text-center">
+                    <p className="text-gray-500 text-sm py-12 text-center">
                       No candle data for {coin} ({interval}).
                     </p>
                   )}

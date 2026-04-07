@@ -8,7 +8,7 @@
  *   - static lists (coins, whales): 30 s
  */
 
-import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
 import * as api from "./client";
 
 export const healthQuery = () =>
@@ -32,6 +32,7 @@ export const oiQuery = (coin: string, hours: number) =>
     queryFn: () => api.fetchOI(coin, hours),
     staleTime: 10_000,
     enabled: coin.length > 0,
+    placeholderData: keepPreviousData,
   });
 
 export const fundingQuery = (coin: string, hours: number) =>
@@ -40,6 +41,7 @@ export const fundingQuery = (coin: string, hours: number) =>
     queryFn: () => api.fetchFunding(coin, hours),
     staleTime: 10_000,
     enabled: coin.length > 0,
+    placeholderData: keepPreviousData,
   });
 
 export const latestOIQuery = () =>
@@ -80,6 +82,7 @@ export const topWhalesQuery = (coin: string, hours: number) =>
     queryFn: () => api.fetchTopWhales(coin, hours),
     staleTime: 10_000,
     enabled: coin.length > 0,
+    placeholderData: keepPreviousData,
   });
 
 export const topHoldersQuery = (coin: string, hours: number, limit: number) =>
@@ -88,6 +91,7 @@ export const topHoldersQuery = (coin: string, hours: number, limit: number) =>
     queryFn: () => api.fetchTopHolders(coin, hours, limit),
     staleTime: 10_000,
     enabled: coin.length > 0,
+    placeholderData: keepPreviousData,
   });
 
 export const tradeFlowQuery = (coin: string, hours: number) =>
@@ -96,6 +100,7 @@ export const tradeFlowQuery = (coin: string, hours: number) =>
     queryFn: () => api.fetchTradeFlow(coin, hours),
     staleTime: 10_000,
     enabled: coin.length > 0,
+    placeholderData: keepPreviousData,
   });
 
 export const candlesQuery = (coin: string, interval: string, hours: number) =>
@@ -104,6 +109,7 @@ export const candlesQuery = (coin: string, interval: string, hours: number) =>
     queryFn: () => api.fetchCandles(coin, interval, hours),
     staleTime: 30_000,
     enabled: coin.length > 0,
+    placeholderData: keepPreviousData,
   });
 
 export const whalesQuery = (limit: number) =>

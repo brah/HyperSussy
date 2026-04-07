@@ -3,7 +3,7 @@
  * lightweight-charts are NOT included in the initial bundle.
  */
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   candlesQuery,
@@ -19,7 +19,7 @@ import { ChartHeader } from "../components/charts/ChartHeader";
 import { ChartToolbar } from "../components/charts/ChartToolbar";
 import { FundingChart } from "../components/charts/FundingChart";
 import { MarkOracleChart } from "../components/charts/MarkOracleChart";
-import { OIChart } from "../components/charts/OIChart";
+import { OIChart, type OIMode } from "../components/charts/OIChart";
 import { TopHoldersChart } from "../components/charts/TopHoldersChart";
 import { TradeFlowChart } from "../components/charts/TradeFlowChart";
 import { EmptyState } from "../components/common/EmptyState";
@@ -62,6 +62,7 @@ interface CoinViewProps {
 }
 
 export default function CoinView({ coin, coin2s, interval, hours, onIntervalChange }: Readonly<CoinViewProps>) {
+  const [oiMode, setOiMode] = useState<OIMode>("pct");
   const candleHours = HOURS_FOR_INTERVAL[interval];
   // Clamp to MAX_COMPARE and filter out the primary coin.
   // Memoized so downstream useMemos can list it as a stable dependency.
@@ -156,9 +157,29 @@ export default function CoinView({ coin, coin2s, interval, hours, onIntervalChan
         {/* OI panel — only in compare mode; single-coin OI lives in the candle sub-pane */}
         {comparing && (
           <PanelWrapper panelKey="oi-chart">
-            <PanelCard title={`Open Interest — ${coin} vs ${compareCoins.join(", ")} — ${hours}h`}>
+            <PanelCard
+              title={`Open Interest — ${coin} vs ${compareCoins.join(", ")} — ${hours}h`}
+              action={
+                <div className="flex items-center gap-0.5">
+                  {(["pct", "usd"] as OIMode[]).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setOiMode(m)}
+                      className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
+                        oiMode === m
+                          ? "bg-hs-grid text-hs-text"
+                          : "text-hs-grey hover:text-hs-text"
+                      }`}
+                    >
+                      {m === "pct" ? "% chg" : "USD"}
+                    </button>
+                  ))}
+                </div>
+              }
+            >
               <OIChart
                 series={[{ data: oiData, label: coin }, ...compareOI]}
+                mode={oiMode}
                 height={200}
               />
             </PanelCard>

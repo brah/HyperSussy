@@ -2,6 +2,7 @@ import { memo } from "react";
 import { useWsStore } from "../../api/websocket";
 import { formatPrice, formatUSD, formatFundingRate } from "../../utils/format";
 import { INTERVAL_OPTIONS, type Interval } from "../common/IntervalSelector";
+import { WatchStar } from "../common/WatchStar";
 
 interface ChartHeaderProps {
   coin: string;
@@ -25,6 +26,7 @@ export const ChartHeader = memo(function ChartHeader({
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-xs font-mono border-b border-[#1a1a1a] bg-black">
       <div className="flex items-center gap-2">
         <span className="text-white font-semibold text-sm">{coin}USD</span>
+        <WatchStar kind="coin" id={coin} size="sm" />
         <span className="text-gray-500">·</span>
         <div className="flex items-center gap-0.5">
           {INTERVAL_OPTIONS.map((iv) => (

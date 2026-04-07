@@ -51,12 +51,13 @@ export function StatusBanner({ health, connected }: Readonly<StatusBannerProps>)
           View logs
         </button>
         {hasErrors && (
-          <span
-            className="rounded border border-hs-red/30 bg-hs-red/10 px-2 py-0.5 text-xs text-hs-red"
-            title="Active engine/runtime issues"
+          <button
+            onClick={() => setShowLogs(true)}
+            className="rounded border border-hs-red/30 bg-hs-red/10 px-2 py-0.5 text-xs text-hs-red transition-colors hover:bg-hs-red/20"
+            title="Active engine/runtime issues — click to open log viewer"
           >
             {errorCount} error(s)
-          </span>
+          </button>
         )}
       </div>
 

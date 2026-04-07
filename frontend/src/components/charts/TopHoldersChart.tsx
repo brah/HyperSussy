@@ -1,4 +1,5 @@
 import { memo, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   BarChart,
   Bar,
@@ -21,6 +22,7 @@ export const TopHoldersChart = memo(function TopHoldersChart({
   data,
   height = 260,
 }: Readonly<TopHoldersChartProps>) {
+  const navigate = useNavigate();
   const chartData = useMemo(
     () =>
       data.map((d) => ({
@@ -75,6 +77,12 @@ export const TopHoldersChart = memo(function TopHoldersChart({
           fill={colors.teal}
           isAnimationActive={false}
           radius={[0, 2, 2, 0]}
+          cursor="pointer"
+          onClick={(barPayload) => {
+            const addr = (barPayload as { payload?: { fullAddress?: string } })
+              .payload?.fullAddress;
+            if (addr) navigate(`/wallets/${addr}`);
+          }}
         />
       </BarChart>
     </ResponsiveContainer>

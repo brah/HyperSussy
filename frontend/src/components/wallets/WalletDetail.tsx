@@ -8,9 +8,11 @@ import {
 import { usePanelVisible } from "../../stores/panelStore";
 import { AlertFeed } from "../common/AlertFeed";
 import { EmptyState } from "../common/EmptyState";
+import { MetricCard } from "../common/MetricCard";
+import { WatchStar } from "../common/WatchStar";
 import { FillHistoryTable } from "./FillHistoryTable";
 import { PositionsTable } from "./PositionsTable";
-import { shortAddress, formatUSD } from "../../utils/format";
+import { shortAddress, formatPercent, formatUSD } from "../../utils/format";
 
 type Tab = "positions" | "fills" | "alerts";
 
@@ -80,6 +82,7 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
         <span className="text-hs-text font-semibold">
           {shortAddress(address)}
         </span>
+        <WatchStar kind="wallet" id={address} label={shortAddress(address)} />
         <span
           className="font-mono text-xs text-hs-grey break-all"
           title={address}
@@ -92,78 +95,66 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         {positions.length > 0 && (
           <>
-            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
-              <p className="text-hs-grey text-xs mb-1">Total Notional</p>
-              <p className="text-hs-text font-semibold tabular-nums">
-                {formatUSD(totalNotional)}
-              </p>
-            </div>
-            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
-              <p className="text-hs-grey text-xs mb-1">Direction Bias</p>
-              <div className="flex items-center gap-2">
-                <p
-                  className={`font-semibold ${
-                    bias === "LONG" ? "text-hs-teal" : "text-hs-red"
-                  }`}
-                >
-                  {bias}
-                </p>
-                <span className="text-xs text-hs-grey">
-                  <span className="text-hs-teal">{longPct.toFixed(0)}%</span>
-                  {" / "}
-                  <span className="text-hs-red">{shortPct.toFixed(0)}%</span>
-                </span>
-              </div>
-            </div>
-            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
-              <p className="text-hs-grey text-xs mb-1">Unrealized PnL</p>
-              <p
-                className={`font-semibold tabular-nums ${
-                  totalPnl >= 0 ? "text-hs-teal" : "text-hs-red"
-                }`}
-              >
-                {totalPnl >= 0 ? "+" : ""}
-                {formatUSD(totalPnl)}
-              </p>
-            </div>
+            <MetricCard
+              compact
+              label="Total Notional"
+              value={formatUSD(totalNotional)}
+              valueClassName="text-hs-text tabular-nums"
+            />
+            <MetricCard
+              compact
+              label="Direction Bias"
+              valueNode={
+                <div className="flex items-center gap-2">
+                  <p
+                    className={`font-semibold ${
+                      bias === "LONG" ? "text-hs-teal" : "text-hs-red"
+                    }`}
+                  >
+                    {bias}
+                  </p>
+                  <span className="text-xs text-hs-grey">
+                    <span className="text-hs-teal">{formatPercent(longPct, 0)}</span>
+                    {" / "}
+                    <span className="text-hs-red">{formatPercent(shortPct, 0)}</span>
+                  </span>
+                </div>
+              }
+            />
+            <MetricCard
+              compact
+              label="Unrealized PnL"
+              value={`${totalPnl >= 0 ? "+" : ""}${formatUSD(totalPnl)}`}
+              valueClassName={`tabular-nums ${
+                totalPnl >= 0 ? "text-hs-teal" : "text-hs-red"
+              }`}
+            />
           </>
         )}
         {pnlData != null && (
           <>
-            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
-              <p className="text-hs-grey text-xs mb-1">Realized PnL (7d)</p>
-              <p
-                className={`font-semibold tabular-nums ${
-                  pnlData.pnl_7d >= 0 ? "text-hs-teal" : "text-hs-red"
-                }`}
-              >
-                {pnlData.pnl_7d >= 0 ? "+" : ""}
-                {formatUSD(pnlData.pnl_7d)}
-              </p>
-              <p className="text-xs text-hs-grey mt-0.5">
-                {pnlData.is_complete_7d ? "" : "~"}
-                {pnlData.fills_7d.toLocaleString()} fill{pnlData.fills_7d !== 1 ? "s" : ""}
-                {pnlData.is_complete_7d ? "" : "+"}
-              </p>
-            </div>
-            <div className="bg-hs-surface border border-hs-grid rounded-2xl p-3">
-              <p className="text-hs-grey text-xs mb-1">
-                Realized PnL (All){pnlData.is_complete_all_time ? "" : "*"}
-              </p>
-              <p
-                className={`font-semibold tabular-nums ${
-                  pnlData.pnl_all_time >= 0 ? "text-hs-teal" : "text-hs-red"
-                }`}
-              >
-                {pnlData.pnl_all_time >= 0 ? "+" : ""}
-                {formatUSD(pnlData.pnl_all_time)}
-              </p>
-              <p className="text-xs text-hs-grey mt-0.5">
-                {pnlData.is_complete_all_time ? "" : "~"}
-                {pnlData.fills_all_time.toLocaleString()} fill{pnlData.fills_all_time !== 1 ? "s" : ""}
-                {pnlData.is_complete_all_time ? "" : "+"}
-              </p>
-            </div>
+            <MetricCard
+              compact
+              label="Realized PnL (7d)"
+              value={`${pnlData.pnl_7d >= 0 ? "+" : ""}${formatUSD(pnlData.pnl_7d)}`}
+              valueClassName={`tabular-nums ${
+                pnlData.pnl_7d >= 0 ? "text-hs-teal" : "text-hs-red"
+              }`}
+              sub={`${pnlData.is_complete_7d ? "" : "~"}${pnlData.fills_7d.toLocaleString()} fill${
+                pnlData.fills_7d !== 1 ? "s" : ""
+              }${pnlData.is_complete_7d ? "" : "+"}`}
+            />
+            <MetricCard
+              compact
+              label={`Realized PnL (All)${pnlData.is_complete_all_time ? "" : "*"}`}
+              value={`${pnlData.pnl_all_time >= 0 ? "+" : ""}${formatUSD(pnlData.pnl_all_time)}`}
+              valueClassName={`tabular-nums ${
+                pnlData.pnl_all_time >= 0 ? "text-hs-teal" : "text-hs-red"
+              }`}
+              sub={`${pnlData.is_complete_all_time ? "" : "~"}${pnlData.fills_all_time.toLocaleString()} fill${
+                pnlData.fills_all_time !== 1 ? "s" : ""
+              }${pnlData.is_complete_all_time ? "" : "+"}`}
+            />
           </>
         )}
       </div>

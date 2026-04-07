@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useWsStore } from "../../api/websocket";
-import { normalizeAddress } from "../../utils/format";
+import { normalizeAddress, shortAddress } from "../../utils/format";
+import { useWatchlistStore } from "../../stores/watchlistStore";
 
 const NAV = [
   { to: "/", label: "Market" },
@@ -11,6 +12,8 @@ const NAV = [
 export function Sidebar() {
   const connected = useWsStore((s) => s.connected);
   const health = useWsStore((s) => s.health);
+  const watchlist = useWatchlistStore((s) => s.items);
+  const removeWatched = useWatchlistStore((s) => s.remove);
   const [search, setSearch] = useState("");
   const navigate = useNavigate();
   const hasErrors =
@@ -50,7 +53,7 @@ export function Sidebar() {
         </span>
       </div>
 
-      <nav className="flex-1 space-y-1 p-3">
+      <nav className="space-y-1 p-3">
         {NAV.map(({ to, label }) => (
           <NavLink
             key={to}
@@ -68,6 +71,56 @@ export function Sidebar() {
           </NavLink>
         ))}
       </nav>
+
+      <div className="flex-1 min-h-0 overflow-y-auto border-t border-hs-grid px-3 py-3">
+        <div className="mb-2 flex items-center justify-between">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-hs-grey">
+            Watchlist
+          </span>
+          {watchlist.length > 0 && (
+            <span className="text-[10px] text-hs-grey">{watchlist.length}</span>
+          )}
+        </div>
+        {watchlist.length === 0 ? (
+          <p className="text-xs text-hs-grey/70 leading-snug">
+            Star a coin or wallet to pin it here.
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {watchlist.map((it) => {
+              const to =
+                it.kind === "coin" ? `/?coin=${it.id}` : `/wallets/${it.id}`;
+              const display =
+                it.kind === "coin"
+                  ? it.id
+                  : (it.label ?? shortAddress(it.id));
+              return (
+                <li
+                  key={`${it.kind}:${it.id}`}
+                  className="group flex items-center gap-1"
+                >
+                  <button
+                    onClick={() => navigate(to)}
+                    className="flex-1 flex items-center gap-2 rounded-md px-2 py-1 text-left text-xs text-hs-text transition-colors hover:bg-hs-mint/40"
+                  >
+                    <span className="inline-flex w-7 justify-center text-[9px] font-semibold uppercase tracking-wide text-hs-grey">
+                      {it.kind === "coin" ? "COIN" : "WAL"}
+                    </span>
+                    <span className="truncate font-mono">{display}</span>
+                  </button>
+                  <button
+                    onClick={() => removeWatched(it.kind, it.id)}
+                    title="Remove from watchlist"
+                    className="opacity-0 group-hover:opacity-100 px-1 text-xs text-hs-grey transition-opacity hover:text-hs-red"
+                  >
+                    ×
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
 
       <div className="border-t border-hs-grid p-3">
         <form onSubmit={handleSearch}>

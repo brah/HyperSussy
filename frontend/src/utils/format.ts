@@ -35,6 +35,16 @@ export function formatFundingRate(rate: number): string {
   return `${(rate * 100).toFixed(4)}%`;
 }
 
+/** Format a position size with fixed decimals. */
+export function formatSize(value: number, decimals = 4): string {
+  return value.toFixed(decimals);
+}
+
+/** Format a percentage value (already in 0-100 range) with a % suffix. */
+export function formatPercent(value: number, decimals = 2): string {
+  return `${value.toFixed(decimals)}%`;
+}
+
 /** Shorten a 0x address to prefix..suffix form (e.g. "0xab4f..ef35"). */
 export function shortAddress(address: string, chars = 4): string {
   if (address.length <= 2 + chars * 2) return address;

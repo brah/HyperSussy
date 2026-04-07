@@ -26,6 +26,8 @@ import { CoinSelector } from "../components/common/CoinSelector";
 import { HoursSelector, type Hours } from "../components/common/HoursSelector";
 import { type Interval } from "../components/common/IntervalSelector";
 import { MetricCard } from "../components/common/MetricCard";
+import { EmptyState } from "../components/common/EmptyState";
+import { PanelCard } from "../components/common/PanelCard";
 import { PanelToggleBar } from "../components/common/PanelToggleBar";
 import { PanelWrapper } from "../components/common/PanelWrapper";
 import { SeverityFilterBar, type Severity } from "../components/common/SeverityFilterBar";
@@ -99,6 +101,12 @@ const MetricSidebar = memo(function MetricSidebar() {
     };
   }, [snapshots]);
 
+  const scrollToAlerts = () => {
+    document
+      .getElementById("alert-feed-anchor")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div className="grid grid-cols-2 lg:grid-cols-1 gap-3">
       <MetricCard label="Assets Tracked" value={String(count)} />
@@ -108,6 +116,7 @@ const MetricSidebar = memo(function MetricSidebar() {
         label="Live Alerts"
         value={String(liveAlertCount)}
         valueClassName={liveAlertCount > 0 ? "text-hs-orange" : undefined}
+        onClick={scrollToAlerts}
       />
     </div>
   );
@@ -140,22 +149,22 @@ const AlertSidebar = memo(function AlertSidebar() {
   return (
     <>
       <PanelWrapper panelKey="alert-feed">
-        <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
-          <h2 className="text-hs-text font-medium mb-3">Live Alerts</h2>
-          <SeverityFilterBar
-            counts={severityCounts}
-            active={severityFilter}
-            onToggle={setSeverityFilter}
-          />
-          <AlertFeed alerts={displayAlerts} maxRows={20} />
+        <div id="alert-feed-anchor" className="scroll-mt-4">
+          <PanelCard title="Live Alerts">
+            <SeverityFilterBar
+              counts={severityCounts}
+              active={severityFilter}
+              onToggle={setSeverityFilter}
+            />
+            <AlertFeed alerts={displayAlerts} maxRows={20} />
+          </PanelCard>
         </div>
       </PanelWrapper>
 
       <PanelWrapper panelKey="alerts-engine" defaultVisible={false}>
-        <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
-          <h2 className="text-hs-text font-medium mb-3">Alerts by Engine</h2>
+        <PanelCard title="Alerts by Engine">
           <AlertsByEngineChart counts={alertCounts} height={180} />
-        </div>
+        </PanelCard>
       </PanelWrapper>
     </>
   );
@@ -384,10 +393,9 @@ export function MarketPage() {
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <PanelWrapper panelKey="oi-chart">
-                  <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
-                    <h2 className="text-hs-text font-medium mb-3">
-                      Open Interest{compare ? ` — ${coin} vs ${coin2}` : ""} — {hours}h
-                    </h2>
+                  <PanelCard
+                    title={`Open Interest${compare ? ` — ${coin} vs ${coin2}` : ""} — ${hours}h`}
+                  >
                     {oiData.length > 0 ? (
                       <OIChart
                         data={oiData}
@@ -397,18 +405,15 @@ export function MarketPage() {
                         label2={coin2 || undefined}
                       />
                     ) : (
-                      <p className="text-hs-grey text-sm py-6 text-center">
-                        No OI data.
-                      </p>
+                      <EmptyState message="No OI data." compact />
                     )}
-                  </div>
+                  </PanelCard>
                 </PanelWrapper>
 
                 <PanelWrapper panelKey="funding-chart">
-                  <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
-                    <h2 className="text-hs-text font-medium mb-3">
-                      Funding Rate{compare ? ` — ${coin} vs ${coin2}` : ""} — {hours}h
-                    </h2>
+                  <PanelCard
+                    title={`Funding Rate${compare ? ` — ${coin} vs ${coin2}` : ""} — ${hours}h`}
+                  >
                     {fundingData.length > 0 ? (
                       <FundingChart
                         data={fundingData}
@@ -418,53 +423,38 @@ export function MarketPage() {
                         label2={coin2 || undefined}
                       />
                     ) : (
-                      <p className="text-hs-grey text-sm py-6 text-center">
-                        No funding data.
-                      </p>
+                      <EmptyState message="No funding data." compact />
                     )}
-                  </div>
+                  </PanelCard>
                 </PanelWrapper>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <PanelWrapper panelKey="top-holders">
-                  <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
-                    <h2 className="text-hs-text font-medium mb-3">
-                      Top Holder Concentration — {hours}h
-                    </h2>
+                  <PanelCard title={`Top Holder Concentration — ${hours}h`}>
                     {topHolders.length > 0 ? (
                       <TopHoldersChart data={topHolders} />
                     ) : (
-                      <p className="text-hs-grey text-sm py-6 text-center">
-                        No data.
-                      </p>
+                      <EmptyState message="No data." compact />
                     )}
-                  </div>
+                  </PanelCard>
                 </PanelWrapper>
 
                 <PanelWrapper panelKey="trade-flow">
-                  <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
-                    <h2 className="text-hs-text font-medium mb-3">
-                      Trade Flow — {hours}h
-                    </h2>
+                  <PanelCard title={`Trade Flow — ${hours}h`}>
                     {tradeFlow.length > 0 ? (
                       <TradeFlowChart data={tradeFlow} />
                     ) : (
-                      <p className="text-hs-grey text-sm py-6 text-center">
-                        No data.
-                      </p>
+                      <EmptyState message="No data." compact />
                     )}
-                  </div>
+                  </PanelCard>
                 </PanelWrapper>
               </div>
 
               <PanelWrapper panelKey="mark-oracle" defaultVisible={false}>
-                <div className="bg-hs-surface border border-hs-grid rounded-2xl p-4">
-                  <h2 className="text-hs-text font-medium mb-3">
-                    Mark vs Oracle — {hours}h
-                  </h2>
+                <PanelCard title={`Mark vs Oracle — ${hours}h`}>
                   <MarkOracleChart data={fundingData} height={240} />
-                </div>
+                </PanelCard>
               </PanelWrapper>
 
               <PanelWrapper panelKey="top-holders-list">

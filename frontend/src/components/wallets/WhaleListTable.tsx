@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateWhalesQueries } from "../../api/cache";
 import { removeWhale } from "../../api/client";
@@ -8,10 +8,18 @@ import { EmptyState } from "../common/EmptyState";
 import { formatUSD } from "../../utils/format";
 import { timeAgo } from "../../utils/time";
 
+type SortKey = "volume" | "recent" | "address";
+
 interface WhaleListTableProps {
   selectedAddress: string | null;
   onSelect: (address: string) => void;
 }
+
+const SORT_OPTIONS: { key: SortKey; label: string }[] = [
+  { key: "volume", label: "Volume" },
+  { key: "recent", label: "Recent" },
+  { key: "address", label: "Address" },
+];
 
 /** Tracked whale addresses table with inline remove and row selection. */
 export function WhaleListTable({
@@ -19,8 +27,21 @@ export function WhaleListTable({
   onSelect,
 }: Readonly<WhaleListTableProps>) {
   const [removeError, setRemoveError] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("volume");
   const queryClient = useQueryClient();
   const { data: whales = [] } = useQuery(whalesQuery(200));
+
+  const sorted = useMemo(() => {
+    const list = [...whales];
+    if (sortKey === "volume") {
+      list.sort((a, b) => b.total_volume_usd - a.total_volume_usd);
+    } else if (sortKey === "recent") {
+      list.sort((a, b) => (b.last_active_ms ?? 0) - (a.last_active_ms ?? 0));
+    } else {
+      list.sort((a, b) => a.address.localeCompare(b.address));
+    }
+    return list;
+  }, [whales, sortKey]);
 
   const removeMutation = useMutation({
     mutationFn: (address: string) => removeWhale(address),
@@ -42,13 +63,29 @@ export function WhaleListTable({
 
   return (
     <div>
+      <div className="flex items-center gap-1 border-b border-hs-grid px-3 py-2">
+        <span className="text-xs text-hs-grey mr-1">Sort</span>
+        {SORT_OPTIONS.map((opt) => (
+          <button
+            key={opt.key}
+            onClick={() => setSortKey(opt.key)}
+            className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
+              sortKey === opt.key
+                ? "bg-hs-mint text-hs-green-dark border border-hs-green"
+                : "text-hs-grey border border-hs-grid hover:text-hs-text"
+            }`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
       {removeError && (
         <p className="border-b border-hs-grid bg-hs-bg px-4 py-2 text-sm text-hs-red">
           Failed to remove address: {removeError}
         </p>
       )}
       <div className="divide-y divide-hs-grid">
-        {whales.map((w) => {
+        {sorted.map((w) => {
           const isSelected = selectedAddress === w.address;
           return (
             <div

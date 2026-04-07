@@ -13,6 +13,7 @@ import sqlite3
 import time
 from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
+from functools import partial
 
 import requests
 from hyperliquid.utils.error import ClientError, ServerError
@@ -248,9 +249,7 @@ class Orchestrator:
                     for engine in self._engines:
                         await self._run_engine_call(
                             engine,
-                            lambda engine=engine, snapshot=snapshot: (
-                                engine.on_asset_update(snapshot)
-                            ),
+                            partial(engine.on_asset_update, snapshot),
                             "Error in on_asset_update (meta polling) for %s",
                             snapshot.coin,
                         )
@@ -280,9 +279,7 @@ class Orchestrator:
                 for engine in self._engines:
                     await self._run_engine_call(
                         engine,
-                        lambda engine=engine, snapshot=snapshot: engine.on_asset_update(
-                            snapshot
-                        ),
+                        partial(engine.on_asset_update, snapshot),
                         "Error in on_asset_update (asset ctx stream) for %s",
                         snapshot.coin,
                     )
@@ -298,7 +295,7 @@ class Orchestrator:
             for engine in self._engines:
                 await self._run_engine_call(
                     engine,
-                    lambda engine=engine, now_ms=now_ms: engine.tick(now_ms),
+                    partial(engine.tick, now_ms),
                     "Error in engine tick: %s",
                     engine.name,
                 )
@@ -472,8 +469,11 @@ class Orchestrator:
                     for engine in whale_engines:
                         await self._run_engine_call(
                             engine,
-                            lambda eng=engine, addr=address, pos=positions, ts=now_ms: (
-                                eng.on_position_update(addr, pos, ts)
+                            partial(
+                                engine.on_position_update,
+                                address,
+                                positions,
+                                now_ms,
                             ),
                             "Error in on_position_update for %s",
                             address,
@@ -504,7 +504,7 @@ class Orchestrator:
         for engine in self._engines:
             await self._run_engine_call(
                 engine,
-                lambda engine=engine, trade=trade: engine.on_trade(trade),
+                partial(engine.on_trade, trade),
                 "Error dispatching trade to engine %s",
                 engine.name,
             )

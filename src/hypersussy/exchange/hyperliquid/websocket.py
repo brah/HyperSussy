@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator
 from typing import Any
 
 import orjson
@@ -211,7 +211,7 @@ class HyperLiquidStream:
         subscriptions: list[dict[str, Any]],
         expected_channel: str,
         log_label: str,
-    ) -> AsyncIterator[dict[str, Any]]:
+    ) -> AsyncGenerator[dict[str, Any]]:
         """Yield messages for multiple subscriptions over one WS connection."""
         delay = _RECONNECT_DELAY_S
         while True:

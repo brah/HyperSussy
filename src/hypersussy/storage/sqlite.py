@@ -8,6 +8,7 @@ import logging
 import sqlite3
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from typing import Any
 
 import aiosqlite
 import orjson
@@ -127,10 +128,15 @@ class SqliteStorage:
         self,
         query: str,
         params: Sequence[object] = (),
-    ) -> list[Sequence[object]]:
-        """Execute a query and return all rows."""
+    ) -> list[Sequence[Any]]:
+        """Execute a query and return all rows.
+
+        Rows are typed with element type ``Any`` because SQLite columns are
+        dynamically typed: each cell may be int, float, str, bytes, or
+        None. Callers coerce to the expected scalar type.
+        """
         cursor = await self._conn.execute(query, params)
-        return await cursor.fetchall()
+        return list(await cursor.fetchall())
 
     async def _fetch_scalar(
         self,
@@ -141,11 +147,11 @@ class SqliteStorage:
     ) -> float:
         """Execute a scalar query and return the first value."""
         cursor = await self._conn.execute(query, params)
-        row = await cursor.fetchone()
+        row: Sequence[Any] | None = await cursor.fetchone()
         return float(row[0]) if row else default
 
     @staticmethod
-    def _asset_snapshot_from_row(row: Sequence[object]) -> AssetSnapshot:
+    def _asset_snapshot_from_row(row: Sequence[Any]) -> AssetSnapshot:
         """Hydrate an ``AssetSnapshot`` from a SQLite row tuple."""
         return AssetSnapshot(
             coin=str(row[0]),
@@ -161,7 +167,7 @@ class SqliteStorage:
         )
 
     @staticmethod
-    def _trade_from_row(row: Sequence[object]) -> Trade:
+    def _trade_from_row(row: Sequence[Any]) -> Trade:
         """Hydrate a ``Trade`` from a SQLite row tuple."""
         return Trade(
             tid=int(row[0]),
@@ -177,7 +183,7 @@ class SqliteStorage:
         )
 
     @staticmethod
-    def _position_from_row(row: Sequence[object]) -> Position:
+    def _position_from_row(row: Sequence[Any]) -> Position:
         """Hydrate a ``Position`` from a SQLite row tuple."""
         return Position(
             address=str(row[0]),
@@ -195,7 +201,7 @@ class SqliteStorage:
         )
 
     @staticmethod
-    def _alert_from_row(row: Sequence[object]) -> Alert:
+    def _alert_from_row(row: Sequence[Any]) -> Alert:
         """Hydrate an ``Alert`` from a SQLite row tuple."""
         return Alert(
             alert_id=str(row[0]),
@@ -210,7 +216,7 @@ class SqliteStorage:
         )
 
     @staticmethod
-    def _candle_from_row(row: Sequence[object]) -> CandleBar:
+    def _candle_from_row(row: Sequence[Any]) -> CandleBar:
         """Hydrate a ``CandleBar`` from a SQLite row tuple."""
         return CandleBar(
             coin=str(row[0]),

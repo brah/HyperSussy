@@ -156,34 +156,32 @@ export default function CoinView({ coin, coin2s, interval, hours, onIntervalChan
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* OI panel — only in compare mode; single-coin OI lives in the candle sub-pane */}
         {comparing && (
-          <PanelWrapper panelKey="oi-chart">
-            <PanelCard
-              title={`Open Interest — ${coin} vs ${compareCoins.join(", ")} — ${hours}h`}
-              action={
-                <div className="flex items-center gap-0.5">
-                  {(["pct", "usd"] as OIMode[]).map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setOiMode(m)}
-                      className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
-                        oiMode === m
-                          ? "bg-hs-grid text-hs-text"
-                          : "text-hs-grey hover:text-hs-text"
-                      }`}
-                    >
-                      {m === "pct" ? "% chg" : "USD"}
-                    </button>
-                  ))}
-                </div>
-              }
-            >
-              <OIChart
-                series={[{ data: oiData, label: coin }, ...compareOI]}
-                mode={oiMode}
-                height={200}
-              />
-            </PanelCard>
-          </PanelWrapper>
+          <PanelCard
+            title={`Open Interest — ${coin} vs ${compareCoins.join(", ")} — ${hours}h`}
+            action={
+              <div className="flex items-center gap-0.5">
+                {(["pct", "usd"] as OIMode[]).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setOiMode(m)}
+                    className={`px-2 py-0.5 rounded text-[11px] font-mono transition-colors ${
+                      oiMode === m
+                        ? "bg-hs-grid text-hs-text"
+                        : "text-hs-grey hover:text-hs-text"
+                    }`}
+                  >
+                    {m === "pct" ? "% chg" : "USD"}
+                  </button>
+                ))}
+              </div>
+            }
+          >
+            <OIChart
+              series={[{ data: oiData, label: coin }, ...compareOI]}
+              mode={oiMode}
+              height={200}
+            />
+          </PanelCard>
         )}
 
         <PanelWrapper panelKey="funding-chart">

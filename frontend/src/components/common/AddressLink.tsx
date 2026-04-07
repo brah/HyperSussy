@@ -13,7 +13,7 @@ export const AddressLink = memo(function AddressLink({ address, label, chars = 4
   return (
     <Link
       to={`/wallets/${address}`}
-      className="text-hs-green-dark hover:underline font-mono text-sm"
+      className="text-hs-green hover:underline font-mono text-sm"
       title={address}
     >
       {display}

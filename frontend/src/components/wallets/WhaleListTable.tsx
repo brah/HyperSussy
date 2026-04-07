@@ -71,7 +71,7 @@ export function WhaleListTable({
             onClick={() => setSortKey(opt.key)}
             className={`px-2 py-0.5 rounded-full text-xs font-medium transition-colors ${
               sortKey === opt.key
-                ? "bg-hs-mint text-hs-green-dark border border-hs-green"
+                ? "bg-hs-mint text-hs-green border border-hs-green"
                 : "text-hs-grey border border-hs-grid hover:text-hs-text"
             }`}
           >

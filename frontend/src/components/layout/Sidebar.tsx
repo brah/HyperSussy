@@ -46,7 +46,7 @@ export function Sidebar() {
     : "Stopped";
 
   return (
-    <aside className="sticky top-0 flex h-screen w-52 shrink-0 flex-col border-r border-hs-grid bg-white">
+    <aside className="sticky top-0 flex h-screen w-52 shrink-0 flex-col border-r border-hs-grid bg-hs-bg">
       <div className="border-b border-hs-grid p-4">
         <span className="text-lg font-black tracking-tight text-hs-text">
           HyperSussy
@@ -62,8 +62,8 @@ export function Sidebar() {
             className={({ isActive }) =>
               `block rounded-full px-4 py-2 text-sm transition-all wise-interactive ${
                 isActive
-                  ? "bg-hs-mint text-hs-green-dark font-semibold"
-                  : "text-hs-grey hover:bg-[rgba(211,242,192,0.4)] hover:text-hs-text"
+                  ? "bg-hs-mint text-hs-green font-semibold"
+                  : "text-hs-grey hover:bg-hs-mint/50 hover:text-hs-text"
               }`
             }
           >

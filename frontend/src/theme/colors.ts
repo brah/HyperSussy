@@ -1,32 +1,32 @@
-/** Design token palette — Wise design system. */
+/** Design token palette — dark theme matching the candlestick chart aesthetic. */
 
 export const colors = {
-  bg: "#ffffff",
-  surface: "#f8faf6",
+  bg: "#0a0a0a",
+  surface: "#141414",
   green: "#9fe870",
   greenDark: "#163300",
-  teal: "#054d28",
-  red: "#d03238",
-  orange: "#c65102",
-  grid: "#e0e2dc",
-  grey: "#868685",
-  text: "#0e0f0c",
-  mint: "#e2f6d5",
-  secondary: "#454745",
+  teal: "#26a69a",
+  red: "#ef5350",
+  orange: "#f97316",
+  grid: "#262626",
+  grey: "#6b7280",
+  text: "#e5e7eb",
+  mint: "#1e3a1e",
+  secondary: "#9ca3af",
 } as const;
 
 export type ColorKey = keyof typeof colors;
 
 /** Ordered palette for multi-coin comparison series (primary first). */
 export const compareColors = [
-  "#054d28", // teal   — primary
-  "#c65102", // orange — compare 1
-  "#d03238", // red    — compare 2
-  "#1d4ed8", // blue   — compare 3
-  "#7c3aed", // violet — compare 4
+  "#26a69a", // teal   — primary
+  "#f97316", // orange — compare 1
+  "#ef5350", // red    — compare 2
+  "#3b82f6", // blue   — compare 3
+  "#a78bfa", // violet — compare 4
 ] as const;
 
-/** Map alert severity to a CSS color value (WCAG-safe on white). */
+/** Map alert severity to a CSS color value. */
 export function severityColor(severity: string): string {
   switch (severity) {
     case "critical":
@@ -34,7 +34,7 @@ export function severityColor(severity: string): string {
     case "high":
       return colors.orange;
     case "medium":
-      return "#946800";
+      return "#eab308";
     default:
       return colors.grey;
   }

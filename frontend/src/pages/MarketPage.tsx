@@ -30,8 +30,6 @@ import { formatUSD } from "../utils/format";
 // excluded from the initial bundle and only fetched when a coin is selected.
 const CoinView = lazy(() => import("./CoinView"));
 
-const ALL = "All";
-
 const MARKET_PANELS = [
   { key: "metric-cards", label: "Metrics" },
   { key: "market-table", label: "Table" },
@@ -181,7 +179,7 @@ export function MarketPage() {
   const handleCoinChange = (c: string) => {
     startTransition(() => {
       const next: Record<string, string> = {};
-      if (c && c !== ALL) {
+      if (c) {
         next.coin = c;
         next.interval = interval;
         const kept = coin2s.filter((x) => x !== c);
@@ -220,19 +218,13 @@ export function MarketPage() {
 
   const { data: coins = [] } = useQuery(coinsQuery());
 
-  const allCoins = useMemo(
-    () => (coins.length > 0 ? [ALL, ...coins] : []),
-    [coins]
-  );
-  const coinSelectorValue = coin || ALL;
-
   return (
     <div>
       <PageHeader title="Market">
         <StatusInfo />
         <CoinSelector
-          coins={allCoins}
-          value={coinSelectorValue}
+          coins={coins}
+          value={coin}
           onChange={handleCoinChange}
         />
         {coinMode && (

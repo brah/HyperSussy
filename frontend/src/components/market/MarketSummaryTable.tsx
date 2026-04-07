@@ -115,7 +115,7 @@ export function MarketSummaryTable({
               className="border-b border-hs-grid hover:bg-hs-mint/50
                 cursor-pointer"
             >
-              <td className="py-2 px-3 text-hs-green-dark font-medium">
+              <td className="py-2 px-3 text-hs-green font-medium">
                 {snap.coin}
               </td>
               <td className="py-2 px-3 text-hs-text tabular-nums">

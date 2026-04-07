@@ -25,7 +25,7 @@ const TogglePill = memo(function TogglePill({
       onClick={() => toggle(panelKey, defaultVisible)}
       className={`px-2.5 py-1 rounded-full text-xs font-medium transition-all wise-interactive ${
         visible
-          ? "bg-hs-mint text-hs-green-dark border border-hs-green"
+          ? "bg-hs-mint text-hs-green border border-hs-green"
           : "bg-hs-surface text-hs-grey border border-hs-grid hover:text-hs-text"
       }`}
     >

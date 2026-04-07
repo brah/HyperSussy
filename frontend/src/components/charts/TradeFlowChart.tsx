@@ -67,11 +67,11 @@ export const TradeFlowChart = memo(function TradeFlowChart({
             width={72}
           />
           <Tooltip
-            formatter={(v: number, name: string) => [
-              formatUSD(v),
-              name === "buy" ? "Buy Volume" : "Sell Volume",
+            formatter={(v, name) => [
+              formatUSD(v as number),
+              (name as string) === "buy" ? "Buy Volume" : "Sell Volume",
             ]}
-            labelFormatter={(ms: number) => fmtTime(ms)}
+            labelFormatter={(label) => fmtTime(label as number)}
             contentStyle={{
               background: colors.bg,
               border: `1px solid ${colors.grid}`,

@@ -80,8 +80,8 @@ export const OIChart = memo(function OIChart({
               width={60}
             />
             <Tooltip
-              formatter={(v: number, name: string) => [`${v.toFixed(2)}%`, name]}
-              labelFormatter={(ms: number) => fmtTime(ms)}
+              formatter={(v, name) => [`${(v as number).toFixed(2)}%`, name as string]}
+              labelFormatter={(label) => fmtTime(label as number)}
               contentStyle={{
                 background: colors.bg,
                 border: `1px solid ${colors.grid}`,
@@ -157,8 +157,8 @@ export const OIChart = memo(function OIChart({
             width={72}
           />
           <Tooltip
-            formatter={(v: number, name: string) => [formatUSD(v), name]}
-            labelFormatter={(ms: number) => fmtTime(ms)}
+            formatter={(v, name) => [formatUSD(v as number), name as string]}
+            labelFormatter={(label) => fmtTime(label as number)}
             contentStyle={{
               background: colors.bg,
               border: `1px solid ${colors.grid}`,

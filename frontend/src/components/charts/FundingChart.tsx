@@ -7,7 +7,6 @@ import {
   YAxis,
   CartesianGrid,
   Tooltip,
-  Cell,
   ReferenceLine,
   Legend,
 } from "recharts";
@@ -26,6 +25,23 @@ interface FundingChartProps {
   label2?: string;
 }
 
+/**
+ * Bar shape that colours each bar by the sign of its funding_rate value.
+ * Replaces the deprecated Cell child pattern from recharts v2.
+ */
+function FundingBar(props: Record<string, unknown>) {
+  const { x, y, width, height, value } = props as {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    value: number;
+  };
+  if (!width || !height) return null;
+  const fill = value >= 0 ? colors.teal : colors.red;
+  return <rect x={x} y={y} width={Math.max(0, width)} height={Math.max(0, height)} fill={fill} />;
+}
+
 export const FundingChart = memo(function FundingChart({
   data,
   height = 220,
@@ -35,11 +51,6 @@ export const FundingChart = memo(function FundingChart({
 }: Readonly<FundingChartProps>) {
   const [containerRef, width] = useContainerWidth();
   const comparing = data2 != null && data2.length > 0;
-
-  const cellColors = useMemo(
-    () => data.map((d) => (d.funding_rate >= 0 ? colors.teal : colors.red)),
-    [data],
-  );
 
   const merged = useMemo(() => {
     if (!comparing || data2 == null) return data;
@@ -81,8 +92,8 @@ export const FundingChart = memo(function FundingChart({
             />
           )}
           <Tooltip
-            formatter={(v: number, name: string) => [formatFundingRate(v), name]}
-            labelFormatter={(ms: number) => fmtTime(ms)}
+            formatter={(v, name) => [formatFundingRate(v as number), name as string]}
+            labelFormatter={(label) => fmtTime(label as number)}
             contentStyle={{
               background: colors.bg,
               border: `1px solid ${colors.grid}`,
@@ -99,11 +110,13 @@ export const FundingChart = memo(function FundingChart({
             />
           )}
           <ReferenceLine yAxisId="rate" y={0} stroke={colors.grey} strokeDasharray="3 3" />
-          <Bar yAxisId="rate" dataKey="funding_rate" name={label1 ?? "Funding Rate"} isAnimationActive={false}>
-            {cellColors.map((fill, idx) => (
-              <Cell key={data[idx].timestamp_ms} fill={fill} />
-            ))}
-          </Bar>
+          <Bar
+            yAxisId="rate"
+            dataKey="funding_rate"
+            name={label1 ?? "Funding Rate"}
+            isAnimationActive={false}
+            shape={<FundingBar />}
+          />
           {comparing ? (
             <Line
               yAxisId="rate"

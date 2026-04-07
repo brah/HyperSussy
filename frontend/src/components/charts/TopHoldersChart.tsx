@@ -64,11 +64,11 @@ export const TopHoldersChart = memo(function TopHoldersChart({
             width={68}
           />
           <Tooltip
-            formatter={(v: number, _name: string, item) => [
-              `${formatUSD(v)} (${item.payload.pct}%)`,
+            formatter={(v, _name, item) => [
+              `${formatUSD(v as number)} (${(item.payload as { pct: string }).pct}%)`,
               "Volume",
             ]}
-            labelFormatter={(addr: string) => addr}
+            labelFormatter={(label) => label as string}
             contentStyle={{
               background: colors.bg,
               border: `1px solid ${colors.grid}`,

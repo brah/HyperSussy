@@ -67,11 +67,11 @@ export const MarkOracleChart = memo(function MarkOracleChart({
             domain={["auto", "auto"]}
           />
           <Tooltip
-            formatter={(v: number, name: string) => [
-              formatPrice(v),
-              name === "mark" ? "Mark" : "Oracle",
+            formatter={(v, name) => [
+              formatPrice(v as number),
+              (name as string) === "mark" ? "Mark" : "Oracle",
             ]}
-            labelFormatter={(ms: number) => fmtTime(ms)}
+            labelFormatter={(label) => fmtTime(label as number)}
             contentStyle={{
               background: colors.bg,
               border: `1px solid ${colors.grid}`,

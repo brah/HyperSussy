@@ -1,16 +1,8 @@
-import { memo, useMemo } from "react";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-} from "recharts";
+import { memo, useEffect, useMemo } from "react";
+import { HistogramSeries, createChart, type Time } from "lightweight-charts";
 import type { TradeFlowItem } from "../../api/types";
 import { colors } from "../../theme/colors";
-import { fmtTime } from "../../utils/time";
+import { lwcChartOptions, msToSec } from "../../theme/chartDefaults";
 import { formatUSD } from "../../utils/format";
 import { useContainerWidth } from "../../hooks/useContainerWidth";
 
@@ -36,6 +28,17 @@ function pivotFlow(data: TradeFlowItem[]): BucketRow[] {
   return [...byBucket.values()].sort((a, b) => a.bucket - b.bucket);
 }
 
+const volFormat = {
+  type: "custom" as const,
+  formatter: (v: number) => formatUSD(Math.abs(v)),
+  minMove: 0.01,
+};
+
+/**
+ * Buy vs sell volume per time bucket.
+ * Buy bars rise above zero (teal), sell bars fall below (red).
+ * This matches the convention used by professional trading terminals.
+ */
 export const TradeFlowChart = memo(function TradeFlowChart({
   data,
   height = 220,
@@ -43,51 +46,36 @@ export const TradeFlowChart = memo(function TradeFlowChart({
   const [containerRef, width] = useContainerWidth();
   const pivoted = useMemo(() => pivotFlow(data), [data]);
 
-  return (
-    <div ref={containerRef} style={{ width: "100%", height }}>
-      {width > 0 && (
-        <BarChart
-          width={width}
-          height={height}
-          data={pivoted}
-          margin={{ top: 4, right: 16, bottom: 0, left: 8 }}
-        >
-          <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
-          <XAxis
-            dataKey="bucket"
-            tickFormatter={(v: number) => fmtTime(v)}
-            stroke={colors.grey}
-            tick={{ fill: colors.grey, fontSize: 11 }}
-            minTickGap={60}
-          />
-          <YAxis
-            tickFormatter={(v: number) => formatUSD(v)}
-            stroke={colors.grey}
-            tick={{ fill: colors.grey, fontSize: 11 }}
-            width={72}
-          />
-          <Tooltip
-            formatter={(v, name) => [
-              formatUSD(v as number),
-              (name as string) === "buy" ? "Buy Volume" : "Sell Volume",
-            ]}
-            labelFormatter={(label) => fmtTime(label as number)}
-            contentStyle={{
-              background: colors.bg,
-              border: `1px solid ${colors.grid}`,
-              boxShadow: "rgba(14,15,12,0.12) 0px 0px 0px 1px",
-              color: colors.text,
-              fontSize: 12,
-            }}
-          />
-          <Legend
-            wrapperStyle={{ fontSize: 12, color: colors.grey }}
-            formatter={(value: string) => (value === "buy" ? "Buy" : "Sell")}
-          />
-          <Bar dataKey="buy" fill={colors.teal} isAnimationActive={false} />
-          <Bar dataKey="sell" fill={colors.red} isAnimationActive={false} />
-        </BarChart>
-      )}
-    </div>
-  );
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || width === 0 || pivoted.length === 0) return;
+
+    const chart = createChart(el, {
+      ...lwcChartOptions(width, height),
+      leftPriceScale: { borderColor: colors.grid, visible: false },
+    });
+
+    // Buy: positive bars (teal)
+    chart.addSeries(HistogramSeries, {
+      color: colors.teal,
+      priceFormat: volFormat,
+      title: "Buy",
+    }).setData(
+      pivoted.map((b) => ({ time: msToSec(b.bucket) as Time, value: b.buy })),
+    );
+
+    // Sell: negative bars (red) — visually mirror below zero
+    chart.addSeries(HistogramSeries, {
+      color: colors.red,
+      priceFormat: volFormat,
+      title: "Sell",
+    }).setData(
+      pivoted.map((b) => ({ time: msToSec(b.bucket) as Time, value: -b.sell })),
+    );
+
+    chart.timeScale().fitContent();
+    return () => chart.remove();
+  }, [width, height, pivoted]);
+
+  return <div ref={containerRef} style={{ width: "100%", height }} />;
 });

@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { memo, useMemo } from "react";
 import { useWsStore } from "../../api/websocket";
 import { AddressLink } from "../common/AddressLink";
 import { DataTable, type Column } from "../common/DataTable";
@@ -24,12 +24,14 @@ function formatLeverage(value: number | null, type: string | null): string {
 }
 
 /** Top open positions across all tracked wallets for a given coin. */
-export function TopHoldersTable({
+export const TopHoldersTable = memo(function TopHoldersTable({
   coin,
   positions,
 }: Readonly<TopHoldersTableProps>) {
-  const snapshots = useWsStore((s) => s.snapshots);
-  const coinOI = snapshots[coin]?.open_interest_usd ?? 0;
+  // Subscribe to the single value needed rather than the whole snapshots dict.
+  // The dict reference changes on every WS flush (2/sec); subscribing broadly
+  // would cause a full DataTable re-render on every push.
+  const coinOI = useWsStore((s) => s.snapshots[coin]?.open_interest_usd ?? 0);
 
   const columns = useMemo<Column<CoinPositionItem>[]>(
     () => [
@@ -152,4 +154,4 @@ export function TopHoldersTable({
       )}
     </PanelCard>
   );
-}
+});

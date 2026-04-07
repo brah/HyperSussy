@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Link } from "react-router-dom";
 import type { AlertItem, AlertSummaryItem } from "../../api/types";
 import { AddressLink } from "./AddressLink";
@@ -15,7 +16,7 @@ function isAlertItem(a: AnyAlert): a is AlertItem {
   return "alert_id" in a;
 }
 
-export function AlertFeed({ alerts, maxRows = 50 }: Readonly<AlertFeedProps>) {
+export const AlertFeed = memo(function AlertFeed({ alerts, maxRows = 50 }: Readonly<AlertFeedProps>) {
   const displayed = alerts.slice(0, maxRows);
   if (displayed.length === 0) {
     return (
@@ -61,4 +62,4 @@ export function AlertFeed({ alerts, maxRows = 50 }: Readonly<AlertFeedProps>) {
       ))}
     </div>
   );
-}
+});

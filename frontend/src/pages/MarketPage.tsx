@@ -1,33 +1,21 @@
-import { memo, startTransition, useMemo, useState } from "react";
+import { lazy, memo, startTransition, Suspense, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { useShallow } from "zustand/react/shallow";
 import {
   alertCountsQuery,
-  candlesQuery,
   coinsQuery,
-  fundingQuery,
-  oiQuery,
-  topCoinPositionsQuery,
-  topHoldersQuery,
-  topWhalesQuery,
-  tradeFlowQuery,
 } from "../api/queries";
 import { useWsStore } from "../api/websocket";
-import { AlertsByEngineChart } from "../components/charts/AlertsByEngineChart";
-import { CandlestickChart, type OverlayLine } from "../components/charts/CandlestickChart";
-import { ChartHeader } from "../components/charts/ChartHeader";
-import { ChartToolbar } from "../components/charts/ChartToolbar";
-import { FundingChart } from "../components/charts/FundingChart";
-import { MarkOracleChart } from "../components/charts/MarkOracleChart";
-import { OIChart } from "../components/charts/OIChart";
-import { TopHoldersChart } from "../components/charts/TopHoldersChart";
-import { TradeFlowChart } from "../components/charts/TradeFlowChart";
+const AlertsByEngineChart = lazy(() =>
+  import("../components/charts/AlertsByEngineChart").then((m) => ({
+    default: m.AlertsByEngineChart,
+  })),
+);
 import { CoinSelector } from "../components/common/CoinSelector";
 import { HoursSelector, type Hours } from "../components/common/HoursSelector";
 import { type Interval } from "../components/common/IntervalSelector";
 import { MetricCard } from "../components/common/MetricCard";
-import { EmptyState } from "../components/common/EmptyState";
 import { PanelCard } from "../components/common/PanelCard";
 import { PanelToggleBar } from "../components/common/PanelToggleBar";
 import { PanelWrapper } from "../components/common/PanelWrapper";
@@ -37,30 +25,13 @@ import { StatusBanner } from "../components/common/StatusBanner";
 import { AlertFeed } from "../components/common/AlertFeed";
 import { PageHeader } from "../components/layout/PageHeader";
 import { MarketSummaryTable } from "../components/market/MarketSummaryTable";
-import { TopHoldersTable } from "../components/market/TopHoldersTable";
-import { TopTradersTable } from "../components/market/TopTradersTable";
 import { formatUSD } from "../utils/format";
-import { useIndicator } from "../stores/indicatorStore";
-import {
-  computeSMA,
-  computeEMA,
-  computeVWAP,
-  SMA_7_COLOR,
-  SMA_20_COLOR,
-  EMA_50_COLOR,
-  VWAP_COLOR,
-} from "../utils/indicators";
+
+// CoinView contains recharts + lightweight-charts — lazy-load so they are
+// excluded from the initial bundle and only fetched when a coin is selected.
+const CoinView = lazy(() => import("./CoinView"));
 
 const ALL = "All";
-
-const HOURS_FOR_INTERVAL: Record<Interval, number> = {
-  "1m": 12,
-  "5m": 48,
-  "15m": 72,
-  "1h": 168,
-  "4h": 504,
-  "1d": 2160,
-};
 
 const MARKET_PANELS = [
   { key: "metric-cards", label: "Metrics" },
@@ -78,7 +49,7 @@ const MARKET_PANELS = [
 ];
 
 function parseIntervalParam(value: string | null): Interval {
-  if (value && value in HOURS_FOR_INTERVAL) {
+  if (value && value in { "1m": 1, "5m": 1, "15m": 1, "1h": 1, "4h": 1, "1d": 1 }) {
     return value as Interval;
   }
   return "1h";
@@ -175,7 +146,9 @@ const AlertSidebar = memo(function AlertSidebar() {
 
       <PanelWrapper panelKey="alerts-engine" defaultVisible={false}>
         <PanelCard title="Alerts by Engine">
-          <AlertsByEngineChart counts={alertCounts} height={180} />
+          <Suspense fallback={null}>
+            <AlertsByEngineChart counts={alertCounts} height={180} />
+          </Suspense>
         </PanelCard>
       </PanelWrapper>
     </>
@@ -241,78 +214,7 @@ export function MarketPage() {
     });
   };
 
-  const candleHours = HOURS_FOR_INTERVAL[interval];
-
-  // --- Data queries (only active in coin mode) ---
   const { data: coins = [] } = useQuery(coinsQuery());
-
-  const { data: candles = [] } = useQuery({
-    ...candlesQuery(coin, interval, candleHours),
-    enabled: coinMode,
-  });
-  const { data: oiData = [] } = useQuery({
-    ...oiQuery(coin, hours),
-    enabled: coinMode,
-  });
-  const { data: fundingData = [] } = useQuery({
-    ...fundingQuery(coin, hours),
-    enabled: coinMode,
-  });
-  const { data: topHolders = [] } = useQuery({
-    ...topHoldersQuery(coin, hours, 15),
-    enabled: coinMode,
-  });
-  const { data: topCoinPositions = [] } = useQuery({
-    ...topCoinPositionsQuery(coin, 25),
-    enabled: coinMode,
-  });
-  const { data: tradeFlow = [] } = useQuery({
-    ...tradeFlowQuery(coin, hours),
-    enabled: coinMode,
-  });
-  const { data: topWhales = [] } = useQuery({
-    ...topWhalesQuery(coin, hours),
-    enabled: coinMode,
-  });
-
-  const compare = coinMode && coin2 !== "" && coin2 !== coin;
-  const { data: oiData2 = [] } = useQuery({
-    ...oiQuery(coin2, hours),
-    enabled: compare,
-  });
-  const { data: fundingData2 = [] } = useQuery({
-    ...fundingQuery(coin2, hours),
-    enabled: compare,
-  });
-
-  // Indicator toggles
-  const showSMA7 = useIndicator("sma7");
-  const showSMA20 = useIndicator("sma20", true);
-  const showEMA50 = useIndicator("ema50");
-  const showVWAP = useIndicator("vwap");
-  const showOI = useIndicator("oi");
-  const showFunding = useIndicator("funding");
-
-  // OI/funding queries spanning the candle time window (for chart overlays).
-  // Only fetched when the corresponding indicator is enabled — on long intervals
-  // (e.g. 1d → 2160h) these are large series we shouldn't pull eagerly.
-  const { data: oiForChart = [] } = useQuery({
-    ...oiQuery(coin, candleHours),
-    enabled: coinMode && showOI,
-  });
-  const { data: fundingForChart = [] } = useQuery({
-    ...fundingQuery(coin, candleHours),
-    enabled: coinMode && showFunding,
-  });
-
-  const chartOverlays = useMemo<OverlayLine[]>(() => {
-    const lines: OverlayLine[] = [];
-    if (showSMA7) lines.push({ key: "sma7", data: computeSMA(candles, 7), color: SMA_7_COLOR });
-    if (showSMA20) lines.push({ key: "sma20", data: computeSMA(candles, 20), color: SMA_20_COLOR });
-    if (showEMA50) lines.push({ key: "ema50", data: computeEMA(candles, 50), color: EMA_50_COLOR });
-    if (showVWAP) lines.push({ key: "vwap", data: computeVWAP(candles), color: VWAP_COLOR });
-    return lines;
-  }, [candles, showSMA7, showSMA20, showEMA50, showVWAP]);
 
   const allCoins = useMemo(
     () => (coins.length > 0 ? [ALL, ...coins] : []),
@@ -378,116 +280,23 @@ export function MarketPage() {
             </PanelWrapper>
           )}
 
-          {/* Analytics mode: charts */}
+          {/* Analytics mode: coin charts — lazy-loaded chunk */}
           {coinMode && (
-            <>
-              <PanelWrapper panelKey="candlestick">
-                <div className="bg-black border border-[#1a1a1a] rounded-2xl overflow-hidden">
-                  <ChartHeader
-                    coin={coin}
-                    interval={interval}
-                    onIntervalChange={handleIntervalChange}
-                  />
-                  <ChartToolbar />
-                  {candles.length > 0 ? (
-                    <CandlestickChart
-                      candles={candles}
-                      height={460}
-                      overlays={chartOverlays}
-                      oiData={oiForChart}
-                      showOI={showOI}
-                      fundingData={fundingForChart}
-                      showFundingMarkers={showFunding}
-                    />
-                  ) : (
-                    <p className="text-gray-500 text-sm py-12 text-center">
-                      No candle data for {coin} ({interval}).
-                    </p>
-                  )}
+            <Suspense
+              fallback={
+                <div className="flex items-center justify-center py-24 text-hs-grey text-sm">
+                  Loading charts…
                 </div>
-              </PanelWrapper>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <PanelWrapper panelKey="oi-chart">
-                  <PanelCard
-                    title={`Open Interest${compare ? ` — ${coin} vs ${coin2}` : ""} — ${hours}h`}
-                  >
-                    {oiData.length > 0 ? (
-                      <OIChart
-                        data={oiData}
-                        height={200}
-                        label1={coin}
-                        data2={compare ? oiData2 : undefined}
-                        label2={coin2 || undefined}
-                      />
-                    ) : (
-                      <EmptyState message="No OI data." compact />
-                    )}
-                  </PanelCard>
-                </PanelWrapper>
-
-                <PanelWrapper panelKey="funding-chart">
-                  <PanelCard
-                    title={`Funding Rate${compare ? ` — ${coin} vs ${coin2}` : ""} — ${hours}h`}
-                  >
-                    {fundingData.length > 0 ? (
-                      <FundingChart
-                        data={fundingData}
-                        height={200}
-                        label1={coin}
-                        data2={compare ? fundingData2 : undefined}
-                        label2={coin2 || undefined}
-                      />
-                    ) : (
-                      <EmptyState message="No funding data." compact />
-                    )}
-                  </PanelCard>
-                </PanelWrapper>
-              </div>
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                <PanelWrapper panelKey="top-holders">
-                  <PanelCard title={`Top Holder Concentration — ${hours}h`}>
-                    {topHolders.length > 0 ? (
-                      <TopHoldersChart data={topHolders} />
-                    ) : (
-                      <EmptyState message="No data." compact />
-                    )}
-                  </PanelCard>
-                </PanelWrapper>
-
-                <PanelWrapper panelKey="trade-flow">
-                  <PanelCard title={`Trade Flow — ${hours}h`}>
-                    {tradeFlow.length > 0 ? (
-                      <TradeFlowChart data={tradeFlow} />
-                    ) : (
-                      <EmptyState message="No data." compact />
-                    )}
-                  </PanelCard>
-                </PanelWrapper>
-              </div>
-
-              <PanelWrapper panelKey="mark-oracle" defaultVisible={false}>
-                <PanelCard title={`Mark vs Oracle — ${hours}h`}>
-                  <MarkOracleChart data={fundingData} height={240} />
-                </PanelCard>
-              </PanelWrapper>
-
-              <PanelWrapper panelKey="top-holders-list">
-                <TopHoldersTable
-                  coin={coin}
-                  positions={topCoinPositions}
-                />
-              </PanelWrapper>
-
-              <PanelWrapper panelKey="top-traders">
-                <TopTradersTable
-                  coin={coin}
-                  hours={hours}
-                  traders={topWhales}
-                />
-              </PanelWrapper>
-            </>
+              }
+            >
+              <CoinView
+                coin={coin}
+                coin2={coin2}
+                interval={interval}
+                hours={hours}
+                onIntervalChange={handleIntervalChange}
+              />
+            </Suspense>
           )}
         </div>
 

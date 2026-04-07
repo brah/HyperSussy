@@ -90,6 +90,26 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     actions.close()
 
 
+async def _static_cache_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Add long-lived cache headers to content-hashed static assets.
+
+    Vite writes all JS/CSS/font chunks under ``/assets/`` with a content hash
+    in the filename (e.g. ``vendor-react-_O6PI0e7.js``).  Because the hash
+    changes whenever the content changes, these files are safe to cache
+    forever.  ``index.html`` is intentionally excluded — it must stay fresh so
+    that browsers pick up new chunk filenames after a deploy.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    elif request.url.path in ("/", "/index.html"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return response
+
+
 async def _timing_middleware(
     request: Request,
     call_next: Callable[[Request], Awaitable[Response]],
@@ -179,9 +199,12 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
-    # Order matters: profiler is innermost so its timing reflects only the
-    # actual route handler work, not the timing middleware overhead. Both
-    # are http-only and don't interfere with the WebSocket path.
+    # Middleware execution order is last-registered = outermost.
+    # _static_cache_middleware is outermost: it runs on every response and
+    # adds Cache-Control headers before anything else sees the response.
+    # _timing_middleware is next: times only /api/ requests.
+    # _profile_middleware is innermost: opt-in ?profile=1 profiler.
+    app.middleware("http")(_static_cache_middleware)
     app.middleware("http")(_timing_middleware)
     app.middleware("http")(_profile_middleware)
 
@@ -203,7 +226,7 @@ def create_app() -> FastAPI:
 
     # Serve SPA in production when frontend/dist is present
     _frontend_dist = os.path.join(
-        os.path.dirname(__file__), "..", "..", "..", "..", "frontend", "dist"
+        os.path.dirname(__file__), "..", "..", "..", "frontend", "dist"
     )
     _frontend_dist = os.path.normpath(_frontend_dist)
     if os.path.isdir(_frontend_dist):

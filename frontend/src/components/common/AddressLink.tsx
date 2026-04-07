@@ -1,3 +1,4 @@
+import { memo } from "react";
 import { Link } from "react-router-dom";
 import { shortAddress } from "../../utils/format";
 
@@ -7,7 +8,7 @@ interface AddressLinkProps {
   chars?: number;
 }
 
-export function AddressLink({ address, label, chars = 4 }: AddressLinkProps) {
+export const AddressLink = memo(function AddressLink({ address, label, chars = 4 }: AddressLinkProps) {
   const display = label || shortAddress(address, chars);
   return (
     <Link
@@ -18,4 +19,4 @@ export function AddressLink({ address, label, chars = 4 }: AddressLinkProps) {
       {display}
     </Link>
   );
-}
+});

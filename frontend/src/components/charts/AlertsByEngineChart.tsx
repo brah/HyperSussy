@@ -8,6 +8,7 @@ import {
   Tooltip,
 } from "recharts";
 import { colors } from "../../theme/colors";
+import { tooltipStyle } from "../../theme/chartDefaults";
 import { useContainerWidth } from "../../hooks/useContainerWidth";
 
 interface AlertsByEngineChartProps {
@@ -59,15 +60,7 @@ export const AlertsByEngineChart = memo(function AlertsByEngineChart({
             tick={{ fill: colors.grey, fontSize: 11 }}
             width={116}
           />
-          <Tooltip
-            contentStyle={{
-              background: colors.bg,
-              border: `1px solid ${colors.grid}`,
-              boxShadow: "rgba(14,15,12,0.12) 0px 0px 0px 1px",
-              color: colors.text,
-              fontSize: 12,
-            }}
-          />
+          <Tooltip contentStyle={tooltipStyle} />
           <Bar
             dataKey="count"
             fill={colors.teal}

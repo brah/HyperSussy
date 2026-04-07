@@ -56,10 +56,32 @@ export function MarketSummaryTable({
   }
 
   if (coins.length === 0) {
+    // Render a skeleton table that approximates the loaded layout.
+    // This prevents a CLS when live data arrives and the table expands from
+    // an empty-state placeholder to its full height.
     return (
-      <p className="text-hs-grey text-sm py-8 text-center">
-        Waiting for live data...
-      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-hs-grid text-hs-grey">
+              {COLUMNS.map(({ key, label }) => (
+                <th key={key} className="py-2 px-3 text-left font-medium">{label}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: 20 }, (_, i) => `skeleton-${i}`).map((key) => (
+              <tr key={key} className="border-b border-hs-grid">
+                {COLUMNS.map(({ key }) => (
+                  <td key={key} className="py-2 px-3">
+                    <div className="h-4 rounded bg-hs-grid animate-pulse w-3/4" />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     );
   }
 

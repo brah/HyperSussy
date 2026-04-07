@@ -10,12 +10,23 @@ import {
 } from "recharts";
 import type { TopHolderItem } from "../../api/types";
 import { colors } from "../../theme/colors";
+import { tooltipStyle, fmtPassthroughLabel } from "../../theme/chartDefaults";
 import { formatUSD, shortAddress } from "../../utils/format";
 import { useContainerWidth } from "../../hooks/useContainerWidth";
 
 interface TopHoldersChartProps {
   data: TopHolderItem[];
   height?: number;
+}
+
+// Stable module-level tooltip formatter.
+// Item payload carries a `pct` field computed in chartData below.
+function fmtHoldersTooltip(
+  v: unknown,
+  _name: unknown,
+  item: { payload?: { pct?: string } },
+): [string, string] {
+  return [`${formatUSD(v as number)} (${item.payload?.pct ?? "0.0"}%)`, "Volume"];
 }
 
 export const TopHoldersChart = memo(function TopHoldersChart({
@@ -52,7 +63,7 @@ export const TopHoldersChart = memo(function TopHoldersChart({
           <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} horizontal={false} />
           <XAxis
             type="number"
-            tickFormatter={(v: number) => formatUSD(v)}
+            tickFormatter={formatUSD}
             stroke={colors.grey}
             tick={{ fill: colors.grey, fontSize: 11 }}
           />
@@ -64,18 +75,9 @@ export const TopHoldersChart = memo(function TopHoldersChart({
             width={68}
           />
           <Tooltip
-            formatter={(v, _name, item) => [
-              `${formatUSD(v as number)} (${(item.payload as { pct: string }).pct}%)`,
-              "Volume",
-            ]}
-            labelFormatter={(label) => label as string}
-            contentStyle={{
-              background: colors.bg,
-              border: `1px solid ${colors.grid}`,
-              boxShadow: "rgba(14,15,12,0.12) 0px 0px 0px 1px",
-              color: colors.text,
-              fontSize: 12,
-            }}
+            formatter={fmtHoldersTooltip}
+            labelFormatter={fmtPassthroughLabel}
+            contentStyle={tooltipStyle}
           />
           <Bar
             dataKey="volume_usd"

@@ -9,28 +9,28 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "hyperliquid-python-sdk>=0.22.0",
-    "aiosqlite>=0.20.0",
-    "orjson>=3.10.0",
-    "polars>=1.0.0",
-    "pydantic>=2.0.0",
-    "pydantic-settings>=2.0.0",
-    "websockets>=13.0",
-    "structlog>=24.0.0",
+    "aiosqlite>=0.22.1",
+    "orjson>=3.11.0",
+    "polars>=1.39.0",
+    "pydantic>=2.12.0",
+    "pydantic-settings>=2.13.0",
+    "websockets>=16.0",
+    "structlog>=25.0.0",
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.24.0",
-    "mypy>=1.10",
-    "ruff>=0.8.0",
-    "pytest-cov>=6.0",
-    "aioresponses>=0.7.0",
-    "types-requests>=2.32.0",
-    "httpx>=0.27.0",
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
-    "pyinstrument>=5.1.0",
+    "pytest>=9.0",
+    "pytest-asyncio>=1.0",
+    "mypy>=1.20",
+    "ruff>=0.15.0",
+    "pytest-cov>=7.0",
+    "aioresponses>=0.7.8",
+    "types-requests>=2.33.0",
+    "httpx>=0.28.0",
+    "fastapi>=0.135",
+    "uvicorn[standard]>=0.42",
+    "pyinstrument>=5.1.2",
 ]
 notebooks = [
     "ipykernel>=6.0",
@@ -38,8 +38,8 @@ notebooks = [
     "tqdm>=4.60",
 ]
 api = [
-    "fastapi>=0.115",
-    "uvicorn[standard]>=0.30",
+    "fastapi>=0.135",
+    "uvicorn[standard]>=0.42",
 ]
 
 [project.scripts]

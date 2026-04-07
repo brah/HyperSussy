@@ -74,8 +74,7 @@ def get_whale_positions(
     if addr is None:
         raise HTTPException(status_code=422, detail="Invalid wallet address")
     return [
-        PositionItem.model_validate(r)
-        for r in reader.get_whale_positions(address=addr)
+        PositionItem.model_validate(r) for r in reader.get_whale_positions(address=addr)
     ]
 
 
@@ -126,9 +125,7 @@ async def get_realized_pnl(
     """
     addr = normalize_wallet_address(address)
     if addr is None:
-        raise HTTPException(
-            status_code=422, detail="Invalid wallet address"
-        )
+        raise HTTPException(status_code=422, detail="Invalid wallet address")
     snapshot = await pnl_service.get_pnl(addr)
     return RealizedPnlResponse(
         pnl_7d=snapshot.pnl_7d.realized_pnl,
@@ -166,11 +163,11 @@ async def get_fills(
     """
     addr = normalize_wallet_address(address)
     if addr is None:
-        raise HTTPException(
-            status_code=422, detail="Invalid wallet address"
-        )
+        raise HTTPException(status_code=422, detail="Invalid wallet address")
     fills, next_cursor = await pnl_service.get_fills(
-        addr, before_ms=before_ms, limit=limit,
+        addr,
+        before_ms=before_ms,
+        limit=limit,
     )
     return FillPageResponse(
         fills=[FillItem.model_validate(f) for f in fills],

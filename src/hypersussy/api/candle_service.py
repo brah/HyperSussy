@@ -115,11 +115,7 @@ class CandleService:
         max_ts: int | None = row[1] if row and row[1] is not None else None
         covers_window = min_ts is not None and min_ts <= start_ms + interval_ms
 
-        if (
-            max_ts is not None
-            and covers_window
-            and (now_ms - max_ts) < 2 * interval_ms
-        ):
+        if max_ts is not None and covers_window and (now_ms - max_ts) < 2 * interval_ms:
             return await self._read_cached(coin, interval, start_ms)
 
         # Cache miss or stale -- fetch from HL API

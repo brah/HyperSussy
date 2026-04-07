@@ -92,7 +92,8 @@ class PnlService:
         )
         snapshot = PnlSnapshot(pnl_7d=pnl_7d, pnl_all_time=pnl_all)
         self._cache[address] = _CacheEntry(
-            snapshot=snapshot, expires_at=now + _CACHE_TTL_S,
+            snapshot=snapshot,
+            expires_at=now + _CACHE_TTL_S,
         )
         return snapshot
 
@@ -220,7 +221,9 @@ class PnlService:
         raw = await self._reader._call_info(
             "user_fills_by_time",
             lambda: self._reader._info_client.user_fills_by_time(
-                address, start_ms, end_time=end_ms,
+                address,
+                start_ms,
+                end_time=end_ms,
             ),
             weight=20,
             context=f"fills:{address}",

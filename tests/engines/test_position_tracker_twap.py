@@ -104,9 +104,7 @@ class TestTwapPiggybacking:
         tracker = PositionTracker(
             storage=storage, reader=reader, settings=settings, twap_detector=None
         )
-        await tracker.poll_positions(
-            timestamp_ms=1_000, db_tracked={"0xaddr1"}
-        )
+        await tracker.poll_positions(timestamp_ms=1_000, db_tracked={"0xaddr1"})
 
         reader.get_user_twap_slice_fills.assert_not_called()
 
@@ -127,9 +125,7 @@ class TestTwapPiggybacking:
             }
         ]
         # poll_interval_s=10 gives active_window = 10*1000*3 = 30_000ms
-        tracker, reader, _ = _make_tracker(
-            twap_fills=twap_fills, poll_interval_s=10.0
-        )
+        tracker, reader, _ = _make_tracker(twap_fills=twap_fills, poll_interval_s=10.0)
 
         alerts = await tracker.poll_positions(
             timestamp_ms=now_ms, db_tracked={"0xwhale"}
@@ -154,7 +150,9 @@ class TestTwapPiggybacking:
         twap_detector = TwapDetector(settings)
 
         tracker = PositionTracker(
-            storage=storage, reader=reader, settings=settings,
+            storage=storage,
+            reader=reader,
+            settings=settings,
             twap_detector=twap_detector,
         )
 
@@ -163,21 +161,15 @@ class TestTwapPiggybacking:
         t0 = 100_000  # 100s
 
         # First poll: should fetch
-        await tracker.poll_positions(
-            timestamp_ms=t0, db_tracked={"0xaddr"}
-        )
+        await tracker.poll_positions(timestamp_ms=t0, db_tracked={"0xaddr"})
         assert reader.get_user_twap_slice_fills.await_count == 1
 
         # 10s later: should NOT fetch (interval=60s)
-        await tracker.poll_positions(
-            timestamp_ms=t0 + 10_000, db_tracked={"0xaddr"}
-        )
+        await tracker.poll_positions(timestamp_ms=t0 + 10_000, db_tracked={"0xaddr"})
         assert reader.get_user_twap_slice_fills.await_count == 1
 
         # 61s later: should fetch again
-        await tracker.poll_positions(
-            timestamp_ms=t0 + 61_000, db_tracked={"0xaddr"}
-        )
+        await tracker.poll_positions(timestamp_ms=t0 + 61_000, db_tracked={"0xaddr"})
         assert reader.get_user_twap_slice_fills.await_count == 2
 
     @pytest.mark.asyncio

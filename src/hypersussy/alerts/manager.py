@@ -72,8 +72,7 @@ class AlertManager:
         )
         fingerprint = self._dedupe_fingerprint(alert)
         return any(
-            self._dedupe_fingerprint(existing) == fingerprint
-            for existing in recent
+            self._dedupe_fingerprint(existing) == fingerprint for existing in recent
         )
 
     @staticmethod

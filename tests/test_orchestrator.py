@@ -174,14 +174,26 @@ async def test_dispatch_trade_flushes_buffer_on_recovery(
     )
 
     trade1 = Trade(
-        coin="BTC", price=1.0, size=1.0, side="B",
-        timestamp_ms=1_000, buyer="0xabc", seller="0xdef",
-        tx_hash="0xh1", tid=1,
+        coin="BTC",
+        price=1.0,
+        size=1.0,
+        side="B",
+        timestamp_ms=1_000,
+        buyer="0xabc",
+        seller="0xdef",
+        tx_hash="0xh1",
+        tid=1,
     )
     trade2 = Trade(
-        coin="ETH", price=2.0, size=1.0, side="B",
-        timestamp_ms=2_000, buyer="0xabc", seller="0xdef",
-        tx_hash="0xh2", tid=2,
+        coin="ETH",
+        price=2.0,
+        size=1.0,
+        side="B",
+        timestamp_ms=2_000,
+        buyer="0xabc",
+        seller="0xdef",
+        tx_hash="0xh2",
+        tid=2,
     )
 
     # First dispatch: insert fails, enters backoff
@@ -198,9 +210,15 @@ async def test_dispatch_trade_flushes_buffer_on_recovery(
 
     # Third dispatch triggers flush of all 3 trades (2 buffered + 1 new)
     trade3 = Trade(
-        coin="BTC", price=3.0, size=1.0, side="B",
-        timestamp_ms=3_000, buyer="0xabc", seller="0xdef",
-        tx_hash="0xh3", tid=3,
+        coin="BTC",
+        price=3.0,
+        size=1.0,
+        side="B",
+        timestamp_ms=3_000,
+        buyer="0xabc",
+        seller="0xdef",
+        tx_hash="0xh3",
+        tid=3,
     )
     await orchestrator._dispatch_trade(trade3)  # noqa: SLF001
 

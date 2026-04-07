@@ -74,7 +74,17 @@ def _seed_db(conn: sqlite3.Connection) -> None:
         "VALUES (?,?,?,?,?,?,?,?,?)",
         [
             # coin, ts, oi, oi_usd, mark, oracle, funding, premium, vol
-            ("BTC", now_ms - 3600_000, 100.0, 5e6, 50000.0, 49900.0, 0.0001, 0.001, 1e6),  # noqa: E501
+            (
+                "BTC",
+                now_ms - 3600_000,
+                100.0,
+                5e6,
+                50000.0,
+                49900.0,
+                0.0001,
+                0.001,
+                1e6,
+            ),  # noqa: E501
             ("BTC", now_ms, 110.0, 5.5e6, 50100.0, 50000.0, 0.0002, 0.002, 1.2e6),
             ("ETH", now_ms, 500.0, 1.5e6, 3000.0, 2990.0, -0.0001, -0.001, 5e5),
         ],
@@ -113,8 +123,18 @@ def _seed_db(conn: sqlite3.Connection) -> None:
         " liquidation_price, mark_price, margin_used,"
         " timestamp_ms) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            whale, "BTC", 1.0, 49000.0, 50000.0, 500.0,
-            5, "cross", 40000.0, 50000.0, 10000.0, now_ms,
+            whale,
+            "BTC",
+            1.0,
+            49000.0,
+            50000.0,
+            500.0,
+            5,
+            "cross",
+            40000.0,
+            50000.0,
+            10000.0,
+            now_ms,
         ),
     )
     conn.execute(

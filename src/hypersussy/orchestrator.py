@@ -362,8 +362,7 @@ class Orchestrator:
         n_conns = min(_MAX_TRADE_WS_CONNECTIONS, len(coins))
         batch_size = math.ceil(len(coins) / n_conns)
         return [
-            list(coins[i : i + batch_size])
-            for i in range(0, len(coins), batch_size)
+            list(coins[i : i + batch_size]) for i in range(0, len(coins), batch_size)
         ]
 
     async def _trade_stream_supervisor_loop(self) -> None:
@@ -473,13 +472,8 @@ class Orchestrator:
                     for engine in whale_engines:
                         await self._run_engine_call(
                             engine,
-                            lambda engine=engine,
-                            address=address,
-                            positions=positions,
-                            now_ms=now_ms: engine.on_position_update(
-                                address,
-                                positions,
-                                now_ms,
+                            lambda eng=engine, addr=address, pos=positions, ts=now_ms: (
+                                eng.on_position_update(addr, pos, ts)
                             ),
                             "Error in on_position_update for %s",
                             address,
@@ -542,8 +536,7 @@ class Orchestrator:
                     if is_db_lock
                     else f"trade_storage:{type(exc).__name__}"
                 ),
-                "Trade storage unavailable (%d buffered); "
-                "retrying in %.1fs (%s)",
+                "Trade storage unavailable (%d buffered); retrying in %.1fs (%s)",
                 len(self._trade_buffer),
                 delay,
                 exc,

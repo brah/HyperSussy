@@ -142,9 +142,7 @@ class TestPruneVolume:
         """Trades within the lookback window are kept."""
         census, _, _ = _make_census()
         census._settings.census_volume_lookback_ms = 5000
-        census.on_trade(
-            _trade("BTC", "0xaddr", "0xmm", price=100.0, size=1.0, ts=3000)
-        )
+        census.on_trade(_trade("BTC", "0xaddr", "0xmm", price=100.0, size=1.0, ts=3000))
         census.prune_volume(timestamp_ms=5000)
         assert census._address_volume["0xaddr"] == 100.0
 
@@ -177,9 +175,7 @@ class TestTick:
             _trade("BTC", "0xwhale", "0xmm", price=10_000.0, size=1.0, ts=100)
         )
 
-        await census.tick(
-            timestamp_ms=1_000, whale_addresses={"0xwhale", "0xmm"}
-        )
+        await census.tick(timestamp_ms=1_000, whale_addresses={"0xwhale", "0xmm"})
 
         reader.get_user_positions.assert_not_called()
 
@@ -187,9 +183,7 @@ class TestTick:
     async def test_excludes_below_min_volume(self) -> None:
         """Addresses below the volume threshold are not polled."""
         census, reader, _ = _make_census(min_volume=50_000.0)
-        census.on_trade(
-            _trade("BTC", "0xsmall", "0xmm", price=100.0, size=1.0, ts=100)
-        )
+        census.on_trade(_trade("BTC", "0xsmall", "0xmm", price=100.0, size=1.0, ts=100))
 
         await census.tick(timestamp_ms=1_000, whale_addresses=set())
 
@@ -228,8 +222,12 @@ class TestTick:
         for i in range(5):
             census.on_trade(
                 _trade(
-                    "BTC", f"0xaddr{i}", "0xmm",
-                    price=10_000.0, size=1.0, ts=100 + i,
+                    "BTC",
+                    f"0xaddr{i}",
+                    "0xmm",
+                    price=10_000.0,
+                    size=1.0,
+                    ts=100 + i,
                 )
             )
 
@@ -253,9 +251,7 @@ class TestTick:
         # Exclude 0xmm (highest volume) to test ranking among the rest
         await census.tick(timestamp_ms=1_000, whale_addresses={"0xmm"})
 
-        reader.get_user_positions.assert_called_once_with(
-            "0xbig", active_dexes=set()
-        )
+        reader.get_user_positions.assert_called_once_with("0xbig", active_dexes=set())
 
     @pytest.mark.asyncio
     async def test_no_insert_for_empty_positions(self) -> None:
@@ -277,20 +273,12 @@ class TestEviction:
     def test_evicts_lowest_volume(self) -> None:
         """When over max_addresses, lowest-volume addresses are evicted."""
         census, _, _ = _make_census(max_addresses=2)
-        census.on_trade(
-            _trade("BTC", "0xlow", "0xmm", price=100.0, size=1.0, ts=100)
-        )
-        census.on_trade(
-            _trade("BTC", "0xmed", "0xmm", price=500.0, size=1.0, ts=200)
-        )
-        census.on_trade(
-            _trade("BTC", "0xhigh", "0xmm", price=1000.0, size=1.0, ts=300)
-        )
+        census.on_trade(_trade("BTC", "0xlow", "0xmm", price=100.0, size=1.0, ts=100))
+        census.on_trade(_trade("BTC", "0xmed", "0xmm", price=500.0, size=1.0, ts=200))
+        census.on_trade(_trade("BTC", "0xhigh", "0xmm", price=1000.0, size=1.0, ts=300))
         # 0xmm also has accumulated volume, so we have 4 addresses
         # eviction triggers when > max_addresses * 2 = 4, need one more
-        census.on_trade(
-            _trade("BTC", "0xextra", "0xmm2", price=50.0, size=1.0, ts=400)
-        )
+        census.on_trade(_trade("BTC", "0xextra", "0xmm2", price=50.0, size=1.0, ts=400))
         # Now 5 unique addresses (0xlow, 0xmed, 0xhigh, 0xmm, 0xextra, 0xmm2)
         # That's 6 > 2*2=4, so eviction should fire
         assert len(census._address_volume) <= 2

@@ -20,4 +20,3 @@ class AppSink(AlertSink):
     async def send(self, alert: Alert) -> None:
         """Add the alert to the shared state."""
         self.state.push_alert(alert)
-

@@ -382,9 +382,7 @@ class HyperLiquidStream:
                 await asyncio.sleep(delay)
                 delay = min(delay * 2, _MAX_RECONNECT_DELAY_S)
 
-    async def stream_asset_ctxs(
-        self, coins: list[str]
-    ) -> AsyncIterator[AssetSnapshot]:
+    async def stream_asset_ctxs(self, coins: list[str]) -> AsyncIterator[AssetSnapshot]:
         """Yield real-time asset context updates for native perpetual coins.
 
         Subscribes to ``activeAssetCtx`` for each coin on a single WS

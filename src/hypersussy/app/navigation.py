@@ -27,4 +27,4 @@ def short_wallet_label(address: str, chars: int = 4) -> str:
     """
     if len(address) <= 2 + chars * 2:
         return address
-    return f"{address[:2 + chars]}..{address[-chars:]}"
+    return f"{address[: 2 + chars]}..{address[-chars:]}"

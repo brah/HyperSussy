@@ -129,9 +129,7 @@ class PositionCensus:
                     logger,
                     logging.INFO,
                     f"position_census_429:{addr}",
-                    (
-                        "Census rate-limited for %s on %d dex(es); backing off"
-                    ),
+                    ("Census rate-limited for %s on %d dex(es); backing off"),
                     addr,
                     len(result.dexes),
                 )

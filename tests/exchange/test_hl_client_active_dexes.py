@@ -160,9 +160,7 @@ class TestActiveDexesIntersection:
         """A 429 on every queried dex raises PositionFetchRateLimitError."""
         reader = _make_reader([])
 
-        reader._info.user_state.side_effect = ClientError(
-            429, None, "null", None, {}
-        )
+        reader._info.user_state.side_effect = ClientError(429, None, "null", None, {})
 
         with pytest.raises(PositionFetchRateLimitError) as excinfo:
             await reader.get_user_positions("0xabc", active_dexes=set())

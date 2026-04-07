@@ -365,7 +365,7 @@ class SqliteStorage:
         """
         rows = list(
             await self._fetchall(
-            """SELECT address, addr_vol, total_vol FROM (
+                """SELECT address, addr_vol, total_vol FROM (
                  SELECT address, SUM(vol) AS addr_vol,
                         SUM(SUM(vol)) OVER () AS total_vol
                  FROM (
@@ -387,7 +387,7 @@ class SqliteStorage:
                  ORDER BY addr_vol DESC
                  LIMIT ?
                )""",
-            (coin, since_ms, coin, since_ms, limit),
+                (coin, since_ms, coin, since_ms, limit),
             )
         )
         if not rows:

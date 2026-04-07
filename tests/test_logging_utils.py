@@ -32,9 +32,7 @@ class TestLogFloodGuardPruning:
 
         # Trigger another prune cycle
         for i in range(guard._PRUNE_INTERVAL + 1):
-            guard.log(
-                mock_logger, logging.WARNING, f"new-key-{i}", "msg %d", i
-            )
+            guard.log(mock_logger, logging.WARNING, f"new-key-{i}", "msg %d", i)
 
         # Old expired keys should be gone; only new keys remain
         old_keys = [k for k in guard._windows if k.startswith("key-")]

@@ -112,9 +112,7 @@ class SharedState:
     def get_engine_errors(self) -> dict[str, str]:
         """Return the latest engine error messages."""
         with self._lock:
-            return {
-                name: issue.message for name, issue in self._engine_errors.items()
-            }
+            return {name: issue.message for name, issue in self._engine_errors.items()}
 
     def mark_runtime_error(self, source: str, error: str) -> None:
         """Record a runtime error for UI visibility."""
@@ -134,9 +132,7 @@ class SharedState:
     def get_runtime_errors(self) -> dict[str, str]:
         """Return the latest runtime error messages."""
         with self._lock:
-            return {
-                name: issue.message for name, issue in self._runtime_errors.items()
-            }
+            return {name: issue.message for name, issue in self._runtime_errors.items()}
 
     def get_runtime_health(self) -> RuntimeHealth:
         """Return an immutable snapshot of current runtime health."""

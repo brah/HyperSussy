@@ -317,6 +317,24 @@ export const CandlestickChart = memo(function CandlestickChart({
     }
   }, [overlays]);
 
+  // OI snapshots arrive at sub-candle intervals. Because all panes share one
+  // time axis in LWC, extra OI timestamps expand the x-grid and make candle
+  // bars appear far too narrow. Re-sample OI onto the exact candle timestamps:
+  // for each candle bar, take the last OI value at or before that bar's time.
+  const oiAligned = useMemo(() => {
+    if (!oiData || oiData.length === 0 || candles.length === 0) return [];
+    const sorted = [...oiData].sort((a, b) => a.timestamp_ms - b.timestamp_ms);
+    const result: { time: Time; value: number }[] = [];
+    let j = 0;
+    for (const candle of candles) {
+      while (j + 1 < sorted.length && sorted[j + 1].timestamp_ms <= candle.timestamp_ms) j++;
+      if (sorted[j].timestamp_ms <= candle.timestamp_ms) {
+        result.push({ time: msToSec(candle.timestamp_ms) as Time, value: sorted[j].open_interest_usd });
+      }
+    }
+    return result;
+  }, [oiData, candles]);
+
   // ── OI sub-pane ─────────────────────────────────────────────
   // v5 panes API: addPane()/removePane() instead of priceScaleId margin hacks.
   // Toggling OI on/off cleanly creates or removes a real pane; the other
@@ -325,7 +343,7 @@ export const CandlestickChart = memo(function CandlestickChart({
     const chart = chartRef.current;
     if (!chart) return;
 
-    const enabled = showOI && oiData != null && oiData.length > 0;
+    const enabled = showOI && oiAligned.length > 0;
 
     if (enabled) {
       if (!oiSeriesRef.current) {
@@ -363,30 +381,25 @@ export const CandlestickChart = memo(function CandlestickChart({
           lines: legendLines("OI", "—"),
         });
       }
-      oiSeriesRef.current.setData(
-        oiData.map((d) => ({
-          time: msToSec(d.timestamp_ms) as Time,
-          value: d.open_interest_usd,
-        })),
-      );
+      oiSeriesRef.current.setData(oiAligned);
 
       // Populate the legend with the latest OI value (mirrors the volume legend).
-      const lastOi = oiData.at(-1);
+      const lastOi = oiData?.at(-1);
       if (oiLegendRef.current && lastOi) {
         oiLegendRef.current.applyOptions({
           lines: legendLines("OI", formatUSD(lastOi.open_interest_usd)),
         });
       }
     } else if (oiSeriesRef.current && oiPaneIndexRef.current != null) {
-      // Tear down the OI series and its pane. The volume pane (index 1)
-      // stays in place; only the trailing OI pane is removed.
-      chart.removeSeries(oiSeriesRef.current);
+      // v5: removePane also removes all series within it. Calling removeSeries
+      // first would auto-remove the now-empty pane, making the subsequent
+      // removePane call fail with "Invalid pane index".
       chart.removePane(oiPaneIndexRef.current);
       oiSeriesRef.current = null;
       oiPaneIndexRef.current = null;
       oiLegendRef.current = null;
     }
-  }, [showOI, oiData]);
+  }, [showOI, oiAligned, oiData]); // oiData kept so legend "last value" stays fresh
 
   // ── Funding rate markers ────────────────────────────────────
   // v5 moved markers to a separate plugin: createSeriesMarkers(series, markers)

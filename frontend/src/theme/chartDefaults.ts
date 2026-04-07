@@ -41,8 +41,6 @@ export function lwcChartOptions(width: number, height: number): DeepPartial<Char
     },
     rightPriceScale: { borderColor: colors.grid },
     leftPriceScale: { borderColor: colors.grid },
-    handleScroll: false,
-    handleScale: false,
   };
 }
 

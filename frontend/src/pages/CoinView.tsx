@@ -1,8 +1,6 @@
 /**
  * Coin analytics view — lazy-loaded by MarketPage so that recharts and
- * lightweight-charts are NOT included in the initial bundle. The split
- * means the root dashboard loads without pulling in ~550 kB of chart
- * libraries; they are only fetched when the user selects a coin.
+ * lightweight-charts are NOT included in the initial bundle.
  */
 
 import { useMemo } from "react";
@@ -39,8 +37,11 @@ import {
   EMA_50_COLOR,
   VWAP_COLOR,
 } from "../utils/indicators";
-import type { Interval } from "../components/common/IntervalSelector";
 import type { Hours } from "../components/common/HoursSelector";
+import { type Interval } from "../components/common/IntervalSelector";
+
+// Maximum number of compare coins supported (keeps hooks unconditional).
+const MAX_COMPARE = 4;
 
 const HOURS_FOR_INTERVAL: Record<Interval, number> = {
   "1m": 12,
@@ -53,16 +54,24 @@ const HOURS_FOR_INTERVAL: Record<Interval, number> = {
 
 interface CoinViewProps {
   coin: string;
-  coin2: string;
+  /** Up to MAX_COMPARE additional coins for comparison. */
+  coin2s: string[];
   interval: Interval;
   hours: Hours;
   onIntervalChange: (iv: Interval) => void;
 }
 
-export default function CoinView({ coin, coin2, interval, hours, onIntervalChange }: Readonly<CoinViewProps>) {
+export default function CoinView({ coin, coin2s, interval, hours, onIntervalChange }: Readonly<CoinViewProps>) {
   const candleHours = HOURS_FOR_INTERVAL[interval];
-  const compare = coin2 !== "" && coin2 !== coin;
+  // Clamp to MAX_COMPARE and filter out the primary coin.
+  // Memoized so downstream useMemos can list it as a stable dependency.
+  const compareCoins = useMemo(
+    () => coin2s.filter((c) => c !== coin).slice(0, MAX_COMPARE),
+    [coin2s, coin],
+  );
+  const comparing = compareCoins.length > 0;
 
+  // Primary coin data
   const { data: candles = [] } = useQuery(candlesQuery(coin, interval, candleHours));
   const { data: oiData = [] } = useQuery(oiQuery(coin, hours));
   const { data: fundingData = [] } = useQuery(fundingQuery(coin, hours));
@@ -70,26 +79,45 @@ export default function CoinView({ coin, coin2, interval, hours, onIntervalChang
   const { data: topCoinPositions = [] } = useQuery(topCoinPositionsQuery(coin, 25));
   const { data: tradeFlow = [] } = useQuery(tradeFlowQuery(coin, hours));
   const { data: topWhales = [] } = useQuery(topWhalesQuery(coin, hours));
-  const { data: oiData2 = [] } = useQuery({ ...oiQuery(coin2, hours), enabled: compare });
-  const { data: fundingData2 = [] } = useQuery({ ...fundingQuery(coin2, hours), enabled: compare });
 
   // Indicator toggles
   const showSMA7 = useIndicator("sma7");
   const showSMA20 = useIndicator("sma20", true);
   const showEMA50 = useIndicator("ema50");
   const showVWAP = useIndicator("vwap");
-  const showOI = useIndicator("oi");
+  const showOI = useIndicator("oi", true);
   const showFunding = useIndicator("funding");
 
-  // OI/funding spanning the candle window — only fetched when the indicator is on
-  const { data: oiForChart = [] } = useQuery({
-    ...oiQuery(coin, candleHours),
-    enabled: showOI,
-  });
-  const { data: fundingForChart = [] } = useQuery({
-    ...fundingQuery(coin, candleHours),
-    enabled: showFunding,
-  });
+  // OI/funding spanning the candle window — only fetched when indicator is on
+  const { data: oiForChart = [] } = useQuery({ ...oiQuery(coin, candleHours), enabled: showOI });
+  const { data: fundingForChart = [] } = useQuery({ ...fundingQuery(coin, candleHours), enabled: showFunding });
+
+  // Compare coin queries — unconditional slots, enabled by position.
+  const { data: oi0 = [] } = useQuery({ ...oiQuery(compareCoins[0] ?? "", hours), enabled: compareCoins.length > 0 });
+  const { data: oi1 = [] } = useQuery({ ...oiQuery(compareCoins[1] ?? "", hours), enabled: compareCoins.length > 1 });
+  const { data: oi2 = [] } = useQuery({ ...oiQuery(compareCoins[2] ?? "", hours), enabled: compareCoins.length > 2 });
+  const { data: oi3 = [] } = useQuery({ ...oiQuery(compareCoins[3] ?? "", hours), enabled: compareCoins.length > 3 });
+
+  const { data: fund0 = [] } = useQuery({ ...fundingQuery(compareCoins[0] ?? "", hours), enabled: compareCoins.length > 0 });
+  const { data: fund1 = [] } = useQuery({ ...fundingQuery(compareCoins[1] ?? "", hours), enabled: compareCoins.length > 1 });
+  const { data: fund2 = [] } = useQuery({ ...fundingQuery(compareCoins[2] ?? "", hours), enabled: compareCoins.length > 2 });
+  const { data: fund3 = [] } = useQuery({ ...fundingQuery(compareCoins[3] ?? "", hours), enabled: compareCoins.length > 3 });
+
+  const compareOI = useMemo(
+    () =>
+      [oi0, oi1, oi2, oi3]
+        .slice(0, compareCoins.length)
+        .map((data, i) => ({ data, label: compareCoins[i] })),
+    [oi0, oi1, oi2, oi3, compareCoins],
+  );
+
+  const compareFunding = useMemo(
+    () =>
+      [fund0, fund1, fund2, fund3]
+        .slice(0, compareCoins.length)
+        .map((data, i) => ({ data, label: compareCoins[i] })),
+    [fund0, fund1, fund2, fund3, compareCoins],
+  );
 
   const chartOverlays = useMemo<OverlayLine[]>(() => {
     const lines: OverlayLine[] = [];
@@ -104,11 +132,7 @@ export default function CoinView({ coin, coin2, interval, hours, onIntervalChang
     <>
       <PanelWrapper panelKey="candlestick">
         <div className="bg-black border border-[#1a1a1a] rounded-2xl overflow-hidden">
-          <ChartHeader
-            coin={coin}
-            interval={interval}
-            onIntervalChange={onIntervalChange}
-          />
+          <ChartHeader coin={coin} interval={interval} onIntervalChange={onIntervalChange} />
           <ChartToolbar />
           {candles.length > 0 ? (
             <CandlestickChart
@@ -122,42 +146,35 @@ export default function CoinView({ coin, coin2, interval, hours, onIntervalChang
             />
           ) : (
             <p className="text-gray-500 text-sm py-12 text-center">
-              No candle data for {coin} ({interval}).
+              No candle data for {coin}.
             </p>
           )}
         </div>
       </PanelWrapper>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <PanelWrapper panelKey="oi-chart">
-          <PanelCard
-            title={"Open Interest" + (compare ? " \u2014 " + coin + " vs " + coin2 : "") + " \u2014 " + hours + "h"}
-          >
-            {oiData.length > 0 ? (
+        {/* OI panel — only in compare mode; single-coin OI lives in the candle sub-pane */}
+        {comparing && (
+          <PanelWrapper panelKey="oi-chart">
+            <PanelCard title={`Open Interest — ${coin} vs ${compareCoins.join(", ")} — ${hours}h`}>
               <OIChart
-                data={oiData}
+                series={[{ data: oiData, label: coin }, ...compareOI]}
                 height={200}
-                label1={coin}
-                data2={compare ? oiData2 : undefined}
-                label2={coin2 || undefined}
               />
-            ) : (
-              <EmptyState message="No OI data." compact />
-            )}
-          </PanelCard>
-        </PanelWrapper>
+            </PanelCard>
+          </PanelWrapper>
+        )}
 
         <PanelWrapper panelKey="funding-chart">
           <PanelCard
-            title={"Funding Rate" + (compare ? " \u2014 " + coin + " vs " + coin2 : "") + " \u2014 " + hours + "h"}
+            title={"Funding Rate" + (comparing ? ` — ${coin} vs ${compareCoins.join(", ")}` : "") + ` — ${hours}h`}
           >
             {fundingData.length > 0 ? (
               <FundingChart
                 data={fundingData}
+                label={coin}
+                compares={comparing ? compareFunding : undefined}
                 height={200}
-                label1={coin}
-                data2={compare ? fundingData2 : undefined}
-                label2={coin2 || undefined}
               />
             ) : (
               <EmptyState message="No funding data." compact />
@@ -195,18 +212,11 @@ export default function CoinView({ coin, coin2, interval, hours, onIntervalChang
       </PanelWrapper>
 
       <PanelWrapper panelKey="top-holders-list">
-        <TopHoldersTable
-          coin={coin}
-          positions={topCoinPositions}
-        />
+        <TopHoldersTable coin={coin} positions={topCoinPositions} />
       </PanelWrapper>
 
       <PanelWrapper panelKey="top-traders">
-        <TopTradersTable
-          coin={coin}
-          hours={hours}
-          traders={topWhales}
-        />
+        <TopTradersTable coin={coin} hours={hours} traders={topWhales} />
       </PanelWrapper>
     </>
   );

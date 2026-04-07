@@ -75,8 +75,9 @@ function Stat({
   value,
   tone,
 }: Readonly<{ label: string; value: string; tone?: "pos" | "neg" }>) {
-  const valueClass =
-    tone === "pos" ? "text-emerald-400" : tone === "neg" ? "text-red-400" : "text-gray-200";
+  let valueClass = "text-gray-200";
+  if (tone === "pos") valueClass = "text-emerald-400";
+  else if (tone === "neg") valueClass = "text-red-400";
   return (
     <span className="flex items-center gap-1.5">
       <span className="text-gray-500 uppercase tracking-wide text-[10px]">{label}</span>

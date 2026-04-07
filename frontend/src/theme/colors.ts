@@ -17,6 +17,15 @@ export const colors = {
 
 export type ColorKey = keyof typeof colors;
 
+/** Ordered palette for multi-coin comparison series (primary first). */
+export const compareColors = [
+  "#054d28", // teal   — primary
+  "#c65102", // orange — compare 1
+  "#d03238", // red    — compare 2
+  "#1d4ed8", // blue   — compare 3
+  "#7c3aed", // violet — compare 4
+] as const;
+
 /** Map alert severity to a CSS color value (WCAG-safe on white). */
 export function severityColor(severity: string): string {
   switch (severity) {

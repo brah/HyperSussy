@@ -14,7 +14,6 @@ const AlertsByEngineChart = lazy(() =>
 );
 import { CoinSelector } from "../components/common/CoinSelector";
 import { HoursSelector, type Hours } from "../components/common/HoursSelector";
-import { type Interval } from "../components/common/IntervalSelector";
 import { MetricCard } from "../components/common/MetricCard";
 import { PanelCard } from "../components/common/PanelCard";
 import { PanelToggleBar } from "../components/common/PanelToggleBar";
@@ -37,7 +36,6 @@ const MARKET_PANELS = [
   { key: "metric-cards", label: "Metrics" },
   { key: "market-table", label: "Table" },
   { key: "candlestick", label: "Candles" },
-  { key: "oi-chart", label: "OI" },
   { key: "funding-chart", label: "Funding" },
   { key: "mark-oracle", label: "Mark/Oracle", defaultVisible: false },
   { key: "top-holders", label: "Holders" },
@@ -47,13 +45,6 @@ const MARKET_PANELS = [
   { key: "alert-feed", label: "Alerts" },
   { key: "alerts-engine", label: "By Engine", defaultVisible: false },
 ];
-
-function parseIntervalParam(value: string | null): Interval {
-  if (value && value in { "1m": 1, "5m": 1, "15m": 1, "1h": 1, "4h": 1, "1d": 1 }) {
-    return value as Interval;
-  }
-  return "1h";
-}
 
 // ---------------------------------------------------------------------------
 // Sidebar components — each owns its own WS subscription so updates here
@@ -166,14 +157,26 @@ const StatusInfo = memo(function StatusInfo() {
 // Main page
 // ---------------------------------------------------------------------------
 
+function parseIntervalParam(value: string | null) {
+  const valid = { "1m": 1, "5m": 1, "15m": 1, "1h": 1, "4h": 1, "1d": 1 } as const;
+  if (value && value in valid) return value as keyof typeof valid;
+  return "1h" as const;
+}
+
 export function MarketPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const coin = searchParams.get("coin") ?? "";
-  const coin2 = searchParams.get("coin2") ?? "";
+  const coin2s = useMemo(
+    () => (searchParams.get("coin2") ?? "").split(",").filter((c) => c.length > 0),
+    [searchParams],
+  );
   const interval = parseIntervalParam(searchParams.get("interval"));
   const [hours, setHours] = useState<Hours>(24);
 
   const coinMode = coin !== "";
+
+  const setParams = (next: Record<string, string>) =>
+    setSearchParams(next, { replace: true });
 
   const handleCoinChange = (c: string) => {
     startTransition(() => {
@@ -181,36 +184,37 @@ export function MarketPage() {
       if (c && c !== ALL) {
         next.coin = c;
         next.interval = interval;
-        // Drop coin2 if it would become a self-compare
-        if (coin2 && coin2 !== c) next.coin2 = coin2;
+        const kept = coin2s.filter((x) => x !== c);
+        if (kept.length > 0) next.coin2 = kept.join(",");
       }
-      // Reset the hours window to the default on coin change. Carrying over
-      // the previous coin's selection silently leaks state across analytics
-      // sessions and can cause confusing first-load fetches.
       setHours(24);
-      setSearchParams(next, { replace: true });
+      setParams(next);
     });
   };
 
-  const handleIntervalChange = (iv: Interval) => {
+  const handleIntervalChange = (iv: string) => {
     startTransition(() => {
       const next: Record<string, string> = { coin, interval: iv };
-      if (coin2) next.coin2 = coin2;
-      setSearchParams(next, { replace: true });
+      if (coin2s.length > 0) next.coin2 = coin2s.join(",");
+      setParams(next);
     });
   };
 
-  const handleCoin2Change = (c: string) => {
+  const handleAddCompare = (c: string) => {
     startTransition(() => {
+      if (!c || c === coin || coin2s.includes(c) || coin2s.length >= 4) return;
       const next: Record<string, string> = { coin, interval };
-      if (c && c !== ALL && c !== coin) next.coin2 = c;
-      setSearchParams(next, { replace: true });
+      next.coin2 = [...coin2s, c].join(",");
+      setParams(next);
     });
   };
 
-  const clearCoin2 = () => {
+  const handleRemoveCompare = (c: string) => {
     startTransition(() => {
-      setSearchParams({ coin, interval }, { replace: true });
+      const kept = coin2s.filter((x) => x !== c);
+      const next: Record<string, string> = { coin, interval };
+      if (kept.length > 0) next.coin2 = kept.join(",");
+      setParams(next);
     });
   };
 
@@ -232,26 +236,35 @@ export function MarketPage() {
           onChange={handleCoinChange}
         />
         {coinMode && (
-          <div className="flex items-center gap-1">
-            <select
-              value={coin2}
-              onChange={(e) => handleCoin2Change(e.target.value)}
-              className="rounded-[10px] border border-hs-grid bg-hs-surface px-3 py-1.5 text-sm
-                         text-hs-text focus:border-hs-green focus:outline-none"
-            >
-              <option value="">Compare…</option>
-              {coins.filter((c) => c !== coin).map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            {coin2 && (
-              <button
-                onClick={clearCoin2}
-                className="text-xs text-hs-grey hover:text-hs-red px-1"
-                title="Clear comparison"
+          <div className="flex flex-wrap items-center gap-1">
+            {coin2s.map((c) => (
+              <span
+                key={c}
+                className="inline-flex items-center gap-1 rounded-full border border-hs-grid
+                           bg-hs-surface px-2 py-0.5 text-xs text-hs-text"
               >
-                ×
-              </button>
+                {c}
+                <button
+                  onClick={() => handleRemoveCompare(c)}
+                  className="text-hs-grey hover:text-hs-red leading-none"
+                  aria-label={`Remove ${c}`}
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            {coin2s.length < 4 && (
+              <select
+                value=""
+                onChange={(e) => { if (e.target.value) handleAddCompare(e.target.value); }}
+                className="rounded-[10px] border border-hs-grid bg-hs-surface px-3 py-1.5 text-sm
+                           text-hs-text focus:border-hs-green focus:outline-none"
+              >
+                <option value="">+ Compare</option>
+                {coins.filter((c) => c !== coin && !coin2s.includes(c)).map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
             )}
           </div>
         )}
@@ -291,7 +304,7 @@ export function MarketPage() {
             >
               <CoinView
                 coin={coin}
-                coin2={coin2}
+                coin2s={coin2s}
                 interval={interval}
                 hours={hours}
                 onIntervalChange={handleIntervalChange}

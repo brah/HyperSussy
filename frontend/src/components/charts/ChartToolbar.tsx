@@ -23,7 +23,7 @@ const PRICE_OVERLAYS: IndicatorDef[] = [
 ];
 
 const PANE_OVERLAYS: IndicatorDef[] = [
-  { key: "oi", label: "OI", color: colors.teal },
+  { key: "oi", label: "OI", color: colors.teal, defaultOn: true },
   { key: "funding", label: "Funding", color: colors.grey },
 ];
 

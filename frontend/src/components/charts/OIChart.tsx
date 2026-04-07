@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useMemo } from "react";
 import {
   ComposedChart,
   Area,
@@ -8,13 +8,13 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer,
 } from "recharts";
 import type { OISnapshotItem } from "../../api/types";
 import { colors } from "../../theme/colors";
 import { fmtTime } from "../../utils/time";
 import { formatUSD } from "../../utils/format";
 import { mergeTimeSeries } from "../../utils/timeseries";
+import { useContainerWidth } from "../../hooks/useContainerWidth";
 
 interface OIChartProps {
   data: OISnapshotItem[];
@@ -42,25 +42,95 @@ export const OIChart = memo(function OIChart({
   data2,
   label2,
 }: Readonly<OIChartProps>) {
+  const [containerRef, width] = useContainerWidth();
   const comparing = data2 != null && data2.length > 0;
 
-  if (comparing) {
-    // Normalised % change comparison mode
-    const s1 = toPercent(data);
-    const s2 = toPercent(data2!);
-    const merged = mergeTimeSeries(s1, s2, "pct", "pct2");
+  const merged = useMemo(() => {
+    if (!comparing || data2 == null) return null;
+    return mergeTimeSeries(toPercent(data), toPercent(data2), "pct", "pct2");
+  }, [comparing, data, data2]);
 
+  if (comparing && merged !== null) {
     return (
-      <ResponsiveContainer width="100%" height={height}>
-        <ComposedChart data={merged} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
+      <div ref={containerRef} style={{ width: "100%", height }}>
+        {width > 0 && (
+          <ComposedChart width={width} height={height} data={merged} margin={{ top: 4, right: 16, bottom: 0, left: 8 }}>
+            <defs>
+              <linearGradient id="oi-grad1" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={colors.teal} stopOpacity={0.2} />
+                <stop offset="95%" stopColor={colors.teal} stopOpacity={0} />
+              </linearGradient>
+              <linearGradient id="oi-grad2" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={colors.orange} stopOpacity={0.15} />
+                <stop offset="95%" stopColor={colors.orange} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
+            <XAxis
+              dataKey="timestamp_ms"
+              tickFormatter={(v: number) => fmtTime(v)}
+              stroke={colors.grey}
+              tick={{ fill: colors.grey, fontSize: 11 }}
+              minTickGap={60}
+            />
+            <YAxis
+              tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+              stroke={colors.grey}
+              tick={{ fill: colors.grey, fontSize: 11 }}
+              width={60}
+            />
+            <Tooltip
+              formatter={(v: number, name: string) => [`${v.toFixed(2)}%`, name]}
+              labelFormatter={(ms: number) => fmtTime(ms)}
+              contentStyle={{
+                background: colors.bg,
+                border: `1px solid ${colors.grid}`,
+                boxShadow: "rgba(14,15,12,0.12) 0px 0px 0px 1px",
+                color: colors.text,
+                fontSize: 12,
+              }}
+            />
+            <Legend
+              formatter={(value) => (
+                <span style={{ color: colors.text, fontSize: 12 }}>{value}</span>
+              )}
+            />
+            <Area
+              type="monotone"
+              dataKey="pct"
+              name={label1 ?? "Primary"}
+              stroke={colors.teal}
+              fill="url(#oi-grad1)"
+              strokeWidth={2}
+              dot={false}
+              isAnimationActive={false}
+            />
+            <Area
+              type="monotone"
+              dataKey="pct2"
+              name={label2 ?? "Compare"}
+              stroke={colors.orange}
+              fill="url(#oi-grad2)"
+              strokeWidth={2}
+              strokeDasharray="4 2"
+              dot={false}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
+        )}
+      </div>
+    );
+  }
+
+  // Single-coin mode: OI area + mark price line on right axis
+  return (
+    <div ref={containerRef} style={{ width: "100%", height }}>
+      {width > 0 && (
+        <ComposedChart width={width} height={height} data={data} margin={{ top: 4, right: 72, bottom: 0, left: 8 }}>
           <defs>
-            <linearGradient id="oi-grad1" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={colors.teal} stopOpacity={0.2} />
+            <linearGradient id="oi-grad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="5%" stopColor={colors.teal} stopOpacity={0.25} />
               <stop offset="95%" stopColor={colors.teal} stopOpacity={0} />
-            </linearGradient>
-            <linearGradient id="oi-grad2" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="5%" stopColor={colors.orange} stopOpacity={0.15} />
-              <stop offset="95%" stopColor={colors.orange} stopOpacity={0} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
@@ -72,13 +142,22 @@ export const OIChart = memo(function OIChart({
             minTickGap={60}
           />
           <YAxis
-            tickFormatter={(v: number) => `${v.toFixed(1)}%`}
+            yAxisId="oi"
+            tickFormatter={(v: number) => formatUSD(v)}
             stroke={colors.grey}
             tick={{ fill: colors.grey, fontSize: 11 }}
-            width={60}
+            width={72}
+          />
+          <YAxis
+            yAxisId="price"
+            orientation="right"
+            tickFormatter={(v: number) => formatUSD(v)}
+            stroke={colors.grey}
+            tick={{ fill: colors.grey, fontSize: 11 }}
+            width={72}
           />
           <Tooltip
-            formatter={(v: number, name: string) => [`${v.toFixed(2)}%`, name]}
+            formatter={(v: number, name: string) => [formatUSD(v), name]}
             labelFormatter={(ms: number) => fmtTime(ms)}
             contentStyle={{
               background: colors.bg,
@@ -88,104 +167,30 @@ export const OIChart = memo(function OIChart({
               fontSize: 12,
             }}
           />
-          <Legend
-            formatter={(value) => (
-              <span style={{ color: colors.text, fontSize: 12 }}>{value}</span>
-            )}
-          />
           <Area
+            yAxisId="oi"
             type="monotone"
-            dataKey="pct"
-            name={label1 ?? "Primary"}
+            dataKey="open_interest_usd"
+            name="OI (USD)"
             stroke={colors.teal}
-            fill="url(#oi-grad1)"
+            fill="url(#oi-grad)"
             strokeWidth={2}
             dot={false}
             isAnimationActive={false}
           />
-          <Area
+          <Line
+            yAxisId="price"
             type="monotone"
-            dataKey="pct2"
-            name={label2 ?? "Compare"}
+            dataKey="mark_price"
+            name="Price"
             stroke={colors.orange}
-            fill="url(#oi-grad2)"
-            strokeWidth={2}
+            strokeWidth={1.5}
             strokeDasharray="4 2"
             dot={false}
             isAnimationActive={false}
           />
         </ComposedChart>
-      </ResponsiveContainer>
-    );
-  }
-
-  // Single-coin mode: OI area + mark price line on right axis
-  return (
-    <ResponsiveContainer width="100%" height={height}>
-      <ComposedChart data={data} margin={{ top: 4, right: 72, bottom: 0, left: 8 }}>
-        <defs>
-          <linearGradient id="oi-grad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="5%" stopColor={colors.teal} stopOpacity={0.25} />
-            <stop offset="95%" stopColor={colors.teal} stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke={colors.grid} />
-        <XAxis
-          dataKey="timestamp_ms"
-          tickFormatter={(v: number) => fmtTime(v)}
-          stroke={colors.grey}
-          tick={{ fill: colors.grey, fontSize: 11 }}
-          minTickGap={60}
-        />
-        <YAxis
-          yAxisId="oi"
-          tickFormatter={(v: number) => formatUSD(v)}
-          stroke={colors.grey}
-          tick={{ fill: colors.grey, fontSize: 11 }}
-          width={72}
-        />
-        <YAxis
-          yAxisId="price"
-          orientation="right"
-          tickFormatter={(v: number) => formatUSD(v)}
-          stroke={colors.grey}
-          tick={{ fill: colors.grey, fontSize: 11 }}
-          width={72}
-        />
-        <Tooltip
-          formatter={(v: number, name: string) => [formatUSD(v), name]}
-          labelFormatter={(ms: number) => fmtTime(ms)}
-          contentStyle={{
-            background: colors.bg,
-            border: `1px solid ${colors.grid}`,
-            boxShadow: "rgba(14,15,12,0.12) 0px 0px 0px 1px",
-            color: colors.text,
-            fontSize: 12,
-          }}
-        />
-        <Area
-          yAxisId="oi"
-          type="monotone"
-          dataKey="open_interest_usd"
-          name="OI (USD)"
-          stroke={colors.teal}
-          fill="url(#oi-grad)"
-          strokeWidth={2}
-          dot={false}
-          isAnimationActive={false}
-        />
-        <Line
-          yAxisId="price"
-          type="monotone"
-          dataKey="mark_price"
-          name="Price"
-          stroke={colors.orange}
-          strokeWidth={1.5}
-          strokeDasharray="4 2"
-          dot={false}
-          isAnimationActive={false}
-        />
-      </ComposedChart>
-    </ResponsiveContainer>
+      )}
+    </div>
   );
 });

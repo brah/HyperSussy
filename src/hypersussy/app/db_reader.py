@@ -3,20 +3,40 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 import time
 
 
 class DashboardReader:
-    """Read-only SQLite interface for API routes."""
+    """Read-only SQLite interface for API routes.
+
+    A single shared :class:`sqlite3.Connection` would serialise every
+    parallel API request through one internal mutex — when the frontend
+    fires 7 parallel queries on a coin change, the second through seventh
+    would block until the first finishes, multiplying total wall time by
+    ~7x. Instead this class hands each FastAPI worker thread its own
+    read-only connection via :class:`threading.local`. SQLite's
+    ``?mode=ro`` URI natively supports any number of concurrent readers,
+    so the OS-level file is shared but the connection state is per-thread.
+    """
 
     def __init__(self, db_path: str) -> None:
-        self._conn = sqlite3.connect(
-            f"file:{db_path}?mode=ro",
-            uri=True,
-            check_same_thread=False,
-            isolation_level=None,
-        )
-        self._conn.row_factory = sqlite3.Row
+        self._db_path = db_path
+        self._local = threading.local()
+
+    def _connect(self) -> sqlite3.Connection:
+        """Return the calling thread's read-only connection, opening lazily."""
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(
+                f"file:{self._db_path}?mode=ro",
+                uri=True,
+                check_same_thread=False,
+                isolation_level=None,
+            )
+            conn.row_factory = sqlite3.Row
+            self._local.conn = conn
+        return conn
 
     @staticmethod
     def _hours_to_since_ms(hours: int) -> int:
@@ -29,7 +49,7 @@ class DashboardReader:
         params: tuple[object, ...] = (),
     ) -> list[dict[str, object]]:
         """Execute a query and return rows as plain dicts."""
-        cur = self._conn.execute(query, params)
+        cur = self._connect().execute(query, params)
         return [dict(row) for row in cur.fetchall()]
 
     def get_alerts_all(
@@ -152,7 +172,7 @@ class DashboardReader:
 
     def get_tracked_address_count(self) -> int:
         """Return the total number of tracked whale addresses."""
-        cur = self._conn.execute("SELECT COUNT(*) FROM tracked_addresses")
+        cur = self._connect().execute("SELECT COUNT(*) FROM tracked_addresses")
         return int(cur.fetchone()[0])
 
     def get_whale_positions(
@@ -232,7 +252,7 @@ class DashboardReader:
         since_ms: int = 0,
     ) -> dict[str, int]:
         """Count alerts per engine type since a given timestamp."""
-        cur = self._conn.execute(
+        cur = self._connect().execute(
             """
             SELECT alert_type, COUNT(*) AS cnt
             FROM alerts
@@ -262,7 +282,7 @@ class DashboardReader:
 
     def get_latest_oi_per_coin(self) -> dict[str, float]:
         """Latest open interest per coin from asset snapshots."""
-        cur = self._conn.execute(
+        cur = self._connect().execute(
             """
             SELECT s.coin, s.open_interest
             FROM asset_snapshots s
@@ -278,7 +298,7 @@ class DashboardReader:
 
     def get_distinct_coins(self) -> list[str]:
         """Return distinct coin symbols present in asset snapshots."""
-        cur = self._conn.execute(
+        cur = self._connect().execute(
             "SELECT DISTINCT coin FROM asset_snapshots ORDER BY coin"
         )
         return [row["coin"] for row in cur.fetchall()]
@@ -355,5 +375,14 @@ class DashboardReader:
         )
 
     def close(self) -> None:
-        """Close the read-only database connection."""
-        self._conn.close()
+        """Close the calling thread's read-only connection if one is open.
+
+        Per-thread connections in other threads are reclaimed by OS file
+        handle cleanup at process exit; we deliberately don't try to close
+        them from here because there's no safe way to do so without a
+        global registry, and they're harmless until shutdown.
+        """
+        conn: sqlite3.Connection | None = getattr(self._local, "conn", None)
+        if conn is not None:
+            conn.close()
+            self._local.conn = None

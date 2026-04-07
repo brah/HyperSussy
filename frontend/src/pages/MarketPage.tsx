@@ -1,6 +1,7 @@
 import { memo, startTransition, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import { useShallow } from "zustand/react/shallow";
 import {
   alertCountsQuery,
   candlesQuery,
@@ -30,6 +31,7 @@ import { EmptyState } from "../components/common/EmptyState";
 import { PanelCard } from "../components/common/PanelCard";
 import { PanelToggleBar } from "../components/common/PanelToggleBar";
 import { PanelWrapper } from "../components/common/PanelWrapper";
+import { usePanelVisible } from "../stores/panelStore";
 import { SeverityFilterBar, type Severity } from "../components/common/SeverityFilterBar";
 import { StatusBanner } from "../components/common/StatusBanner";
 import { AlertFeed } from "../components/common/AlertFeed";
@@ -89,17 +91,21 @@ function parseIntervalParam(value: string | null): Interval {
 
 /** Metric cards sourced from live WS snapshots. */
 const MetricSidebar = memo(function MetricSidebar() {
-  const snapshots = useWsStore((s) => s.snapshots);
+  // Aggregate inside the Zustand selector with shallow equality so the
+  // component skips React renders entirely when the totals haven't changed.
+  // Subscribing to `s.snapshots` directly would re-render on every WS push
+  // because each push replaces the dict reference.
+  const { count, totalOI, totalVol } = useWsStore(
+    useShallow((s) => {
+      const list = Object.values(s.snapshots);
+      return {
+        count: list.length,
+        totalOI: list.reduce((acc, c) => acc + c.open_interest_usd, 0),
+        totalVol: list.reduce((acc, c) => acc + c.day_volume_usd, 0),
+      };
+    }),
+  );
   const liveAlertCount = useWsStore((s) => s.liveAlerts.length);
-
-  const { count, totalOI, totalVol } = useMemo(() => {
-    const list = Object.values(snapshots);
-    return {
-      count: list.length,
-      totalOI: list.reduce((s, c) => s + c.open_interest_usd, 0),
-      totalVol: list.reduce((s, c) => s + c.day_volume_usd, 0),
-    };
-  }, [snapshots]);
 
   const scrollToAlerts = () => {
     document
@@ -126,7 +132,13 @@ const MetricSidebar = memo(function MetricSidebar() {
 const AlertSidebar = memo(function AlertSidebar() {
   const liveAlerts = useWsStore((s) => s.liveAlerts);
   const [severityFilter, setSeverityFilter] = useState<Severity | null>(null);
-  const { data: alertCounts = {} } = useQuery(alertCountsQuery(0));
+  // Only poll alert counts when the "Alerts by Engine" sub-panel is visible.
+  // It defaults to off, so this saves one persistent 5s background fetch.
+  const alertsByEngineVisible = usePanelVisible("alerts-engine", false);
+  const { data: alertCounts = {} } = useQuery({
+    ...alertCountsQuery(0),
+    enabled: alertsByEngineVisible,
+  });
 
   const severityCounts = useMemo(
     () => ({
@@ -199,6 +211,10 @@ export function MarketPage() {
         // Drop coin2 if it would become a self-compare
         if (coin2 && coin2 !== c) next.coin2 = coin2;
       }
+      // Reset the hours window to the default on coin change. Carrying over
+      // the previous coin's selection silently leaks state across analytics
+      // sessions and can cause confusing first-load fetches.
+      setHours(24);
       setSearchParams(next, { replace: true });
     });
   };

@@ -228,9 +228,9 @@ def test_get_alert_counts_by_type(reader: DashboardReader) -> None:
 
 
 def test_read_only_rejects_writes(reader: DashboardReader) -> None:
-    """DashboardReader connection must not accept writes."""
+    """DashboardReader connections must not accept writes."""
     with pytest.raises(sqlite3.OperationalError):
-        reader._conn.execute(  # noqa: SLF001
+        reader._connect().execute(  # noqa: SLF001
             "INSERT INTO alerts (alert_id, alert_type, severity, coin, "
             "title, description, timestamp_ms) VALUES ('x','x','x','x','x','x',1)"
         )

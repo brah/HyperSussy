@@ -9,12 +9,14 @@ production build exists.
 from __future__ import annotations
 
 import importlib.resources
+import logging
 import os
 import sqlite3
-from collections.abc import AsyncGenerator
+import time
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -27,6 +29,11 @@ from hypersussy.app.db_reader import DashboardReader
 from hypersussy.app.runner import BackgroundRunner
 from hypersussy.app.state import SharedState
 from hypersussy.config import HyperSussySettings
+
+logger = logging.getLogger(__name__)
+
+# Requests slower than this get logged at WARNING. Tune in one place.
+SLOW_REQUEST_THRESHOLD_S = 0.25
 
 
 def _ensure_db_ready(db_path: str) -> None:
@@ -83,6 +90,82 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     actions.close()
 
 
+async def _timing_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Always-on per-request timing log.
+
+    Logs every request at DEBUG with its wall time, and emits a WARNING
+    for anything slower than ``SLOW_REQUEST_THRESHOLD_S``. WebSocket
+    upgrades and the static SPA are excluded — they don't go through this
+    middleware path anyway, but the path-prefix check keeps the log noise
+    on real API traffic only.
+    """
+    is_api = request.url.path.startswith("/api/")
+    if not is_api:
+        return await call_next(request)
+
+    started = time.perf_counter()
+    response = await call_next(request)
+    elapsed = time.perf_counter() - started
+
+    if elapsed >= SLOW_REQUEST_THRESHOLD_S:
+        logger.warning(
+            "slow_request method=%s path=%s status=%d duration_ms=%d",
+            request.method,
+            request.url.path,
+            response.status_code,
+            int(elapsed * 1000),
+        )
+    else:
+        logger.debug(
+            "request method=%s path=%s status=%d duration_ms=%d",
+            request.method,
+            request.url.path,
+            response.status_code,
+            int(elapsed * 1000),
+        )
+    return response
+
+
+async def _profile_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Opt-in pyinstrument profiler.
+
+    Append ``?profile=1`` to any API URL to get an interactive HTML flame
+    graph back instead of the JSON response. Pyinstrument is a sampling
+    profiler so the overhead when this branch is not taken is zero — the
+    middleware short-circuits on the missing query param.
+
+    Example:
+        curl 'http://localhost:8000/api/whales/top/BTC?hours=24&profile=1' \\
+            -o profile.html && start profile.html
+    """
+    if request.query_params.get("profile") != "1":
+        return await call_next(request)
+
+    try:
+        from pyinstrument import Profiler
+    except ImportError:
+        logger.warning("pyinstrument not installed; ?profile=1 ignored")
+        return await call_next(request)
+
+    profiler = Profiler(async_mode="enabled")
+    profiler.start()
+    try:
+        await call_next(request)
+    finally:
+        profiler.stop()
+
+    return Response(
+        content=profiler.output_html(),
+        media_type="text/html",
+    )
+
+
 def create_app() -> FastAPI:
     """Construct and configure the FastAPI application.
 
@@ -95,6 +178,12 @@ def create_app() -> FastAPI:
         version="0.1.0",
         lifespan=_lifespan,
     )
+
+    # Order matters: profiler is innermost so its timing reflects only the
+    # actual route handler work, not the timing middleware overhead. Both
+    # are http-only and don't interfere with the WebSocket path.
+    app.middleware("http")(_timing_middleware)
+    app.middleware("http")(_profile_middleware)
 
     app.add_middleware(
         CORSMiddleware,

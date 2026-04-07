@@ -62,6 +62,14 @@ CREATE TABLE IF NOT EXISTS address_positions (
     PRIMARY KEY (address, coin, timestamp_ms)
 );
 
+-- The PRIMARY KEY leads with `address`, so it can't satisfy the
+-- "latest position per address for one coin" query used by the
+-- /api/whales/top/{coin} endpoint. Without this index that query
+-- full-scans address_positions and is the dominant source of latency
+-- on coin changes for tracked coins with many holders.
+CREATE INDEX IF NOT EXISTS idx_address_positions_coin_ts
+    ON address_positions (coin, timestamp_ms);
+
 CREATE TABLE IF NOT EXISTS alerts (
     alert_id        TEXT    PRIMARY KEY,
     alert_type      TEXT    NOT NULL,

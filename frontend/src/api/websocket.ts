@@ -13,6 +13,45 @@ const MAX_LIVE_ALERTS = 100;
 const BACKOFF_CAP_MS = 30_000;
 const STOP_GRACE_MS = 100;
 
+// Snapshot updates from the backend can arrive several times per second.
+// Each WS message replaces the entire snapshots dict with a fresh top-level
+// reference, which would re-render every component subscribing to it (the
+// market summary table, metric sidebar, top-holders, etc.) on every push.
+// Throttle commits to the React store with a leading-edge + trailing flush
+// pattern: the first push goes through immediately, then subsequent pushes
+// during the window are coalesced into a single commit at the trailing edge.
+const SNAPSHOT_FLUSH_MS = 500;
+let _pendingSnapshots: Record<string, LiveSnapshot> | null = null;
+let _snapshotFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+function flushPendingSnapshots(): void {
+  _snapshotFlushTimer = null;
+  if (_pendingSnapshots !== null) {
+    useWsStore.getState().setSnapshots(_pendingSnapshots);
+    _pendingSnapshots = null;
+  }
+}
+
+function commitSnapshotsThrottled(snapshots: Record<string, LiveSnapshot>): void {
+  if (_snapshotFlushTimer === null) {
+    // Leading edge — commit immediately so the first message is never delayed.
+    useWsStore.getState().setSnapshots(snapshots);
+    _snapshotFlushTimer = setTimeout(flushPendingSnapshots, SNAPSHOT_FLUSH_MS);
+  } else {
+    // Trailing edge — coalesce into the timer; only the most recent payload
+    // matters because each push is a full snapshot of all coins.
+    _pendingSnapshots = snapshots;
+  }
+}
+
+function clearSnapshotFlushTimer(): void {
+  if (_snapshotFlushTimer !== null) {
+    clearTimeout(_snapshotFlushTimer);
+    _snapshotFlushTimer = null;
+  }
+  _pendingSnapshots = null;
+}
+
 interface WsState {
   snapshots: Record<string, LiveSnapshot>;
   liveAlerts: AlertItem[];
@@ -74,8 +113,7 @@ function connect(): void {
     return;
   }
 
-  const { setConnected, setSnapshots, addAlert, setHealth } =
-    useWsStore.getState();
+  const { setConnected, addAlert, setHealth } = useWsStore.getState();
 
   const scheme = location.protocol === "https:" ? "wss" : "ws";
   const url = import.meta.env.DEV
@@ -100,7 +138,7 @@ function connect(): void {
 
     switch (msg.type) {
       case "snapshots":
-        setSnapshots(msg.data);
+        commitSnapshotsThrottled(msg.data);
         break;
       case "alert":
         addAlert(msg.data);
@@ -114,6 +152,13 @@ function connect(): void {
   _ws.onclose = () => {
     setConnected(false);
     _ws = null;
+
+    // Drop any in-flight throttle state. Without this a trailing flush
+    // scheduled before the disconnect would still fire and commit stale
+    // data after the socket is gone, and the first message from the
+    // reconnected socket would be coalesced into the lingering timer
+    // instead of taking the leading-edge fast path.
+    clearSnapshotFlushTimer();
 
     if (!_allowReconnect || _subscriberCount === 0) {
       _allowReconnect = true;
@@ -160,6 +205,7 @@ export function stopWebSocket(): void {
     }
 
     _allowReconnect = false;
+    clearSnapshotFlushTimer();
     useWsStore.getState().setConnected(false);
     _ws?.close();
     _ws = null;

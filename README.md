@@ -194,6 +194,64 @@ npm run build
 
 The frontend uses Vite 8 (Rolldown) + React 19 + TanStack Query + Zustand + Tailwind 4. Production builds split vendor bundles (recharts, lightweight-charts, react, query) so app-only deploys re-download ~18 KB gzip instead of the full bundle.
 
+## Performance Profiling
+
+A small always-on instrumentation layer plus opt-in profilers across the stack. Reach for these *before* the dashboard feels slow, not after.
+
+### Frontend profiling
+
+- **Browser DevTools → Performance tab.** Record a coin change, look for long yellow (script) and purple (layout) bars.
+- **React DevTools Profiler** (browser extension). Open the Profiler tab → record → click a coin → stop → look at the flame chart by commit. The single best tool for spotting unwanted re-renders.
+- **TanStack Query DevTools** is wired into dev builds at [frontend/src/main.tsx](frontend/src/main.tsx). Click the floating logo in the bottom-left of the app at `localhost:5173`. Shows every query's state, last fetch duration, refetch count, and stale time. Tree-shaken out of production builds.
+- **Bundle composition.** `cd frontend && npm run build` prints per-chunk sizes; `vendor-recharts`, `vendor-lightweight-charts`, `vendor-react`, and `vendor-query` are intentionally split for cache stability.
+
+### Backend profiling
+
+- **Per-request timing log.** Always on. Every API request is timed in [src/hypersussy/api/server.py](src/hypersussy/api/server.py) — anything slower than 250 ms emits a `slow_request` WARNING with method, path, status, and duration. Tail the log with `uv run hypersussy --api` and rapidly click coins; slow handlers will surface immediately.
+- **`pyinstrument` flame graphs.** Append `?profile=1` to any API URL to get an interactive HTML flame graph instead of the JSON response. Sampling profiler — zero overhead when the param isn't set. Easiest way to view it: paste the URL directly into your browser, e.g.:
+
+  ```text
+  http://localhost:8000/api/whales/top/BTC?hours=24&profile=1
+  ```
+
+  Or save to a file from a shell. The URL must be wrapped in **double** quotes (single quotes don't group on Windows):
+
+  ```bash
+  # macOS / Linux
+  curl "http://localhost:8000/api/whales/top/BTC?hours=24&profile=1" -o profile.html
+
+  # PowerShell — note `curl.exe`, since `curl` is aliased to Invoke-WebRequest
+  curl.exe "http://localhost:8000/api/whales/top/BTC?hours=24&profile=1" -o profile.html
+  ```
+
+- **`py-spy`** for "the live process is slow right now" debugging without code changes:
+
+  ```bash
+  pipx install py-spy
+  py-spy record -o flame.svg --pid <hypersussy.exe pid> --duration 30
+  ```
+
+  Click coins in the browser during the recording window.
+
+### SQL / SQLite profiling
+
+- **`EXPLAIN QUERY PLAN`** is the cheapest tool with the highest hit rate. Open the database directly and verify any slow query is using an index, not scanning a table:
+
+  ```bash
+  sqlite3 data/hypersussy.db
+  sqlite> EXPLAIN QUERY PLAN
+     ...> SELECT address, MAX(timestamp_ms) FROM address_positions
+     ...> WHERE coin = 'BTC' GROUP BY address;
+  ```
+
+  Look for `SEARCH ... USING INDEX` (good) vs `SCAN` (bad — needs an index).
+
+- **`ANALYZE`** once after large data growth so the planner has fresh selectivity stats:
+
+  ```bash
+  sqlite3 data/hypersussy.db "ANALYZE;"
+  ```
+
 ## CI / CD
 
 GitHub Actions workflows live in [`.github/workflows/`](.github/workflows/):

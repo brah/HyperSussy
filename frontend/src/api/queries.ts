@@ -159,6 +159,6 @@ export const topCoinPositionsQuery = (coin: string, limit: number) =>
     queryKey: ["top-coin-positions", coin, limit],
     queryFn: () => api.fetchTopCoinPositions(coin, limit),
     staleTime: 10_000,
-    refetchInterval: 10_000,
     enabled: coin.length > 0,
+    placeholderData: keepPreviousData,
   });

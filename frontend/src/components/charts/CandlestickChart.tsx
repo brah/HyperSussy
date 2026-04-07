@@ -1,15 +1,21 @@
 import { memo, useEffect, useMemo, useRef } from "react";
 import {
-  createChart,
-  type IChartApi,
-  type ISeriesApi,
-  type CandlestickData,
-  type HistogramData,
-  type SeriesMarker,
-  type Time,
+  AreaSeries,
+  CandlestickSeries,
   ColorType,
   CrosshairMode,
+  HistogramSeries,
+  LineSeries,
   LineStyle,
+  createChart,
+  createSeriesMarkers,
+  type CandlestickData,
+  type HistogramData,
+  type IChartApi,
+  type ISeriesApi,
+  type ISeriesMarkersPluginApi,
+  type SeriesMarker,
+  type Time,
 } from "lightweight-charts";
 import type { CandleItem, OISnapshotItem, FundingSnapshotItem } from "../../api/types";
 import type { IndicatorPoint } from "../../utils/indicators";
@@ -50,6 +56,7 @@ export const CandlestickChart = memo(function CandlestickChart({
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   const overlaySeriesRefs = useRef<Map<string, ISeriesApi<"Line">>>(new Map());
   const oiSeriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const markersPluginRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   // ── Chart creation ──────────────────────────────────────────
   useEffect(() => {
@@ -77,7 +84,7 @@ export const CandlestickChart = memo(function CandlestickChart({
     });
     chartRef.current = chart;
 
-    const candleSeries = chart.addCandlestickSeries({
+    const candleSeries = chart.addSeries(CandlestickSeries, {
       upColor: "#26a69a",
       downColor: "#ef5350",
       borderVisible: false,
@@ -86,7 +93,7 @@ export const CandlestickChart = memo(function CandlestickChart({
     });
     candleSeriesRef.current = candleSeries;
 
-    const volumeSeries = chart.addHistogramSeries({
+    const volumeSeries = chart.addSeries(HistogramSeries, {
       color: colors.grey,
       priceFormat: { type: "volume" },
       priceScaleId: "volume",
@@ -112,6 +119,7 @@ export const CandlestickChart = memo(function CandlestickChart({
       resizeObserver.disconnect();
       overlaySeriesRefs.current.clear();
       oiSeriesRef.current = null;
+      markersPluginRef.current = null;
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -169,7 +177,7 @@ export const CandlestickChart = memo(function CandlestickChart({
     for (const overlay of overlays) {
       let series = existing.get(overlay.key);
       if (!series) {
-        series = chart.addLineSeries({
+        series = chart.addSeries(LineSeries, {
           color: overlay.color,
           lineWidth: (overlay.lineWidth ?? 1.5) as 1 | 2 | 3 | 4,
           lineStyle: overlay.lineStyle ?? LineStyle.Solid,
@@ -198,7 +206,7 @@ export const CandlestickChart = memo(function CandlestickChart({
 
       let series = oiSeriesRef.current;
       if (!series) {
-        series = chart.addAreaSeries({
+        series = chart.addSeries(AreaSeries, {
           topColor: `${colors.teal}30`,
           bottomColor: "transparent",
           lineColor: colors.teal,
@@ -231,19 +239,22 @@ export const CandlestickChart = memo(function CandlestickChart({
   }, [showOI, oiData]);
 
   // ── Funding rate markers ────────────────────────────────────
+  // v5 moved markers to a separate plugin: createSeriesMarkers(series, markers)
+  // returns an ISeriesMarkersPluginApi whose own setMarkers() is the update path.
   useEffect(() => {
     const candleSeries = candleSeriesRef.current;
     if (!candleSeries) return;
 
     if (!showFundingMarkers || !fundingData || fundingData.length === 0) {
-      candleSeries.setMarkers([]);
+      markersPluginRef.current?.setMarkers([]);
       return;
     }
 
-    // Only show markers within candle time range
     const minTime = candles.length > 0 ? msToSec(candles[0].timestamp_ms) : 0;
     const maxTime =
-      candles.length > 0 ? msToSec(candles[candles.length - 1].timestamp_ms) : Infinity;
+      candles.length > 0
+        ? msToSec(candles[candles.length - 1].timestamp_ms)
+        : Infinity;
 
     const markers: SeriesMarker<Time>[] = fundingData
       .filter((f) => {
@@ -259,7 +270,11 @@ export const CandlestickChart = memo(function CandlestickChart({
       }))
       .sort((a, b) => (a.time as number) - (b.time as number));
 
-    candleSeries.setMarkers(markers);
+    if (!markersPluginRef.current) {
+      markersPluginRef.current = createSeriesMarkers(candleSeries, markers);
+    } else {
+      markersPluginRef.current.setMarkers(markers);
+    }
   }, [showFundingMarkers, fundingData, candles]);
 
   return <div ref={containerRef} style={{ width: "100%", height }} />;

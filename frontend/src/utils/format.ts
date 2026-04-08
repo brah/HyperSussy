@@ -45,6 +45,28 @@ export function formatPercent(value: number, decimals = 2): string {
   return `${value.toFixed(decimals)}%`;
 }
 
+/** Format a byte count using binary (1024) units. */
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const kb = bytes / 1024;
+  if (kb < 1024) return `${kb.toFixed(1)} KB`;
+  const mb = kb / 1024;
+  if (mb < 1024) return `${mb.toFixed(1)} MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(2)} GB`;
+}
+
+/** Format an integer count compactly with k/M/B suffixes (e.g. 12.3k, 1.21M). */
+export function formatCount(value: number): string {
+  const abs = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(2)}B`;
+  if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(2)}M`;
+  if (abs >= 1e4) return `${sign}${(abs / 1e3).toFixed(1)}k`;
+  if (abs >= 1e3) return `${sign}${abs.toLocaleString("en-US")}`;
+  return `${sign}${abs}`;
+}
+
 /** Shorten a 0x address to prefix..suffix form (e.g. "0xab4f..ef35"). */
 export function shortAddress(address: string, chars = 4): string {
   if (address.length <= 2 + chars * 2) return address;

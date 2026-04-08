@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from hypersussy.api.deps import ActionsDep, PnlServiceDep, ReaderDep
+from hypersussy.api.deps import ActionsDep, PnlServiceDep, ReaderDep, SpotServiceDep
 from hypersussy.api.schemas import (
     AddWhaleRequest,
     CoinPositionItem,
@@ -12,7 +12,9 @@ from hypersussy.api.schemas import (
     FillPageResponse,
     PositionItem,
     RealizedPnlResponse,
+    SpotAssetItem,
     TrackedAddressItem,
+    WalletAccountResponse,
     WhaleCountResponse,
 )
 from hypersussy.app.navigation import normalize_wallet_address
@@ -172,6 +174,47 @@ async def get_fills(
     return FillPageResponse(
         fills=[FillItem.model_validate(f) for f in fills],
         next_cursor=next_cursor,
+    )
+
+
+@router.get("/account/{address}")
+async def get_wallet_account(
+    address: str,
+    spot_service: SpotServiceDep,
+) -> WalletAccountResponse:
+    """Return account equity summary and spot token balances for a wallet.
+
+    Fetches ``marginSummary`` and ``spot_user_state`` concurrently from the
+    Hyperliquid API.  Results are cached for 60 seconds per address.
+
+    Args:
+        address: The 0x wallet address (42-char hex).
+        spot_service: Injected spot/account service.
+
+    Returns:
+        WalletAccountResponse with equity metrics and spot holdings.
+
+    Raises:
+        HTTPException: 422 if address is not a valid 0x wallet address.
+    """
+    addr = normalize_wallet_address(address)
+    if addr is None:
+        raise HTTPException(status_code=422, detail="Invalid wallet address")
+    snap = await spot_service.get_account(addr)
+    return WalletAccountResponse(
+        account_value=snap.margin.account_value,
+        withdrawable=snap.margin.withdrawable,
+        total_margin_used=snap.margin.total_margin_used,
+        total_ntl_pos=snap.margin.total_ntl_pos,
+        spot=[
+            SpotAssetItem(
+                coin=b.coin,
+                total=b.total,
+                hold=b.hold,
+                entry_ntl=b.entry_ntl,
+            )
+            for b in snap.spot
+        ],
     )
 
 

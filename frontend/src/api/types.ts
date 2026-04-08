@@ -159,6 +159,36 @@ export interface RealizedPnlResponse {
   is_complete_all_time: boolean;
 }
 
+export interface SpotAssetItem {
+  coin: string;
+  total: number;
+  hold: number;
+  entry_ntl: number;
+}
+
+export interface WalletAccountResponse {
+  account_value: number;
+  withdrawable: number;
+  total_margin_used: number;
+  total_ntl_pos: number;
+  spot: SpotAssetItem[];
+}
+
+export interface StorageStatsResponse {
+  db_size_bytes: number;
+  asset_snapshots_rows: number;
+  trades_rows: number;
+  address_positions_rows: number;
+  alerts_rows: number;
+  candles_rows: number;
+  tracked_addresses_rows: number;
+  coins_covered: number;
+  distinct_addresses_positioned: number;
+  distinct_addresses_traded: number;
+  perp_universe_count: number;
+  perp_coverage_pct: number;
+}
+
 export type WsMessage =
   | { type: "snapshots"; data: Record<string, LiveSnapshot>; timestamp_ms: number }
   | { type: "alert"; data: AlertItem; timestamp_ms: number }

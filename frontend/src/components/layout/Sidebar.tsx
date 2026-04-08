@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { useWsStore } from "../../api/websocket";
-import { normalizeAddress, shortAddress } from "../../utils/format";
+import { storageStatsQuery } from "../../api/queries";
+import {
+  formatBytes,
+  formatCount,
+  normalizeAddress,
+  shortAddress,
+} from "../../utils/format";
 import { useWatchlistStore } from "../../stores/watchlistStore";
 
 const NAV = [
@@ -16,6 +23,7 @@ export function Sidebar() {
   const removeWatched = useWatchlistStore((s) => s.remove);
   const [search, setSearch] = useState("");
   const navigate = useNavigate();
+  const { data: stats } = useQuery(storageStatsQuery());
   const hasErrors =
     (health?.engine_errors.length ?? 0) + (health?.runtime_errors.length ?? 0) > 0;
 
@@ -122,6 +130,37 @@ export function Sidebar() {
         )}
       </div>
 
+      <div className="border-t border-hs-grid px-3 py-2">
+        <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-hs-grey">
+          System
+        </div>
+        <dl className="space-y-0.5 text-[10px] tabular-nums">
+          <StatRow label="DB Size" value={stats ? formatBytes(stats.db_size_bytes) : "—"} />
+          {stats && stats.perp_universe_count > 0 && (
+            <StatRow
+              label="Perps"
+              value={`${stats.coins_covered} / ${stats.perp_universe_count} (${stats.perp_coverage_pct.toFixed(0)}%)`}
+            />
+          )}
+          <StatRow
+            label="Whales"
+            value={stats ? formatCount(stats.tracked_addresses_rows) : "—"}
+          />
+          <StatRow
+            label="Positions"
+            value={stats ? formatCount(stats.address_positions_rows) : "—"}
+          />
+          <StatRow
+            label="Trades"
+            value={stats ? formatCount(stats.trades_rows) : "—"}
+          />
+          <StatRow
+            label="Alerts"
+            value={stats ? formatCount(stats.alerts_rows) : "—"}
+          />
+        </dl>
+      </div>
+
       <div className="border-t border-hs-grid p-3">
         <form onSubmit={handleSearch}>
           <input
@@ -139,5 +178,14 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+  );
+}
+
+function StatRow({ label, value }: Readonly<{ label: string; value: string }>) {
+  return (
+    <div className="flex items-center justify-between">
+      <dt className="text-hs-grey">{label}</dt>
+      <dd className="text-hs-text">{value}</dd>
+    </div>
   );
 }

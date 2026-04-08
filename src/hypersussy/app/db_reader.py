@@ -5,6 +5,40 @@ from __future__ import annotations
 import sqlite3
 import threading
 import time
+from dataclasses import dataclass
+
+_STORAGE_STATS_TTL_S = 60.0
+
+
+@dataclass(frozen=True, slots=True)
+class StorageStats:
+    """Aggregate row counts for the SQLite store.
+
+    Args:
+        asset_snapshots_rows: Total rows in ``asset_snapshots``.
+        trades_rows: Total rows in ``trades``.
+        address_positions_rows: Total rows in ``address_positions``.
+        alerts_rows: Total rows in ``alerts``.
+        candles_rows: Total rows in ``candles``.
+        tracked_addresses_rows: Total rows in ``tracked_addresses``.
+        distinct_coins: Set of distinct coin symbols ever seen in
+            ``asset_snapshots``. Returned as a set rather than a count so
+            the caller can intersect it with the current live-coin
+            universe — a raw historical count would include delisted
+            coins and produce > 100% coverage ratios.
+        distinct_addresses_positioned: Distinct addresses in ``address_positions``.
+        distinct_addresses_traded: Distinct buyer/seller addresses in ``trades``.
+    """
+
+    asset_snapshots_rows: int
+    trades_rows: int
+    address_positions_rows: int
+    alerts_rows: int
+    candles_rows: int
+    tracked_addresses_rows: int
+    distinct_coins: frozenset[str]
+    distinct_addresses_positioned: int
+    distinct_addresses_traded: int
 
 
 class DashboardReader:
@@ -23,6 +57,13 @@ class DashboardReader:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._local = threading.local()
+        # Process-wide cache for the storage stats query: COUNT(*) and
+        # COUNT(DISTINCT) over the trades table is the slowest query the
+        # reader does, and the answer changes slowly. Bound it to one
+        # cold call per minute regardless of caller count.
+        self._storage_stats_lock = threading.Lock()
+        self._storage_stats_cache: StorageStats | None = None
+        self._storage_stats_expires_at: float = 0.0
 
     def _connect(self) -> sqlite3.Connection:
         """Return the calling thread's read-only connection, opening lazily."""
@@ -174,6 +215,77 @@ class DashboardReader:
         """Return the total number of tracked whale addresses."""
         cur = self._connect().execute("SELECT COUNT(*) FROM tracked_addresses")
         return int(cur.fetchone()[0])
+
+    def get_storage_stats(self) -> StorageStats:
+        """Return per-table row counts and distinct-entity counts.
+
+        Cached in-process for ``_STORAGE_STATS_TTL_S`` seconds because the
+        ``COUNT(*)`` over ``trades`` and the ``COUNT(DISTINCT)`` UNION over
+        buyer/seller are the slowest queries the reader does, and the
+        answers change slowly relative to typical render frequency.
+
+        Returns:
+            StorageStats with row counts and distinct-entity totals.
+        """
+        now = time.monotonic()
+        with self._storage_stats_lock:
+            if (
+                self._storage_stats_cache is not None
+                and now < self._storage_stats_expires_at
+            ):
+                return self._storage_stats_cache
+
+        conn = self._connect()
+        rows = {
+            name: int(conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0])
+            for name in (
+                "asset_snapshots",
+                "trades",
+                "address_positions",
+                "alerts",
+                "candles",
+                "tracked_addresses",
+            )
+        }
+        distinct_coins = frozenset(
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT coin FROM asset_snapshots"
+            ).fetchall()
+        )
+        distinct_positioned = int(
+            conn.execute(
+                "SELECT COUNT(DISTINCT address) FROM address_positions"
+            ).fetchone()[0]
+        )
+        distinct_traded = int(
+            conn.execute(
+                """
+                SELECT COUNT(DISTINCT addr) FROM (
+                    SELECT buyer AS addr FROM trades WHERE buyer != ''
+                    UNION
+                    SELECT seller AS addr FROM trades WHERE seller != ''
+                )
+                """
+            ).fetchone()[0]
+        )
+
+        stats = StorageStats(
+            asset_snapshots_rows=rows["asset_snapshots"],
+            trades_rows=rows["trades"],
+            address_positions_rows=rows["address_positions"],
+            alerts_rows=rows["alerts"],
+            candles_rows=rows["candles"],
+            tracked_addresses_rows=rows["tracked_addresses"],
+            distinct_coins=distinct_coins,
+            distinct_addresses_positioned=distinct_positioned,
+            distinct_addresses_traded=distinct_traded,
+        )
+
+        with self._storage_stats_lock:
+            self._storage_stats_cache = stats
+            self._storage_stats_expires_at = time.monotonic() + _STORAGE_STATS_TTL_S
+        return stats
 
     def get_whale_positions(
         self,

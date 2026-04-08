@@ -70,10 +70,13 @@ export const CoinSelector = memo(function CoinSelector({
     return "";
   }, [query, filtered]);
 
-  // Reset active index whenever filter results change.
+  // Reset active index only when the user's query changes, not on every WS push.
+  // WS updates change `byOI`/`filtered` references but keep the same coins in
+  // the same relative order — resetting on those would jump the cursor to the
+  // top mid-navigation.
   useEffect(() => {
     setActiveIdx(0);
-  }, [filtered]);
+  }, [query]);
 
   // Scroll the active item into view.
   useEffect(() => {

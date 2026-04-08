@@ -203,3 +203,47 @@ class WhaleCountResponse(BaseModel):
     """Response for GET /api/whales/count."""
 
     count: int
+
+
+class SpotAssetItem(_Base):
+    """A single spot token holding for a wallet."""
+
+    coin: str
+    total: float
+    hold: float
+    entry_ntl: float
+
+
+class WalletAccountResponse(_Base):
+    """Combined account equity + spot balances for a wallet."""
+
+    account_value: float
+    withdrawable: float
+    total_margin_used: float
+    total_ntl_pos: float
+    spot: list[SpotAssetItem]
+
+
+class StorageStatsResponse(_Base):
+    """Local storage and Hyperliquid coverage metrics.
+
+    ``coins_covered`` is the intersection of coins we have stored data
+    for and the coins currently in the live HL universe — it is always
+    ``<= perp_universe_count``, so ``perp_coverage_pct`` cannot exceed
+    100%. A raw historical distinct-coin count is intentionally not
+    exposed because it would include delisted coins and produce
+    misleading coverage ratios.
+    """
+
+    db_size_bytes: int
+    asset_snapshots_rows: int
+    trades_rows: int
+    address_positions_rows: int
+    alerts_rows: int
+    candles_rows: int
+    tracked_addresses_rows: int
+    coins_covered: int
+    distinct_addresses_positioned: int
+    distinct_addresses_traded: int
+    perp_universe_count: int
+    perp_coverage_pct: float

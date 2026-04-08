@@ -154,6 +154,22 @@ export const realizedPnlQuery = (address: string) =>
     enabled: address.length === 42,
   });
 
+export const storageStatsQuery = () =>
+  queryOptions({
+    queryKey: ["storage-stats"],
+    queryFn: api.fetchStorageStats,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+  });
+
+export const walletAccountQuery = (address: string) =>
+  queryOptions({
+    queryKey: ["wallet-account", address],
+    queryFn: () => api.fetchWalletAccount(address),
+    staleTime: 60_000,
+    enabled: address.length === 42,
+  });
+
 export const topCoinPositionsQuery = (coin: string, limit: number) =>
   queryOptions({
     queryKey: ["top-coin-positions", coin, limit],

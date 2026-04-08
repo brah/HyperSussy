@@ -118,7 +118,12 @@ class BackgroundRunner:
             os.makedirs(db_dir, exist_ok=True)
 
         log_file = os.path.join(db_dir or "data", "hypersussy-dashboard.log")
-        _configure_logging(self._settings.log_level, log_file)
+        _configure_logging(
+            self._settings.log_level,
+            log_file,
+            max_bytes=self._settings.log_max_bytes,
+            backup_count=self._settings.log_backup_count,
+        )
         self._state.set_log_path(log_file)
 
         reader, stream, storage, engines, _ = _build_components(self._settings)

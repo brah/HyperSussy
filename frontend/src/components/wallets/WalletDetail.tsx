@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   alertsByAddressQuery,
   realizedPnlQuery,
+  walletAccountQuery,
   whalePositionsQuery,
 } from "../../api/queries";
 import { usePanelVisible } from "../../stores/panelStore";
@@ -12,9 +13,10 @@ import { MetricCard } from "../common/MetricCard";
 import { WatchStar } from "../common/WatchStar";
 import { FillHistoryTable } from "./FillHistoryTable";
 import { PositionsTable } from "./PositionsTable";
+import { SpotAssetsTable } from "./SpotAssetsTable";
 import { shortAddress, formatPercent, formatUSD } from "../../utils/format";
 
-type Tab = "positions" | "fills" | "alerts";
+type Tab = "positions" | "fills" | "alerts" | "spot";
 
 interface WalletDetailProps {
   address: string;
@@ -42,6 +44,10 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
     ...realizedPnlQuery(address),
     enabled: address.length === 42,
   });
+  const { data: accountData } = useQuery({
+    ...walletAccountQuery(address),
+    enabled: address.length === 42,
+  });
 
   // Summary metrics derived from positions
   const totalNotional = positions.reduce((s, p) => s + Math.abs(p.notional_usd), 0);
@@ -58,13 +64,15 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
       { id: "positions", label: "Positions", count: positions.length },
       { id: "fills", label: "Fills", count: 0 },
       { id: "alerts", label: "Alerts", count: alerts.length },
+      { id: "spot", label: "Spot Assets", count: accountData?.spot.length ?? 0 },
     ];
     return all.filter(({ id }) => {
       if (id === "positions") return showPositions;
       if (id === "fills") return showFills;
-      return showAlerts;
+      if (id === "alerts") return showAlerts;
+      return true; // spot always visible
     });
-  }, [positions.length, alerts.length, showPositions, showFills, showAlerts]);
+  }, [positions.length, alerts.length, accountData?.spot.length, showPositions, showFills, showAlerts]);
 
   useEffect(() => {
     if (tabs.length === 0) {
@@ -91,7 +99,37 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
         </span>
       </div>
 
-      {/* Summary cards */}
+      {/* Account equity summary */}
+      {accountData != null && (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <MetricCard
+            compact
+            label="Account Value"
+            value={formatUSD(accountData.account_value)}
+            valueClassName="text-hs-text tabular-nums"
+          />
+          <MetricCard
+            compact
+            label="Withdrawable"
+            value={formatUSD(accountData.withdrawable)}
+            valueClassName="text-hs-teal tabular-nums"
+          />
+          <MetricCard
+            compact
+            label="Margin Used"
+            value={formatUSD(accountData.total_margin_used)}
+            valueClassName="text-hs-text tabular-nums"
+          />
+          <MetricCard
+            compact
+            label="Position Value"
+            value={formatUSD(accountData.total_ntl_pos)}
+            valueClassName="text-hs-text tabular-nums"
+          />
+        </div>
+      )}
+
+      {/* Position-derived summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
         {positions.length > 0 && (
           <>
@@ -191,6 +229,9 @@ export function WalletDetail({ address }: Readonly<WalletDetailProps>) {
               <div className="p-4">
                 <AlertFeed alerts={alerts} maxRows={50} />
               </div>
+            )}
+            {tab === "spot" && (
+              <SpotAssetsTable assets={accountData?.spot ?? []} />
             )}
           </>
         )}

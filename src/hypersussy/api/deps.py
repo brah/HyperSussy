@@ -13,6 +13,7 @@ from fastapi import Depends, Request
 
 from hypersussy.api.candle_service import CandleService
 from hypersussy.api.pnl_service import PnlService
+from hypersussy.api.spot_service import SpotService
 from hypersussy.app.actions import DashboardActions
 from hypersussy.app.db_reader import DashboardReader
 from hypersussy.app.state import SharedState
@@ -48,8 +49,15 @@ def get_pnl_service(request: Request) -> PnlService:
     return service
 
 
+def get_spot_service(request: Request) -> SpotService:
+    """Return the application-scoped spot/account service."""
+    service: SpotService = request.app.state.spot_service
+    return service
+
+
 ReaderDep = Annotated[DashboardReader, Depends(get_reader)]
 ActionsDep = Annotated[DashboardActions, Depends(get_actions)]
 StateDep = Annotated[SharedState, Depends(get_state)]
 CandleServiceDep = Annotated[CandleService, Depends(get_candle_service)]
 PnlServiceDep = Annotated[PnlService, Depends(get_pnl_service)]
+SpotServiceDep = Annotated[SpotService, Depends(get_spot_service)]

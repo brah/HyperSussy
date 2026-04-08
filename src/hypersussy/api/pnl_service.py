@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
@@ -16,6 +17,10 @@ from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.rate_limiter import WeightRateLimiter
 
 _CACHE_TTL_S = 120.0
+# Hard cap on distinct addresses retained in the per-process PnL cache.
+# Paired with on-insert TTL eviction, this bounds memory growth in
+# long-running sessions that search many distinct wallets.
+_CACHE_MAX_ENTRIES = 512
 _HL_FILL_CAP = 2000
 _MAX_PNL_PAGES = 10  # safety cap: 10 pages x 2000 = 20k fills max
 _INITIAL_WINDOW_DAYS = 30
@@ -69,7 +74,10 @@ class PnlService:
             rate_limiter=WeightRateLimiter(max_weight=200, window_seconds=60),
             include_hip3=False,
         )
-        self._cache: dict[str, _CacheEntry] = {}
+        # OrderedDict + TTL + hard cap: see SpotService for rationale.
+        # Without this bound, every distinct wallet searched stays in
+        # the dict forever — a slow memory leak in long sessions.
+        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
 
     async def get_pnl(self, address: str) -> PnlSnapshot:
         """Fetch 7-day and all-time realized PnL concurrently.
@@ -83,6 +91,7 @@ class PnlService:
         now = time.monotonic()
         cached = self._cache.get(address)
         if cached is not None and now < cached.expires_at:
+            self._cache.move_to_end(address)
             return cached.snapshot
 
         seven_d_ms = int((time.time() - 7 * 86_400) * 1000)
@@ -95,7 +104,23 @@ class PnlService:
             snapshot=snapshot,
             expires_at=now + _CACHE_TTL_S,
         )
+        self._cache.move_to_end(address)
+        self._evict_cache(now)
         return snapshot
+
+    def _evict_cache(self, now: float) -> None:
+        """Drop expired entries, then LRU-evict until under the hard cap.
+
+        Args:
+            now: Current monotonic time.
+        """
+        expired = [
+            key for key, entry in self._cache.items() if entry.expires_at <= now
+        ]
+        for key in expired:
+            del self._cache[key]
+        while len(self._cache) > _CACHE_MAX_ENTRIES:
+            self._cache.popitem(last=False)
 
     async def _fetch_pnl(self, address: str, start_ms: int) -> PnlResult:
         """Fetch all fills from HL and sum closedPnl.

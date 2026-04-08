@@ -110,3 +110,9 @@ class HyperSussySettings(BaseSettings):
 
     # Logging
     log_level: str = "INFO"
+    # Dashboard log rotation: bytes per file × rotated-backup count gives
+    # the total ceiling on disk. 50 MB × 5 = ~300 MB — plenty of history
+    # for debugging without running away like the unbounded append mode
+    # the file handler used before.
+    log_max_bytes: int = 50 * 1024 * 1024
+    log_backup_count: int = 5

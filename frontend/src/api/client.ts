@@ -15,10 +15,12 @@ import type {
   OISnapshotItem,
   PositionItem,
   RealizedPnlResponse,
+  StorageStatsResponse,
   TopHolderItem,
   TopWhaleItem,
   TradeFlowItem,
   TrackedAddressItem,
+  WalletAccountResponse,
 } from "./types";
 
 const BASE = "/api";
@@ -164,6 +166,14 @@ export const fetchRealizedPnl = (
   address: string,
 ): Promise<RealizedPnlResponse> =>
   get(`/whales/pnl/${encodeURIComponent(address)}`);
+
+export const fetchWalletAccount = (address: string): Promise<WalletAccountResponse> =>
+  get(`/whales/account/${encodeURIComponent(address)}`);
+
+// -- Stats --
+
+export const fetchStorageStats = (): Promise<StorageStatsResponse> =>
+  get("/stats/storage");
 
 export const fetchFills = (
   address: string,

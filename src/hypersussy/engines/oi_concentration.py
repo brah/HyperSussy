@@ -76,7 +76,14 @@ class OiConcentrationEngine:
         alerts: list[Alert] = []
         cooldown_ms = self._settings.alert_cooldown_s * 1000
 
-        for coin, history in self._oi_history.items():
+        # Snapshot the dict before iterating: the loop body awaits inside
+        # _check_window, during which on_asset_update can land on the same
+        # event loop and insert a brand-new coin into self._oi_history.
+        # Iterating the live dict across those awaits raises
+        # "dictionary changed size during iteration". Any coin added after
+        # the snapshot is fine to skip for this tick — it'll be picked up
+        # on the next one.
+        for coin, history in list(self._oi_history.items()):
             if len(history) < 2:
                 continue
 

@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import atexit
+import contextlib
 import logging
+import logging.handlers
 import os
 import signal
 import sys
@@ -25,37 +26,78 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _configure_logging(level: str, log_file: str | None = None) -> None:
-    """Set up structlog with JSON output.
+def _configure_logging(
+    level: str,
+    log_file: str | None = None,
+    max_bytes: int = 50 * 1024 * 1024,
+    backup_count: int = 5,
+) -> None:
+    """Set up structlog routed through stdlib logging with optional rotation.
+
+    Both structlog events and stdlib ``logging`` calls are formatted by a
+    single :class:`structlog.stdlib.ProcessorFormatter` attached to one
+    root handler, so everything shares the same sink and the same rotation
+    policy.
 
     Args:
         level: Log level string (e.g. "INFO", "DEBUG").
         log_file: Optional path to write logs to. If None, writes to stdout.
+        max_bytes: Maximum bytes per log file before rotation kicks in.
+            Only applies when ``log_file`` is set.
+        backup_count: Number of rotated files to keep. Only applies when
+            ``log_file`` is set.
     """
-    # Handle must persist for structlog factory lifetime; context
-    # manager is not appropriate here.
-    file_handle = open(log_file, "a") if log_file else None  # noqa: SIM115
-    if file_handle is not None:
-        atexit.register(file_handle.close)
+    level_no = getattr(logging, level, logging.INFO)
+
+    shared_processors: list[structlog.types.Processor] = [
+        structlog.contextvars.merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.processors.TimeStamper(fmt="iso"),
+    ]
+
     structlog.configure(
         processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.dev.ConsoleRenderer(),
+            *shared_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            logging.getLevelName(level)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(level_no),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(file=file_handle),
+        logger_factory=structlog.stdlib.LoggerFactory(),
         cache_logger_on_first_use=True,
     )
-    logging.basicConfig(
-        level=getattr(logging, level, logging.INFO),
-        format="%(message)s",
-        stream=file_handle,
+
+    # Colours only make sense on a TTY; force them off when writing to a
+    # file so rotated logs stay clean of ANSI escape sequences.
+    renderer = structlog.dev.ConsoleRenderer(colors=log_file is None)
+    formatter = structlog.stdlib.ProcessorFormatter(
+        foreign_pre_chain=shared_processors,
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            renderer,
+        ],
     )
+
+    handler: logging.Handler
+    if log_file is not None:
+        handler = logging.handlers.RotatingFileHandler(
+            log_file,
+            maxBytes=max_bytes,
+            backupCount=backup_count,
+            encoding="utf-8",
+        )
+    else:
+        handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    # Clear any handlers from a prior basicConfig / reload so we don't
+    # double-log or keep writing to a stale file descriptor.
+    for existing in list(root.handlers):
+        root.removeHandler(existing)
+        with contextlib.suppress(Exception):
+            existing.close()
+    root.addHandler(handler)
+    root.setLevel(level_no)
 
 
 def _build_components(

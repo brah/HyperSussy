@@ -22,7 +22,16 @@ from fastapi.staticfiles import StaticFiles
 
 from hypersussy.api.candle_service import CandleService
 from hypersussy.api.pnl_service import PnlService
-from hypersussy.api.routes import alerts, candles, health, snapshots, trades, whales
+from hypersussy.api.routes import (
+    alerts,
+    candles,
+    health,
+    snapshots,
+    stats,
+    trades,
+    whales,
+)
+from hypersussy.api.spot_service import SpotService
 from hypersussy.api.ws import router as ws_router
 from hypersussy.app.actions import DashboardActions
 from hypersussy.app.db_reader import DashboardReader
@@ -72,6 +81,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     )
     await candle_service.init()
     pnl_service = PnlService(base_url=settings.hl_api_url)
+    spot_service = SpotService(base_url=settings.hl_api_url)
     runner = BackgroundRunner(settings=settings, shared_state=state)
 
     app.state.shared = state
@@ -80,6 +90,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     app.state.runner = runner
     app.state.candle_service = candle_service
     app.state.pnl_service = pnl_service
+    app.state.spot_service = spot_service
     runner.start()
 
     yield
@@ -222,6 +233,7 @@ def create_app() -> FastAPI:
     app.include_router(trades.router, prefix="/api")
     app.include_router(whales.router, prefix="/api")
     app.include_router(candles.router, prefix="/api")
+    app.include_router(stats.router, prefix="/api")
     app.include_router(ws_router)
 
     # Serve SPA in production when frontend/dist is present

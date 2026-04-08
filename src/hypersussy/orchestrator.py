@@ -173,6 +173,7 @@ class Orchestrator:
                 self._asset_ctx_stream_supervisor_loop(),
                 name="asset_ctx_supervisor",
             ),
+            asyncio.create_task(self._retention_loop(), name="retention"),
         ]
 
         logger.info(
@@ -300,6 +301,56 @@ class Orchestrator:
                     engine.name,
                 )
             await asyncio.sleep(self._settings.engine_tick_interval_s)
+
+    async def _retention_loop(self) -> None:
+        """Periodically prune old rows from retention-eligible tables.
+
+        Runs every ``retention_interval_s`` (default 1 hour). Each
+        tick re-reads the per-table retention windows from live
+        settings, issues a single ``DELETE FROM <table> WHERE
+        timestamp_ms < ?`` per table with a positive window, then
+        calls ``PRAGMA incremental_vacuum`` to return freed pages to
+        the OS. A 60 s grace period on first tick lets warm-up
+        writes land first.
+
+        The windows are **not** captured before the loop: the Config
+        page can toggle any of them live, and a user flipping
+        ``trades_retention_days`` from 0 to 7 must take effect on the
+        next tick without a process restart. Same reason the loop
+        never early-exits when all windows are 0 — that would make
+        "enable retention" a restart-only operation.
+        """
+        await asyncio.sleep(60.0)
+        while self._running:
+            try:
+                # Re-read every tick so edits from /api/config propagate.
+                windows = (
+                    ("trades", self._settings.trades_retention_days),
+                    (
+                        "asset_snapshots",
+                        self._settings.asset_snapshots_retention_days,
+                    ),
+                    (
+                        "address_positions",
+                        self._settings.address_positions_retention_days,
+                    ),
+                )
+                now_ms = int(time.time() * 1000)
+                summary: list[str] = []
+                for table, days in windows:
+                    if days <= 0:
+                        continue
+                    cutoff_ms = now_ms - days * 86_400_000
+                    deleted = await self._storage.delete_older_than(table, cutoff_ms)
+                    summary.append(f"{table}=-{deleted}")
+                if summary:
+                    await self._storage.incremental_vacuum(2000)
+                    logger.info("retention: %s", " ".join(summary))
+                self._clear_runtime_error("retention")
+            except _RECOVERABLE as exc:
+                self._mark_runtime_error("retention", exc)
+                logger.exception("Retention loop error")
+            await asyncio.sleep(self._settings.retention_interval_s)
 
     async def _trade_stream_batch(self, coins: list[str]) -> None:
         """Stream trades for a batch of coins on one WS connection.

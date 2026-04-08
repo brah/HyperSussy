@@ -30,11 +30,12 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE INDEX IF NOT EXISTS idx_trades_coin_ts
     ON trades (coin, timestamp_ms);
 
-CREATE INDEX IF NOT EXISTS idx_trades_buyer_ts
-    ON trades (buyer, timestamp_ms);
-
-CREATE INDEX IF NOT EXISTS idx_trades_seller_ts
-    ON trades (seller, timestamp_ms);
+-- Note: idx_trades_buyer_ts and idx_trades_seller_ts used to exist
+-- here to serve /api/trades/by-address. That endpoint was removed
+-- (wallet fills are served by PnlService via the HL API instead)
+-- and the two indexes cost ~2 GB combined on a live 3 M-trades/day
+-- database for zero read benefit. Existing DBs get these dropped on
+-- startup by SqliteStorage.init().
 
 CREATE TABLE IF NOT EXISTS tracked_addresses (
     address         TEXT    PRIMARY KEY,
@@ -100,4 +101,15 @@ CREATE TABLE IF NOT EXISTS candles (
     volume          REAL    NOT NULL,
     num_trades      INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (coin, interval_str, timestamp_ms)
+);
+
+-- Persisted overrides layered on top of HyperSussySettings defaults
+-- at application startup. Values are JSON-serialised so a single TEXT
+-- column can hold ints, floats, and bools uniformly. Only fields in
+-- the settings-service hot-field registry are accepted here; anything
+-- else would be silently ignored on load.
+CREATE TABLE IF NOT EXISTS settings_overrides (
+    key         TEXT    PRIMARY KEY,
+    value       TEXT    NOT NULL,
+    updated_ms  INTEGER NOT NULL
 );

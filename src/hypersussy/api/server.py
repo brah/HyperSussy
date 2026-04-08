@@ -31,6 +31,10 @@ from hypersussy.api.routes import (
     trades,
     whales,
 )
+from hypersussy.api.routes import (
+    config as config_route,
+)
+from hypersussy.api.settings_service import apply_persisted_overrides
 from hypersussy.api.spot_service import SpotService
 from hypersussy.api.ws import router as ws_router
 from hypersussy.app.actions import DashboardActions
@@ -38,6 +42,7 @@ from hypersussy.app.db_reader import DashboardReader
 from hypersussy.app.runner import BackgroundRunner
 from hypersussy.app.state import SharedState
 from hypersussy.config import HyperSussySettings
+from hypersussy.storage.sqlite import SqliteStorage
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +78,13 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     state = SharedState()
     reader = DashboardReader(db_path=settings.db_path)
     actions = DashboardActions(db_path=settings.db_path)
+
+    # Apply any persisted config overrides on top of env/defaults
+    # before anything downstream reads from the settings instance.
+    # BackgroundRunner, CandleService, PnlService, SpotService all
+    # receive the same mutable instance, so a subsequent PUT to
+    # /api/config/{key} propagates without re-wiring.
+    apply_persisted_overrides(settings, reader.get_settings_overrides())
     candle_service = CandleService(
         base_url=settings.hl_api_url,
         db_path=settings.db_path,
@@ -82,21 +94,31 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await candle_service.init()
     pnl_service = PnlService(base_url=settings.hl_api_url)
     spot_service = SpotService(base_url=settings.hl_api_url)
+    # Dedicated async storage handle for the config route's override
+    # writes. The background runner creates its own SqliteStorage
+    # inside its event loop thread; we can't safely share that from
+    # the API request thread, so we open a second aiosqlite connection
+    # against the same file (both use WAL).
+    config_storage = SqliteStorage(db_path=settings.db_path)
+    await config_storage.init()
     runner = BackgroundRunner(settings=settings, shared_state=state)
 
     app.state.shared = state
+    app.state.settings = settings
     app.state.reader = reader
     app.state.actions = actions
     app.state.runner = runner
     app.state.candle_service = candle_service
     app.state.pnl_service = pnl_service
     app.state.spot_service = spot_service
+    app.state.config_storage = config_storage
     runner.start()
 
     yield
 
     runner.stop()
     await candle_service.close()
+    await config_storage.close()
     reader.close()
     actions.close()
 
@@ -234,6 +256,7 @@ def create_app() -> FastAPI:
     app.include_router(whales.router, prefix="/api")
     app.include_router(candles.router, prefix="/api")
     app.include_router(stats.router, prefix="/api")
+    app.include_router(config_route.router, prefix="/api")
     app.include_router(ws_router)
 
     # Serve SPA in production when frontend/dist is present

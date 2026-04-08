@@ -141,7 +141,7 @@ Main routes exposed by the backend:
 - `/api/health`, `/api/health/logs`
 - `/api/alerts`, `/api/alerts/counts`, `/api/alerts/by-address/{address}`
 - `/api/snapshots/coins`, `/api/snapshots/oi/{coin}`, `/api/snapshots/funding/{coin}`, `/api/snapshots/latest-oi`
-- `/api/trades/top-whales/{coin}`, `/api/trades/by-address/{address}`, `/api/trades/top-holders/{coin}`, `/api/trades/flow/{coin}`
+- `/api/trades/top-whales/{coin}`, `/api/trades/top-holders/{coin}`, `/api/trades/flow/{coin}`
 - `/api/whales`, `/api/whales/count`, `/api/whales/positions/{address}`, `/api/whales/top/{coin}`
 - `/api/whales/pnl/{address}` — realised PnL (7d + all-time, with completeness flags)
 - `/api/whales/fills/{address}` — paginated Hyperliquid fill history (cursor-based)

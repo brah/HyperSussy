@@ -25,6 +25,13 @@ logger = logging.getLogger(__name__)
 
 _WRITE_RETRY_DELAYS_S = (0.25, 0.5, 1.0, 2.0)
 
+# Whitelist of tables the retention loop may target. Gate-keeping the
+# table name this way keeps delete_older_than safe from SQL injection
+# even though its `table` parameter is interpolated into the query.
+_RETENTION_TABLES: frozenset[str] = frozenset(
+    {"trades", "asset_snapshots", "address_positions"}
+)
+
 
 def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
     """Return True when SQLite reports a lock/busy condition."""
@@ -61,7 +68,39 @@ class SqliteStorage:
             .read_text(encoding="utf-8")
         )
         await self._db.executescript(schema_sql)
+        # Drop legacy trade indexes that served the removed
+        # /api/trades/by-address endpoint. On an existing DB they can
+        # account for ~2 GB of pure dead weight; the VACUUM below will
+        # reclaim their pages.
+        await self._db.execute("DROP INDEX IF EXISTS idx_trades_buyer_ts")
+        await self._db.execute("DROP INDEX IF EXISTS idx_trades_seller_ts")
         await self._db.commit()
+        await self._migrate_auto_vacuum()
+
+    async def _migrate_auto_vacuum(self) -> None:
+        """Ensure the database is in auto_vacuum=INCREMENTAL mode.
+
+        Without this, plain ``DELETE`` statements leave empty pages in
+        the file and ``PRAGMA incremental_vacuum`` is a no-op, so the
+        retention loop can never shrink the SQLite file on disk. The
+        switch requires a full ``VACUUM`` which rewrites the whole
+        file and temporarily needs roughly 2x free disk space, so it
+        only runs on the very first boot after this code lands.
+        """
+        cursor = await self._conn.execute("PRAGMA auto_vacuum")
+        row = await cursor.fetchone()
+        mode = int(row[0]) if row else 0
+        if mode == 2:  # already incremental
+            return
+        logger.info(
+            "Migrating SQLite to auto_vacuum=INCREMENTAL "
+            "(one-off VACUUM; this may take a minute on large DBs)",
+        )
+        await self._conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
+        # VACUUM cannot run inside a transaction and implicitly commits;
+        # it must be executed outside the write lock / auto-commit chain.
+        await self._conn.execute("VACUUM")
+        logger.info("SQLite auto_vacuum migration complete")
 
     async def close(self) -> None:
         """Close the database connection."""
@@ -164,22 +203,6 @@ class SqliteStorage:
             premium=float(row[7]),
             day_volume_usd=float(row[8]),
             mid_price=float(row[9]) if row[9] is not None else None,
-        )
-
-    @staticmethod
-    def _trade_from_row(row: Sequence[Any]) -> Trade:
-        """Hydrate a ``Trade`` from a SQLite row tuple."""
-        return Trade(
-            tid=int(row[0]),
-            coin=str(row[1]),
-            price=float(row[2]),
-            size=float(row[3]),
-            side=str(row[4]),
-            timestamp_ms=int(row[5]),
-            buyer=str(row[6]),
-            seller=str(row[7]),
-            tx_hash=str(row[8]),
-            exchange=str(row[9]),
         )
 
     @staticmethod
@@ -401,27 +424,6 @@ class SqliteStorage:
         top = [(row[0], row[1]) for row in rows]
         total = float(rows[0][2])
         return top, total
-
-    async def get_trades_by_address(self, address: str, since_ms: int) -> list[Trade]:
-        """Fetch trades for a specific address since a timestamp.
-
-        Args:
-            address: The 0x address (as buyer or seller).
-            since_ms: Start timestamp.
-
-        Returns:
-            List of trades ordered by timestamp.
-        """
-        rows = await self._fetchall(
-            """SELECT tid, coin, price, size, side, timestamp_ms,
-                      buyer, seller, tx_hash, exchange
-               FROM trades
-               WHERE (buyer = ? OR seller = ?)
-                 AND timestamp_ms >= ?
-               ORDER BY timestamp_ms ASC""",
-            (address, address, since_ms),
-        )
-        return [self._trade_from_row(row) for row in rows]
 
     async def get_total_volume(self, coin: str, since_ms: int) -> float:
         """Get total trade volume for a coin since a timestamp.
@@ -693,3 +695,104 @@ class SqliteStorage:
             (coin, interval, start_ms, end_ms),
         )
         return [self._candle_from_row(row) for row in rows]
+
+    # -- Retention --
+
+    async def delete_older_than(self, table: str, cutoff_ms: int) -> int:
+        """Delete rows older than ``cutoff_ms`` from a retention-eligible table.
+
+        Both the DELETE and its commit go through the same retry helper
+        the regular write path uses, so a transient ``database is locked``
+        from a concurrent writer does not sink an entire retention tick.
+
+        Args:
+            table: Must be a member of :data:`_RETENTION_TABLES`.
+                Anything else raises ``ValueError`` — this keeps the
+                interpolated table name safe from injection.
+            cutoff_ms: Rows with ``timestamp_ms`` strictly less than
+                this are deleted.
+
+        Returns:
+            Number of rows deleted.
+
+        Raises:
+            ValueError: If ``table`` is not whitelisted for retention.
+        """
+        if table not in _RETENTION_TABLES:
+            msg = f"table {table!r} is not retention-eligible"
+            raise ValueError(msg)
+
+        deleted = 0
+
+        async def _do_delete() -> None:
+            nonlocal deleted
+            cursor = await self._conn.execute(
+                f"DELETE FROM {table} WHERE timestamp_ms < ?",  # noqa: S608
+                (cutoff_ms,),
+            )
+            # DELETE is idempotent under retry: the WHERE clause filters
+            # by absolute cutoff, so re-executing after a transient lock
+            # just matches zero additional rows.
+            deleted = int(cursor.rowcount or 0)
+
+        async with self._write_lock:
+            await self._run_write_with_retry(_do_delete)
+            await self._conn.commit()
+        return deleted
+
+    async def incremental_vacuum(self, pages: int = 2000) -> None:
+        """Return freelist pages to the OS.
+
+        No-op unless the database was opened with
+        ``auto_vacuum = INCREMENTAL`` (set by :meth:`_migrate_auto_vacuum`).
+        Runs through the same retry helper as regular writes so it
+        survives transient locks.
+
+        Args:
+            pages: Maximum number of freelist pages to release in this
+                call. Bounded to avoid long stalls; run repeatedly if
+                you need to reclaim more in one sweep.
+        """
+        pragma = f"PRAGMA incremental_vacuum({int(pages)})"
+        async with self._write_lock:
+            await self._run_write_with_retry(
+                lambda: self._conn.execute(pragma),
+            )
+            await self._conn.commit()
+
+    # -- Settings overrides --
+
+    async def get_settings_overrides(self) -> dict[str, str]:
+        """Return all persisted config overrides as key → JSON value."""
+        rows = await self._fetchall(
+            "SELECT key, value FROM settings_overrides",
+        )
+        return {str(row[0]): str(row[1]) for row in rows}
+
+    async def upsert_settings_override(self, key: str, value: str) -> None:
+        """Persist a single config override.
+
+        Args:
+            key: Setting field name.
+            value: JSON-encoded value string.
+        """
+        now_ms = int(time.time() * 1000)
+        await self._execute_write(
+            """INSERT INTO settings_overrides (key, value, updated_ms)
+               VALUES (?, ?, ?)
+               ON CONFLICT(key) DO UPDATE SET
+                 value = excluded.value,
+                 updated_ms = excluded.updated_ms""",
+            (key, value, now_ms),
+        )
+
+    async def delete_settings_override(self, key: str) -> None:
+        """Remove a single persisted config override.
+
+        Args:
+            key: Setting field name.
+        """
+        await self._execute_write(
+            "DELETE FROM settings_overrides WHERE key = ?",
+            (key,),
+        )

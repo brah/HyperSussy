@@ -6,9 +6,8 @@ import os
 
 from fastapi import APIRouter
 
-from hypersussy.api.deps import ReaderDep, StateDep
+from hypersussy.api.deps import ReaderDep, SettingsDep, StateDep
 from hypersussy.api.schemas import StorageStatsResponse
-from hypersussy.config import HyperSussySettings
 
 router = APIRouter(prefix="/stats", tags=["stats"])
 
@@ -17,6 +16,7 @@ router = APIRouter(prefix="/stats", tags=["stats"])
 def get_storage_stats(
     reader: ReaderDep,
     state: StateDep,
+    settings: SettingsDep,
 ) -> StorageStatsResponse:
     """Return SQLite row counts, file size, and HL perp coverage.
 
@@ -27,11 +27,11 @@ def get_storage_stats(
     Args:
         reader: Injected DashboardReader.
         state: Injected SharedState.
+        settings: Injected live settings (for the ``db_path`` lookup).
 
     Returns:
         StorageStatsResponse with row counts, file size, and coverage.
     """
-    settings = HyperSussySettings()
     stats = reader.get_storage_stats()
 
     db_size = (

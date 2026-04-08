@@ -154,6 +154,13 @@ export const realizedPnlQuery = (address: string) =>
     enabled: address.length === 42,
   });
 
+export const configQuery = () =>
+  queryOptions({
+    queryKey: ["config"],
+    queryFn: api.fetchConfig,
+    staleTime: 30_000,
+  });
+
 export const storageStatsQuery = () =>
   queryOptions({
     queryKey: ["storage-stats"],

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -42,7 +43,9 @@ def _make_service() -> PnlService:
     service._reader = MagicMock()
     service._reader._call_info = AsyncMock(return_value=[])
     service._reader._info_client = MagicMock()
-    service._cache = {}
+    # Production uses OrderedDict for LRU semantics; tests must match
+    # so .move_to_end() calls in the real code work against the fake.
+    service._cache = OrderedDict()
     return service
 
 

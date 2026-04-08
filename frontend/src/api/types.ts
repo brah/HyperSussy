@@ -65,17 +65,6 @@ export interface TopWhaleItem {
   volume_usd: number;
 }
 
-export interface TradeItem {
-  tid: number;
-  coin: string;
-  price: number;
-  size: number;
-  side: string;
-  timestamp_ms: number;
-  buyer: string;
-  seller: string;
-}
-
 export interface TopHolderItem {
   address: string;
   volume_usd: number;
@@ -172,6 +161,23 @@ export interface WalletAccountResponse {
   total_margin_used: number;
   total_ntl_pos: number;
   spot: SpotAssetItem[];
+}
+
+export interface ConfigFieldItem {
+  key: string;
+  section: string;
+  label: string;
+  description: string;
+  type: "int" | "float" | "bool";
+  value: number | boolean;
+  default: number | boolean;
+  overridden: boolean;
+  minimum: number | null;
+  maximum: number | null;
+}
+
+export interface ConfigResponse {
+  fields: ConfigFieldItem[];
 }
 
 export interface StorageStatsResponse {

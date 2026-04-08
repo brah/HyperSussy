@@ -48,8 +48,11 @@ class TestSqliteStorage:
             tid=1,
         )
         await storage.insert_trades([trade, trade])
-        trades = await storage.get_trades_by_address("0xabc", 0)
-        assert len(trades) == 1
+        # Verify via top-addresses volume aggregation — the dedup path
+        # no longer has a direct by-address getter.
+        top = await storage.get_top_addresses_by_volume("ETH", 0)
+        assert len(top) == 2
+        assert all(v == 20000.0 for _, v in top)
 
     @pytest.mark.asyncio
     async def test_top_addresses_by_volume(self, storage: SqliteStorage) -> None:
@@ -138,6 +141,79 @@ class TestSqliteStorage:
         assert len(recent) == 1
         assert recent[0].alert_id == "test-1"
         assert recent[0].metadata["delta_pct"] == 0.15
+
+    @pytest.mark.asyncio
+    async def test_settings_overrides_crud(
+        self, storage: SqliteStorage
+    ) -> None:
+        """Upsert, read, and delete on the settings_overrides table."""
+        assert await storage.get_settings_overrides() == {}
+
+        await storage.upsert_settings_override("alert_cooldown_s", "1800")
+        rows = await storage.get_settings_overrides()
+        assert rows == {"alert_cooldown_s": "1800"}
+
+        # Upsert overwrites rather than appending.
+        await storage.upsert_settings_override("alert_cooldown_s", "3600")
+        rows = await storage.get_settings_overrides()
+        assert rows == {"alert_cooldown_s": "3600"}
+
+        await storage.delete_settings_override("alert_cooldown_s")
+        assert await storage.get_settings_overrides() == {}
+
+    @pytest.mark.asyncio
+    async def test_delete_older_than_removes_expired_rows(
+        self, storage: SqliteStorage
+    ) -> None:
+        """Retention delete drops rows strictly older than the cutoff."""
+        old = Trade(
+            coin="BTC",
+            price=10.0,
+            size=1.0,
+            side="B",
+            timestamp_ms=1000,
+            buyer="0xa",
+            seller="0xb",
+            tx_hash="h1",
+            tid=1,
+        )
+        fresh = Trade(
+            coin="BTC",
+            price=10.0,
+            size=1.0,
+            side="B",
+            timestamp_ms=9000,
+            buyer="0xa",
+            seller="0xb",
+            tx_hash="h2",
+            tid=2,
+        )
+        await storage.insert_trades([old, fresh])
+
+        deleted = await storage.delete_older_than("trades", 5000)
+        assert deleted == 1
+
+        top = await storage.get_top_addresses_by_volume("BTC", 0)
+        # Only the fresh trade survives — each side gets its own row.
+        assert len(top) == 2
+        assert all(vol == 10.0 for _, vol in top)
+
+    @pytest.mark.asyncio
+    async def test_delete_older_than_rejects_unknown_table(
+        self, storage: SqliteStorage
+    ) -> None:
+        """Retention is gated to a whitelist to avoid SQL injection."""
+        with pytest.raises(ValueError, match="not retention-eligible"):
+            await storage.delete_older_than("sqlite_master", 0)
+
+    @pytest.mark.asyncio
+    async def test_incremental_vacuum_noop_on_memory_db(
+        self, storage: SqliteStorage
+    ) -> None:
+        """Incremental vacuum is safe to call even on an empty :memory: DB."""
+        # Just verify no exception: in-memory DBs may not be in
+        # auto_vacuum=INCREMENTAL, in which case the PRAGMA is a no-op.
+        await storage.incremental_vacuum(100)
 
     @pytest.mark.asyncio
     async def test_executemany_write_retries_transient_lock(self) -> None:

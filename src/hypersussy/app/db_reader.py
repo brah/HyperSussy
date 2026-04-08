@@ -177,25 +177,6 @@ class DashboardReader:
             (coin, since_ms, coin, since_ms),
         )
 
-    def get_trades_by_address(
-        self,
-        address: str,
-        hours: int = 24,
-    ) -> list[dict[str, object]]:
-        """Fetch recent trades involving an address."""
-        since_ms = self._hours_to_since_ms(hours)
-        return self._fetch_dicts(
-            """
-            SELECT tid, coin, price, size, side, timestamp_ms,
-                   buyer, seller
-            FROM trades
-            WHERE (buyer = ? OR seller = ?) AND timestamp_ms >= ?
-            ORDER BY timestamp_ms DESC
-            LIMIT 200
-            """,
-            (address, address, since_ms),
-        )
-
     def get_tracked_addresses(
         self,
         limit: int = 50,
@@ -215,6 +196,26 @@ class DashboardReader:
         """Return the total number of tracked whale addresses."""
         cur = self._connect().execute("SELECT COUNT(*) FROM tracked_addresses")
         return int(cur.fetchone()[0])
+
+    def get_settings_overrides(self) -> dict[str, str]:
+        """Return all persisted config overrides.
+
+        Read-only sync interface for applying persisted overrides at
+        application startup, before the async storage layer is up.
+
+        Returns:
+            Mapping of setting name to JSON-encoded value string.
+        """
+        try:
+            cur = self._connect().execute(
+                "SELECT key, value FROM settings_overrides",
+            )
+        except sqlite3.OperationalError:
+            # Table may not exist yet on a freshly-created DB — the
+            # schema is applied by SqliteStorage.init() which runs
+            # after this reader is constructed in the server lifespan.
+            return {}
+        return {str(row["key"]): str(row["value"]) for row in cur.fetchall()}
 
     def get_storage_stats(self) -> StorageStats:
         """Return per-table row counts and distinct-entity counts.

@@ -14,6 +14,7 @@ import { useWatchlistStore } from "../../stores/watchlistStore";
 const NAV = [
   { to: "/", label: "Market" },
   { to: "/wallets", label: "Wallets" },
+  { to: "/config", label: "Config" },
 ] as const;
 
 export function Sidebar() {

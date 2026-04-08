@@ -74,15 +74,57 @@ class StorageProtocol(Protocol):
         """
         ...
 
-    async def get_trades_by_address(self, address: str, since_ms: int) -> list[Trade]:
-        """Fetch trades for a specific address since a timestamp.
+    # -- Retention --
+
+    async def delete_older_than(self, table: str, cutoff_ms: int) -> int:
+        """Delete rows older than ``cutoff_ms`` from ``table``.
 
         Args:
-            address: The 0x address (as buyer or seller).
-            since_ms: Start timestamp.
+            table: One of the retention-eligible tables (``trades``,
+                ``asset_snapshots``, ``address_positions``).
+            cutoff_ms: Rows with ``timestamp_ms`` strictly less than
+                this are deleted.
 
         Returns:
-            List of trades ordered by timestamp.
+            Number of rows deleted.
+        """
+        ...
+
+    async def incremental_vacuum(self, pages: int = 2000) -> None:
+        """Return freelist pages to the OS via incremental VACUUM.
+
+        No-op if the underlying database is not configured for
+        ``auto_vacuum = INCREMENTAL``.
+
+        Args:
+            pages: Maximum number of freelist pages to release.
+        """
+        ...
+
+    # -- Settings overrides --
+
+    async def get_settings_overrides(self) -> dict[str, str]:
+        """Return all persisted config overrides as key → JSON value.
+
+        Returns:
+            Mapping of setting name to JSON-encoded value string.
+        """
+        ...
+
+    async def upsert_settings_override(self, key: str, value: str) -> None:
+        """Persist a single config override.
+
+        Args:
+            key: Setting field name (must be in the hot-field registry).
+            value: JSON-encoded value string.
+        """
+        ...
+
+    async def delete_settings_override(self, key: str) -> None:
+        """Remove a single persisted config override.
+
+        Args:
+            key: Setting field name.
         """
         ...
 

@@ -9,6 +9,8 @@ import type {
   AlertSummaryItem,
   CandleItem,
   CoinPositionItem,
+  ConfigFieldItem,
+  ConfigResponse,
   FillPageResponse,
   FundingSnapshotItem,
   HealthResponse,
@@ -53,6 +55,28 @@ async function del(path: string): Promise<void> {
     const text = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${text || res.statusText}`);
   }
+}
+
+async function put<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${res.status}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function delJson<T>(path: string): Promise<T> {
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`API ${res.status}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<T>;
 }
 
 // -- Health --
@@ -174,6 +198,19 @@ export const fetchWalletAccount = (address: string): Promise<WalletAccountRespon
 
 export const fetchStorageStats = (): Promise<StorageStatsResponse> =>
   get("/stats/storage");
+
+// -- Config --
+
+export const fetchConfig = (): Promise<ConfigResponse> => get("/config");
+
+export const updateConfigField = (
+  key: string,
+  value: number | boolean,
+): Promise<ConfigFieldItem> =>
+  put(`/config/${encodeURIComponent(key)}`, { value });
+
+export const resetConfigField = (key: string): Promise<ConfigFieldItem> =>
+  delJson(`/config/${encodeURIComponent(key)}`);
 
 export const fetchFills = (
   address: string,

@@ -59,19 +59,6 @@ class TopWhaleItem(_Base):
     volume_usd: float
 
 
-class TradeItem(_Base):
-    """Individual trade row."""
-
-    tid: int
-    coin: str
-    price: float
-    size: float
-    side: str
-    timestamp_ms: int
-    buyer: str
-    seller: str
-
-
 class TopHolderItem(_Base):
     """Address volume with market-total denominator."""
 
@@ -222,6 +209,33 @@ class WalletAccountResponse(_Base):
     total_margin_used: float
     total_ntl_pos: float
     spot: list[SpotAssetItem]
+
+
+class ConfigFieldItem(_Base):
+    """Metadata + current value for a single live-editable setting."""
+
+    key: str
+    section: str
+    label: str
+    description: str
+    type: str  # "int", "float", or "bool"
+    value: float | int | bool
+    default: float | int | bool
+    overridden: bool
+    minimum: float | None = None
+    maximum: float | None = None
+
+
+class ConfigResponse(_Base):
+    """All live-editable settings, grouped by section."""
+
+    fields: list[ConfigFieldItem]
+
+
+class ConfigUpdateRequest(BaseModel):
+    """PUT body for /api/config/{key}."""
+
+    value: float | int | bool
 
 
 class StorageStatsResponse(_Base):

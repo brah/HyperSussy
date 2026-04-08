@@ -29,6 +29,16 @@ class HyperSussySettings(BaseSettings):
     # Database
     db_path: str = "data/hypersussy.db"
 
+    # Storage retention — the hourly retention loop drops rows older
+    # than the window from each listed table, then runs an incremental
+    # VACUUM to return freed pages to the OS. Without this the SQLite
+    # file grows linearly forever. Set any field to 0 to disable
+    # retention for that table.
+    trades_retention_days: int = 7
+    asset_snapshots_retention_days: int = 7
+    address_positions_retention_days: int = 3
+    retention_interval_s: float = 3600.0
+
     # Rate limiting
     rate_limit_weight: int = 1200
     rate_limit_window_s: int = 60

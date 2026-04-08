@@ -33,13 +33,13 @@ from hypersussy.api.schemas import (
     TopWhaleItem,
     TrackedAddressItem,
     TradeFlowItem,
-    TradeItem,
     WhaleCountResponse,
 )
 from hypersussy.api.routes import alerts, candles, health, snapshots, trades, whales
 from hypersussy.app.actions import DashboardActions
 from hypersussy.app.db_reader import DashboardReader
 from hypersussy.app.state import SharedState
+from hypersussy.config import HyperSussySettings
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -184,6 +184,9 @@ def client(tmp_path: pytest.TempPathFactory) -> TestClient:  # type: ignore[type
     test_app.state.actions = actions
     test_app.state.shared = state
     test_app.state.candle_service = candle_service
+    # Snapshots and trades routes now read settings off app.state for
+    # per-request retention-window clamping; supply a default instance.
+    test_app.state.settings = HyperSussySettings()
 
     with TestClient(test_app, raise_server_exceptions=True) as c:
         yield c
@@ -287,15 +290,6 @@ def test_get_top_whales(client: TestClient) -> None:
     assert any(i.address == "0xabc1234567890123456789012345678901234567" for i in items)
 
 
-def test_get_trades_by_address(client: TestClient) -> None:
-    addr = "0xabc1234567890123456789012345678901234567"
-    res = client.get(f"/api/trades/by-address/{addr}?hours=2")
-    assert res.status_code == 200
-    items = [TradeItem.model_validate(r) for r in res.json()]
-    assert len(items) >= 1
-    assert items[0].coin == "BTC"
-
-
 def test_get_top_holders(client: TestClient) -> None:
     res = client.get("/api/trades/top-holders/BTC?hours=2&limit=5")
     assert res.status_code == 200
@@ -308,11 +302,6 @@ def test_get_trade_flow(client: TestClient) -> None:
     assert res.status_code == 200
     items = [TradeFlowItem.model_validate(r) for r in res.json()]
     assert all(i.side in ("B", "A") for i in items)
-
-
-def test_trades_by_address_invalid(client: TestClient) -> None:
-    res = client.get("/api/trades/by-address/bad")
-    assert res.status_code == 422
 
 
 # ---------------------------------------------------------------------------

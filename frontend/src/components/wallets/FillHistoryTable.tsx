@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { fillsInfiniteQuery } from "../../api/queries";
 import type { FillItem } from "../../api/types";
@@ -99,7 +100,12 @@ export function FillHistoryTable({
     error,
   } = useInfiniteQuery(fillsInfiniteQuery(address));
 
-  const fills = data?.pages.flatMap((p) => p.fills) ?? [];
+  // flatMap allocates a new array on every call; memoise so unrelated
+  // parent re-renders don't reshape the table rows.
+  const fills = useMemo(
+    () => data?.pages.flatMap((p) => p.fills) ?? [],
+    [data?.pages],
+  );
 
   if (isLoading) {
     return <EmptyState message="Loading fills..." state="loading" compact />;

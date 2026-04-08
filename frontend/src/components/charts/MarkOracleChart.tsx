@@ -56,9 +56,12 @@ export const MarkOracleChart = memo(function MarkOracleChart({
     return () => chart.remove();
   }, [width, height, data]);
 
-  if (data.length === 0) {
-    return <p className="text-hs-grey text-sm py-6 text-center">No data.</p>;
-  }
-
+  // The container div is rendered unconditionally so the ref attaches
+  // on the very first commit. An earlier early-return on empty data
+  // skipped the ref entirely, which prevented `useContainerWidth`'s
+  // ResizeObserver from ever installing — `width` then stayed at 0
+  // forever, the chart effect bailed forever, and the panel rendered
+  // empty. Callers like CoinView handle the empty/loading branches
+  // externally; this component just owns the chart lifecycle.
   return <div ref={containerRef} style={{ width: "100%", height }} />;
 });

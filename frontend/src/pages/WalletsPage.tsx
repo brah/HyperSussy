@@ -56,6 +56,7 @@ export function WalletsPage() {
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="0x address..."
+            aria-label="Look up wallet by address"
             className="bg-hs-surface border border-hs-grid text-hs-text text-sm
                        rounded-[10px] px-3 py-1.5 placeholder-hs-grey
                        focus:outline-none focus:border-hs-green w-56"

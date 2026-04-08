@@ -15,8 +15,10 @@ export const healthQuery = () =>
   queryOptions({
     queryKey: ["health"],
     queryFn: api.fetchHealth,
+    // Health is pushed via the WS `health` channel on the same cadence
+    // the orchestrator emits — see api/websocket.ts. The REST poll only
+    // runs once on mount as a hydration fallback before the WS connects.
     staleTime: 5_000,
-    refetchInterval: 5_000,
   });
 
 export const coinsQuery = () =>
@@ -112,19 +114,24 @@ export const candlesQuery = (coin: string, interval: string, hours: number) =>
     placeholderData: keepPreviousData,
   });
 
+// Tracked whales change once per user action (manual add/remove via the
+// wallets page) plus rare background discovery promotions. 60 s is the
+// right cadence — the previous 5 s polling produced 12 redundant
+// requests per minute against an effectively static dataset.
 export const whalesQuery = (limit: number) =>
   queryOptions({
     queryKey: ["whales", limit],
     queryFn: () => api.fetchWhales(limit),
-    staleTime: 5_000,
-    refetchInterval: 5_000,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
 export const whaleCountQuery = () =>
   queryOptions({
     queryKey: ["whale-count"],
     queryFn: api.fetchWhaleCount,
-    staleTime: 5_000,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
 export const whalePositionsQuery = (address: string) =>

@@ -169,6 +169,7 @@ export function Sidebar() {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="0x wallet..."
+            aria-label="Search wallet by address"
             className="w-full rounded-[10px] border border-hs-grid bg-hs-bg px-2 py-1.5 text-xs text-hs-text
                        placeholder-hs-grey focus:border-hs-green focus:outline-none"
           />

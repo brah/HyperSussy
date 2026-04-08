@@ -31,11 +31,14 @@ export const AlertsByEngineChart = memo(function AlertsByEngineChart({
     [counts]
   );
 
-  if (data.length === 0) return null;
-
+  // Container div is rendered unconditionally so the ref attaches on
+  // first commit and useContainerWidth's ResizeObserver actually
+  // installs — see MarkOracleChart for the same fix and explanation.
+  // The BarChart inside is gated on both width and data length so we
+  // never render an empty BarChart.
   return (
     <div ref={containerRef} style={{ width: "100%", height }}>
-      {width > 0 && (
+      {width > 0 && data.length > 0 && (
         <BarChart
           width={width}
           height={height}

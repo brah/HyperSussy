@@ -4,6 +4,17 @@
  * Mirrors the Python helpers in formatting.py and navigation.py.
  */
 
+// Hoisted Intl.NumberFormat instances. Constructing a new NumberFormat
+// per call (which is what `Number.prototype.toLocaleString` does under
+// the hood) is measurable when invoked thousands of times per render
+// — a 200-coin market table with 5 numeric columns produces ~1000
+// formatPrice calls per refetch. Hoisting drops that to 0 allocations.
+const PRICE_FORMATTER_2DP = new Intl.NumberFormat("en-US", {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const COUNT_FORMATTER_GROUPED = new Intl.NumberFormat("en-US");
+
 /** Format a dollar price with smart decimal precision. */
 export function formatPrice(value: number): string {
   if (value === 0) return "$0.00";
@@ -11,7 +22,7 @@ export function formatPrice(value: number): string {
   const v = Math.abs(value);
   let result: string;
   if (v >= 1.0) {
-    result = `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    result = `$${PRICE_FORMATTER_2DP.format(v)}`;
   } else {
     const leadingZeros = Math.max(0, Math.floor(-Math.log10(v)));
     const decimals = leadingZeros + 2;
@@ -63,7 +74,7 @@ export function formatCount(value: number): string {
   if (abs >= 1e9) return `${sign}${(abs / 1e9).toFixed(2)}B`;
   if (abs >= 1e6) return `${sign}${(abs / 1e6).toFixed(2)}M`;
   if (abs >= 1e4) return `${sign}${(abs / 1e3).toFixed(1)}k`;
-  if (abs >= 1e3) return `${sign}${abs.toLocaleString("en-US")}`;
+  if (abs >= 1e3) return `${sign}${COUNT_FORMATTER_GROUPED.format(abs)}`;
   return `${sign}${abs}`;
 }
 

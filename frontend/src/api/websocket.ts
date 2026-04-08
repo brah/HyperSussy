@@ -132,7 +132,15 @@ function connect(): void {
     let msg: WsMessage;
     try {
       msg = JSON.parse(ev.data) as WsMessage;
-    } catch {
+    } catch (err) {
+      // Production: silently drop the bad frame so a single corrupt
+      // payload from the backend cannot break the live feed. Dev:
+      // surface the error so we actually find the bug. Truncate the
+      // payload preview to keep the console readable.
+      if (import.meta.env.DEV) {
+        const preview = ev.data.length > 200 ? ev.data.slice(0, 200) + "…" : ev.data;
+        console.warn("[ws] failed to parse message:", err, preview);
+      }
       return;
     }
 

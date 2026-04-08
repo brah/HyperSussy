@@ -49,12 +49,14 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-async function del(path: string): Promise<void> {
+async function del<T = void>(path: string): Promise<T> {
   const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${text || res.statusText}`);
   }
+  // 204 No Content has no body; everything else is parsed as JSON.
+  return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 
 async function put<T>(path: string, body: unknown): Promise<T> {
@@ -63,15 +65,6 @@ async function put<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
-  }
-  return res.json() as Promise<T>;
-}
-
-async function delJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${text || res.statusText}`);
@@ -184,7 +177,7 @@ export const addWhale = (
 ): Promise<{ address: string }> => post("/whales", { address, label });
 
 export const removeWhale = (address: string): Promise<void> =>
-  del(`/whales/${encodeURIComponent(address)}`);
+  del<void>(`/whales/${encodeURIComponent(address)}`);
 
 export const fetchRealizedPnl = (
   address: string,
@@ -210,7 +203,7 @@ export const updateConfigField = (
   put(`/config/${encodeURIComponent(key)}`, { value });
 
 export const resetConfigField = (key: string): Promise<ConfigFieldItem> =>
-  delJson(`/config/${encodeURIComponent(key)}`);
+  del<ConfigFieldItem>(`/config/${encodeURIComponent(key)}`);
 
 export const fetchFills = (
   address: string,

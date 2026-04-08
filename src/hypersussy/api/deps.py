@@ -9,13 +9,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request
 
 from hypersussy.api.candle_service import CandleService
 from hypersussy.api.pnl_service import PnlService
 from hypersussy.api.spot_service import SpotService
 from hypersussy.app.actions import DashboardActions
 from hypersussy.app.db_reader import DashboardReader
+from hypersussy.app.navigation import normalize_wallet_address
 from hypersussy.app.state import SharedState
 from hypersussy.config import HyperSussySettings
 from hypersussy.storage.sqlite import SqliteStorage
@@ -78,6 +79,29 @@ def get_config_storage(request: Request) -> SqliteStorage:
     return storage
 
 
+def normalized_address(address: str) -> str:
+    """Validate and normalise a 0x wallet address path parameter.
+
+    Used as a FastAPI dependency by every route that takes an address
+    in its path. Replaces the inline ``normalize_wallet_address`` +
+    ``raise HTTPException`` pattern that used to live in 6+ handlers.
+
+    Args:
+        address: Raw address string from the URL path.
+
+    Returns:
+        Lowercase 42-char 0x address.
+
+    Raises:
+        HTTPException: 422 if ``address`` is not a valid 0x wallet
+            address.
+    """
+    addr = normalize_wallet_address(address)
+    if addr is None:
+        raise HTTPException(status_code=422, detail="Invalid wallet address")
+    return addr
+
+
 ReaderDep = Annotated[DashboardReader, Depends(get_reader)]
 ActionsDep = Annotated[DashboardActions, Depends(get_actions)]
 StateDep = Annotated[SharedState, Depends(get_state)]
@@ -86,3 +110,4 @@ PnlServiceDep = Annotated[PnlService, Depends(get_pnl_service)]
 SpotServiceDep = Annotated[SpotService, Depends(get_spot_service)]
 SettingsDep = Annotated[HyperSussySettings, Depends(get_settings)]
 ConfigStorageDep = Annotated[SqliteStorage, Depends(get_config_storage)]
+NormalizedAddressDep = Annotated[str, Depends(normalized_address)]

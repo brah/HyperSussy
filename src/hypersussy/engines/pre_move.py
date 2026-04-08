@@ -11,8 +11,21 @@ from bisect import bisect_left
 from collections import defaultdict, deque
 
 from hypersussy.config import HyperSussySettings
-from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
+from hypersussy.engines._shared import (
+    classify_severity,
+    is_on_cooldown,
+    record_alert_timestamp,
+)
 from hypersussy.models import Alert, AssetSnapshot, Trade
+
+# Score = total aligned notional in the pre-move window. Minimum
+# severity for a pre-move alert is "medium" — by the time we got here
+# the move and the alignment both already passed their thresholds, so
+# this engine intentionally does not produce "low" alerts.
+_PRE_MOVE_SEVERITY_CUTOFFS = (
+    (10_000_000.0, "critical"),
+    (2_000_000.0, "high"),
+)
 
 
 class PreMoveEngine:
@@ -177,12 +190,8 @@ class PreMoveEngine:
         top_flows = [flow for _, flow in top]
         total_aligned = sum(abs(f) for f in top_flows)
         direction = "bought" if move_sign > 0 else "sold"
-        severity = (
-            "critical"
-            if total_aligned > 10_000_000
-            else "high"
-            if total_aligned > 2_000_000
-            else "medium"
+        severity = classify_severity(
+            total_aligned, _PRE_MOVE_SEVERITY_CUTOFFS, default="medium"
         )
 
         return Alert(
@@ -212,6 +221,11 @@ class PreMoveEngine:
 def _find_price_at(prices: deque[tuple[int, float]], target_ms: int) -> float | None:
     """Find the price at or just after a target timestamp via binary search.
 
+    The 1-tuple ``(target_ms,)`` sorts strictly before any 2-tuple
+    ``(target_ms, price)``, so :func:`bisect_left` returns the first
+    index whose timestamp is ``>= target_ms`` — the same semantics as
+    the previous hand-rolled loop.
+
     Args:
         prices: Sorted deque of (timestamp_ms, price).
         target_ms: Target timestamp.
@@ -219,16 +233,9 @@ def _find_price_at(prices: deque[tuple[int, float]], target_ms: int) -> float | 
     Returns:
         Price at the target time, or None if not found.
     """
-    n = len(prices)
-    if n == 0:
+    if not prices:
         return None
-    lo, hi = 0, n - 1
-    while lo < hi:
-        mid = (lo + hi) // 2
-        if prices[mid][0] < target_ms:
-            lo = mid + 1
-        else:
-            hi = mid
-    if prices[lo][0] >= target_ms:
-        return prices[lo][1]
-    return None
+    idx = bisect_left(prices, (target_ms,))
+    if idx >= len(prices):
+        return None
+    return prices[idx][1]

@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query
 
-from hypersussy.api.deps import ReaderDep
+from hypersussy.api.deps import NormalizedAddressDep, ReaderDep
 from hypersussy.api.schemas import AlertItem, AlertSummaryItem
-from hypersussy.app.navigation import normalize_wallet_address
 
 router = APIRouter(prefix="/alerts", tags=["alerts"])
 
@@ -52,27 +51,22 @@ def get_alert_counts(
 
 @router.get("/by-address/{address}")
 def get_alerts_by_address(
-    address: str,
+    address: NormalizedAddressDep,
     reader: ReaderDep,
     limit: int = Query(20, ge=1, le=200),
 ) -> list[AlertSummaryItem]:
     """Return alerts associated with a wallet address.
 
     Args:
-        address: The 0x wallet address (42-char hex).
+        address: The 0x wallet address (42-char hex), normalised by
+            the FastAPI dependency.
         reader: Injected DashboardReader.
         limit: Maximum alerts to return (1–200).
 
     Returns:
         List of condensed alert rows ordered newest-first.
-
-    Raises:
-        HTTPException: 422 if address is not a valid 0x wallet address.
     """
-    addr = normalize_wallet_address(address)
-    if addr is None:
-        raise HTTPException(status_code=422, detail="Invalid wallet address")
     return [
         AlertSummaryItem.model_validate(r)
-        for r in reader.get_alerts_by_address(address=addr, limit=limit)
+        for r in reader.get_alerts_by_address(address=address, limit=limit)
     ]

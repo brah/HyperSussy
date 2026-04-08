@@ -87,6 +87,19 @@ class CandleService:
             await self._db.close()
             self._db = None
 
+    @property
+    def _conn(self) -> aiosqlite.Connection:
+        """Return the active connection or raise.
+
+        Raises:
+            RuntimeError: If init() has not been called yet, or if
+                close() has already been called.
+        """
+        if self._db is None:
+            msg = "CandleService not initialised. Call init() first."
+            raise RuntimeError(msg)
+        return self._db
+
     async def get_candles(
         self,
         coin: str,
@@ -103,13 +116,13 @@ class CandleService:
         Returns:
             List of candle dicts ordered oldest-first.
         """
-        assert self._db is not None  # noqa: S101
+        db = self._conn
         now_ms = int(time.time() * 1000)
         start_ms = now_ms - hours * 3_600_000
         interval_ms = _INTERVAL_MS[interval]
 
         # Only use cache when it is fresh and spans the requested lookback.
-        async with self._db.execute(_RANGE_SQL, (coin, interval, start_ms)) as cursor:
+        async with db.execute(_RANGE_SQL, (coin, interval, start_ms)) as cursor:
             row = await cursor.fetchone()
         min_ts: int | None = row[0] if row and row[0] is not None else None
         max_ts: int | None = row[1] if row and row[1] is not None else None
@@ -150,8 +163,8 @@ class CandleService:
                 )
                 for c in candles
             ]
-            await self._db.executemany(_UPSERT_SQL, params)
-            await self._db.commit()
+            await db.executemany(_UPSERT_SQL, params)
+            await db.commit()
 
         return [
             {
@@ -182,8 +195,9 @@ class CandleService:
         Returns:
             List of candle dicts ordered oldest-first.
         """
-        assert self._db is not None  # noqa: S101
-        async with self._db.execute(_SELECT_SQL, (coin, interval, start_ms)) as cursor:
+        async with self._conn.execute(
+            _SELECT_SQL, (coin, interval, start_ms)
+        ) as cursor:
             rows = await cursor.fetchall()
         return [
             {

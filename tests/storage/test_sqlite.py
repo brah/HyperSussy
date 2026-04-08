@@ -48,14 +48,18 @@ class TestSqliteStorage:
             tid=1,
         )
         await storage.insert_trades([trade, trade])
-        # Verify via top-addresses volume aggregation — the dedup path
-        # no longer has a direct by-address getter.
-        top = await storage.get_top_addresses_by_volume("ETH", 0)
+        # Verify via top-addresses volume aggregation — the dedup
+        # path no longer has a direct by-address getter, and the
+        # only remaining UNION-based query is the one the OI engine
+        # uses (which returns a (top, total) tuple).
+        top, _ = await storage.get_top_addresses_and_total_volume("ETH", 0)
         assert len(top) == 2
         assert all(v == 20000.0 for _, v in top)
 
     @pytest.mark.asyncio
-    async def test_top_addresses_by_volume(self, storage: SqliteStorage) -> None:
+    async def test_top_addresses_and_total_volume(
+        self, storage: SqliteStorage
+    ) -> None:
         """Top addresses ranked by combined buyer+seller volume."""
         trades = [
             Trade(
@@ -83,11 +87,17 @@ class TestSqliteStorage:
         ]
         await storage.insert_trades(trades)
 
-        top = await storage.get_top_addresses_by_volume("BTC", 0, limit=5)
+        top, total = await storage.get_top_addresses_and_total_volume(
+            "BTC", 0, limit=5
+        )
+        # Both addresses end up with 75_000 (50000*1 buyer for one,
+        # 50000*0.5 seller for the other and vice versa) so the
+        # ORDER BY tie-break is unspecified — assert on the set.
         assert len(top) == 2
-        # 0xwhale: 50000*1 (buyer) + 50000*0.5 (seller) = 75000
-        assert top[0][0] == "0xwhale"
-        assert top[0][1] == 75000.0
+        assert {addr for addr, _ in top} == {"0xwhale", "0xsmall"}
+        assert all(vol == 75_000.0 for _, vol in top)
+        # 75k + 75k = 150k
+        assert total == 150_000.0
 
     @pytest.mark.asyncio
     async def test_tracked_addresses_upsert(self, storage: SqliteStorage) -> None:
@@ -122,6 +132,76 @@ class TestSqliteStorage:
         history = await storage.get_position_history("0xabc", "ETH", 0)
         assert len(history) == 1
         assert history[0].size == 10.0
+
+    @pytest.mark.asyncio
+    async def test_get_latest_positions_batch(
+        self, storage: SqliteStorage
+    ) -> None:
+        """Batched fetch returns latest position per (address, coin)."""
+        positions = [
+            Position(
+                coin="BTC",
+                address="0xa",
+                size=1.0,
+                entry_price=50_000.0,
+                mark_price=51_000.0,
+                liquidation_price=40_000.0,
+                unrealized_pnl=1_000.0,
+                margin_used=10_000.0,
+                leverage_value=5,
+                leverage_type="cross",
+                notional_usd=51_000.0,
+                timestamp_ms=1_000,
+            ),
+            Position(
+                coin="BTC",
+                address="0xa",
+                size=2.0,
+                entry_price=50_000.0,
+                mark_price=52_000.0,
+                liquidation_price=40_000.0,
+                unrealized_pnl=4_000.0,
+                margin_used=10_000.0,
+                leverage_value=5,
+                leverage_type="cross",
+                notional_usd=104_000.0,
+                timestamp_ms=2_000,  # newer than the first row
+            ),
+            Position(
+                coin="ETH",
+                address="0xb",
+                size=10.0,
+                entry_price=2_000.0,
+                mark_price=2_100.0,
+                liquidation_price=1_500.0,
+                unrealized_pnl=1_000.0,
+                margin_used=4_000.0,
+                leverage_value=5,
+                leverage_type="cross",
+                notional_usd=21_000.0,
+                timestamp_ms=1_000,
+            ),
+        ]
+        await storage.insert_positions(positions)
+
+        result = await storage.get_latest_positions_batch(["0xa", "0xb", "0xc"])
+
+        # 0xc has no positions and is absent from the result mapping.
+        assert set(result.keys()) == {"0xa", "0xb"}
+        # 0xa kept only the newer (size=2.0) snapshot.
+        assert len(result["0xa"]) == 1
+        assert result["0xa"][0].size == 2.0
+        assert result["0xa"][0].timestamp_ms == 2_000
+        # 0xb has its single ETH position.
+        assert len(result["0xb"]) == 1
+        assert result["0xb"][0].coin == "ETH"
+
+    @pytest.mark.asyncio
+    async def test_get_latest_positions_batch_empty_input(
+        self, storage: SqliteStorage
+    ) -> None:
+        """Empty address list short-circuits without hitting SQLite."""
+        assert await storage.get_latest_positions_batch([]) == {}
 
     @pytest.mark.asyncio
     async def test_insert_and_query_alerts(self, storage: SqliteStorage) -> None:
@@ -193,7 +273,7 @@ class TestSqliteStorage:
         deleted = await storage.delete_older_than("trades", 5000)
         assert deleted == 1
 
-        top = await storage.get_top_addresses_by_volume("BTC", 0)
+        top, _ = await storage.get_top_addresses_and_total_volume("BTC", 0)
         # Only the fresh trade survives — each side gets its own row.
         assert len(top) == 2
         assert all(vol == 10.0 for _, vol in top)

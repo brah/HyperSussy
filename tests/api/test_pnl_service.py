@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import time
-from collections import OrderedDict
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,6 +10,7 @@ import pytest
 
 pytest.importorskip("fastapi", reason="fastapi not installed")
 
+from hypersussy.api._address_cache import TtlAddressCache
 from hypersussy.api.pnl_service import PnlResult, PnlService, PnlSnapshot
 
 
@@ -43,9 +43,9 @@ def _make_service() -> PnlService:
     service._reader = MagicMock()
     service._reader._call_info = AsyncMock(return_value=[])
     service._reader._info_client = MagicMock()
-    # Production uses OrderedDict for LRU semantics; tests must match
-    # so .move_to_end() calls in the real code work against the fake.
-    service._cache = OrderedDict()
+    # Use the same TtlAddressCache the production constructor uses
+    # so the expiry/eviction code paths exercise the real shape.
+    service._cache = TtlAddressCache(ttl_seconds=120.0, max_entries=512)
     return service
 
 
@@ -148,8 +148,10 @@ class TestGetPnl:
         service._reader._call_info = AsyncMock(return_value=[_fill("10.0")])
 
         await service.get_pnl("0x" + "a" * 40)
-        # Expire the cache
-        for entry in service._cache.values():
+        # Forcibly expire every entry by reaching into the cache's
+        # private OrderedDict — the test needs to fast-forward time
+        # without sleeping, and TtlAddressCache has no public knob.
+        for entry in service._cache._cache.values():
             entry.expires_at = 0.0
         service._reader._call_info.reset_mock()
         service._reader._call_info = AsyncMock(return_value=[_fill("20.0")])

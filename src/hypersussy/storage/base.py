@@ -56,24 +56,6 @@ class StorageProtocol(Protocol):
         """
         ...
 
-    async def get_top_addresses_by_volume(
-        self,
-        coin: str,
-        since_ms: int,
-        limit: int = 10,
-    ) -> list[tuple[str, float]]:
-        """Get top trading addresses by notional volume.
-
-        Args:
-            coin: Asset name.
-            since_ms: Start timestamp.
-            limit: Max addresses to return.
-
-        Returns:
-            List of (address, total_volume_usd) tuples, descending.
-        """
-        ...
-
     # -- Retention --
 
     async def delete_older_than(self, table: str, cutoff_ms: int) -> int:
@@ -227,15 +209,21 @@ class StorageProtocol(Protocol):
         """
         ...
 
-    async def get_total_volume(self, coin: str, since_ms: int) -> float:
-        """Get total trade volume for a coin since a timestamp.
+    async def get_latest_positions_batch(
+        self, addresses: list[str]
+    ) -> dict[str, list[Position]]:
+        """Batched version of :meth:`get_latest_positions`.
+
+        Single query with ``address IN (?,?,...)`` plus a Python-side
+        group-by, so callers iterating over many tracked addresses do
+        not pay the per-address SQLite lock + connection-acquire cost.
 
         Args:
-            coin: Asset name.
-            since_ms: Start timestamp.
+            addresses: 0x addresses to fetch.
 
         Returns:
-            Total notional volume in USD.
+            Mapping of address -> latest-position-per-coin list.
+            Addresses with no positions are absent from the dict.
         """
         ...
 
@@ -246,9 +234,6 @@ class StorageProtocol(Protocol):
         limit: int = 10,
     ) -> tuple[list[tuple[str, float]], float]:
         """Get top addresses by volume and total volume in one query.
-
-        Combines ``get_top_addresses_by_volume`` and ``get_total_volume``
-        into a single database pass for efficiency.
 
         Args:
             coin: Asset name.

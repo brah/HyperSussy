@@ -336,43 +336,6 @@ class SqliteStorage:
             ],
         )
 
-    async def get_top_addresses_by_volume(
-        self,
-        coin: str,
-        since_ms: int,
-        limit: int = 10,
-    ) -> list[tuple[str, float]]:
-        """Get top trading addresses by notional volume.
-
-        Combines buyer and seller volume into a single ranking.
-
-        Args:
-            coin: Asset name.
-            since_ms: Start timestamp.
-            limit: Max addresses to return.
-
-        Returns:
-            List of (address, total_volume_usd) tuples, descending.
-        """
-        rows = await self._fetchall(
-            """SELECT address, SUM(vol) as total_vol FROM (
-                 SELECT buyer AS address, SUM(price * size) AS vol
-                 FROM trades
-                 WHERE coin = ? AND timestamp_ms >= ? AND buyer != ''
-                 GROUP BY buyer
-                 UNION ALL
-                 SELECT seller AS address, SUM(price * size) AS vol
-                 FROM trades
-                 WHERE coin = ? AND timestamp_ms >= ? AND seller != ''
-                 GROUP BY seller
-               )
-               GROUP BY address
-               ORDER BY total_vol DESC
-               LIMIT ?""",
-            (coin, since_ms, coin, since_ms, limit),
-        )
-        return [(row[0], row[1]) for row in rows]
-
     async def get_top_addresses_and_total_volume(
         self,
         coin: str,
@@ -424,22 +387,6 @@ class SqliteStorage:
         top = [(row[0], row[1]) for row in rows]
         total = float(rows[0][2])
         return top, total
-
-    async def get_total_volume(self, coin: str, since_ms: int) -> float:
-        """Get total trade volume for a coin since a timestamp.
-
-        Args:
-            coin: Asset name.
-            since_ms: Start timestamp.
-
-        Returns:
-            Total notional volume in USD.
-        """
-        return await self._fetch_scalar(
-            """SELECT COALESCE(SUM(price * size), 0.0)
-               FROM trades WHERE coin = ? AND timestamp_ms >= ?""",
-            (coin, since_ms),
-        )
 
     # -- Tracked addresses --
 
@@ -583,6 +530,52 @@ class SqliteStorage:
             (address,),
         )
         return [self._position_from_row(row) for row in rows]
+
+    async def get_latest_positions_batch(
+        self, addresses: list[str]
+    ) -> dict[str, list[Position]]:
+        """Batched fetch of latest positions for many addresses.
+
+        Issues a single query with ``address IN (?, ?, ...)`` instead
+        of N round-trips through the per-thread cursor. Used by the
+        liquidation-risk engine which iterates over every tracked
+        whale on each tick.
+
+        Args:
+            addresses: 0x addresses to fetch.
+
+        Returns:
+            Mapping of address -> list of Position. Addresses with no
+            positions are absent from the dict.
+        """
+        if not addresses:
+            return {}
+        # Deduplicate so the IN-list and the placeholders match the
+        # caller's intent rather than the caller's accidental dupes.
+        unique = list(dict.fromkeys(addresses))
+        placeholders = ",".join("?" * len(unique))
+        rows = await self._fetchall(
+            f"""SELECT ap.address, ap.coin, ap.timestamp_ms, ap.size,
+                      ap.entry_price, ap.notional_usd, ap.unrealized_pnl,
+                      ap.leverage_value, ap.leverage_type,
+                      ap.liquidation_price, ap.mark_price, ap.margin_used
+               FROM address_positions ap
+               INNER JOIN (
+                   SELECT address, coin, MAX(timestamp_ms) AS max_ts
+                   FROM address_positions
+                   WHERE address IN ({placeholders})
+                   GROUP BY address, coin
+               ) latest
+               ON ap.address = latest.address
+                  AND ap.coin = latest.coin
+                  AND ap.timestamp_ms = latest.max_ts""",  # noqa: S608
+            tuple(unique),
+        )
+        result: dict[str, list[Position]] = {}
+        for row in rows:
+            position = self._position_from_row(row)
+            result.setdefault(position.address, []).append(position)
+        return result
 
     # -- Alerts --
 

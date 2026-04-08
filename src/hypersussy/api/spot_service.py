@@ -8,19 +8,18 @@ short TTL to avoid redundant upstream calls.
 from __future__ import annotations
 
 import asyncio
-import time
-from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
+from hypersussy.api._address_cache import TtlAddressCache
 from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.rate_limiter import WeightRateLimiter
 
 _CACHE_TTL_S = 60.0
 # Hard cap on distinct addresses retained in the per-process cache.
 # 512 × (one AccountSnapshot ~ a few KB) ≈ well under 10 MB even in the
-# worst case. Combined with TTL eviction below, this bounds memory
-# growth even when many wallets are searched over a long session.
+# worst case. Combined with TtlAddressCache's TTL eviction, this bounds
+# memory growth even when many wallets are searched over a long session.
 _CACHE_MAX_ENTRIES = 512
 
 
@@ -71,12 +70,6 @@ class AccountSnapshot:
     spot: list[SpotBalance]
 
 
-@dataclass(slots=True)
-class _CacheEntry:
-    snapshot: AccountSnapshot
-    expires_at: float
-
-
 def _f(val: object) -> float:
     """Safely coerce a string-or-numeric API value to float."""
     if val is None or val == "":
@@ -101,11 +94,10 @@ class SpotService:
             rate_limiter=WeightRateLimiter(max_weight=200, window_seconds=60),
             include_hip3=False,
         )
-        # OrderedDict gives us O(1) LRU semantics via move_to_end. The
-        # cache is bounded by TTL eviction (on every write) and a hard
-        # entry cap (_CACHE_MAX_ENTRIES) so long-running sessions that
-        # search many distinct wallets don't accumulate unbounded state.
-        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
+        self._cache: TtlAddressCache[AccountSnapshot] = TtlAddressCache(
+            ttl_seconds=_CACHE_TTL_S,
+            max_entries=_CACHE_MAX_ENTRIES,
+        )
 
     async def get_account(self, address: str) -> AccountSnapshot:
         """Fetch margin summary and spot balances for an address.
@@ -116,11 +108,9 @@ class SpotService:
         Returns:
             AccountSnapshot with margin equity and spot holdings.
         """
-        now = time.monotonic()
         cached = self._cache.get(address)
-        if cached is not None and now < cached.expires_at:
-            self._cache.move_to_end(address)
-            return cached.snapshot
+        if cached is not None:
+            return cached
 
         margin_raw, spot_raw = await asyncio.gather(
             self._fetch_user_state(address),
@@ -147,32 +137,8 @@ class SpotService:
         ]
 
         snapshot = AccountSnapshot(margin=margin, spot=spot)
-        self._cache[address] = _CacheEntry(
-            snapshot=snapshot,
-            expires_at=now + _CACHE_TTL_S,
-        )
-        self._cache.move_to_end(address)
-        self._evict_cache(now)
+        self._cache.put(address, snapshot)
         return snapshot
-
-    def _evict_cache(self, now: float) -> None:
-        """Drop expired entries, then LRU-evict until under the hard cap.
-
-        Called after each cache insert so bookkeeping stays amortised
-        O(1) per request.
-
-        Args:
-            now: Current monotonic time (passed in to avoid a second
-                ``time.monotonic()`` call after the caller already
-                recorded one).
-        """
-        expired = [
-            key for key, entry in self._cache.items() if entry.expires_at <= now
-        ]
-        for key in expired:
-            del self._cache[key]
-        while len(self._cache) > _CACHE_MAX_ENTRIES:
-            self._cache.popitem(last=False)
 
     async def _fetch_user_state(self, address: str) -> dict[str, Any]:
         """Call HL user_state to retrieve margin summary.

@@ -78,14 +78,19 @@ class WhaleTrackerEngine:
         merged = self._whale_discovery.get_tracked() | db_tracked
         self._whale_discovery.set_tracked(merged)
 
-        self._whale_active_dexes = {
-            addr: dexes
-            for addr, dexes in self._whale_active_dexes.items()
-            if addr in self._whale_discovery.get_tracked()
-        }
-        self._position_tracker.set_whale_active_dexes(self._whale_active_dexes)
-
+        # Only rebuild the dex filter if at least one tracked address
+        # was demoted between ticks. ``keys() <= tracked`` is an O(N)
+        # subset check on the dict's keyview against the tracked set,
+        # cheap to do every tick and avoids allocating a new dict on
+        # the common case where no whales got demoted.
         tracked = self._whale_discovery.get_tracked()
+        if not (self._whale_active_dexes.keys() <= tracked):
+            self._whale_active_dexes = {
+                addr: dexes
+                for addr, dexes in self._whale_active_dexes.items()
+                if addr in tracked
+            }
+        self._position_tracker.set_whale_active_dexes(self._whale_active_dexes)
 
         alerts = await self._position_tracker.poll_positions(timestamp_ms, tracked)
 

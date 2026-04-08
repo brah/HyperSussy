@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import threading
 import time
 from collections import deque
@@ -89,10 +90,15 @@ class SharedState:
             return dict(self._snapshots)
 
     def get_recent_alerts(self, limit: int = 100) -> list[Alert]:
-        """Return recent alerts newest-first."""
+        """Return recent alerts newest-first.
+
+        Materialises only ``limit`` items via :func:`itertools.islice`
+        on a reversed iterator instead of building two N-sized lists.
+        Iteration must run inside the lock — mutating the deque while
+        a reverse-iterator is live raises ``RuntimeError``.
+        """
         with self._lock:
-            alerts = list(self._alerts)
-        return list(reversed(alerts))[:limit]
+            return list(itertools.islice(reversed(self._alerts), limit))
 
     def mark_engine_error(self, engine_name: str, error: str) -> None:
         """Record the latest error for an engine."""

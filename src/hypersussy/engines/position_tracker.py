@@ -7,7 +7,11 @@ import logging
 import uuid
 
 from hypersussy.config import HyperSussySettings
-from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
+from hypersussy.engines._shared import (
+    classify_severity,
+    is_on_cooldown,
+    record_alert_timestamp,
+)
 from hypersussy.engines.twap_detector import TwapDetector
 from hypersussy.exchange.base import ExchangeReader
 from hypersussy.exchange.hyperliquid.client import PositionFetchRateLimitError
@@ -16,6 +20,15 @@ from hypersussy.models import Alert, Position, TwapSliceFill
 from hypersussy.storage.base import StorageProtocol
 
 logger = logging.getLogger(__name__)
+
+# Score = oi_pct (fraction of OI represented by the position).
+_POSITION_OI_SEVERITY_CUTOFFS = (
+    (0.15, "critical"),
+    (0.10, "high"),
+)
+
+# Score = absolute change in USD between consecutive position snapshots.
+_POSITION_CHANGE_SEVERITY_CUTOFFS = ((5_000_000.0, "high"),)
 
 
 class PositionTracker:
@@ -32,7 +45,11 @@ class PositionTracker:
         self._reader = reader
         self._settings = settings
         self._twap_detector = twap_detector
-        self._last_positions: dict[str, list[tuple[str, float]]] = {}
+        # address -> coin -> last seen notional. Stored directly as a
+        # nested dict so _generate_position_alerts() can do an O(1)
+        # lookup per position instead of rebuilding a temporary dict
+        # from a list-of-tuples on every call.
+        self._last_positions: dict[str, dict[str, float]] = {}
         self._polled_once: set[str] = set()
         self._last_polled: dict[str, float] = {}
         self._coin_oi: dict[str, float] = {}
@@ -116,7 +133,7 @@ class PositionTracker:
                     )
                 )
 
-            self._last_positions[addr] = [(p.coin, p.notional_usd) for p in positions]
+            self._last_positions[addr] = {p.coin: p.notional_usd for p in positions}
             self._polled_once.add(addr)
 
         return alerts
@@ -132,7 +149,7 @@ class PositionTracker:
             await self._storage.insert_positions(positions)
 
         alerts = self._generate_position_alerts(address, positions, timestamp_ms)
-        self._last_positions[address] = [(p.coin, p.notional_usd) for p in positions]
+        self._last_positions[address] = {p.coin: p.notional_usd for p in positions}
         self._polled_once.add(address)
         return alerts
 
@@ -144,7 +161,7 @@ class PositionTracker:
     ) -> list[Alert]:
         """Generate large-position and change alerts from a position list."""
         cooldown_ms = self._settings.alert_cooldown_s * 1000
-        prev = dict(self._last_positions.get(address, []))
+        prev = self._last_positions.get(address, {})
         alerts: list[Alert] = []
 
         for pos in positions:
@@ -227,12 +244,9 @@ def _position_alert(
     timestamp_ms: int,
 ) -> Alert:
     """Create an alert for a large position relative to OI."""
-    if oi_pct > 0.15:
-        severity = "critical"
-    elif oi_pct > 0.10:
-        severity = "high"
-    else:
-        severity = "medium"
+    severity = classify_severity(
+        oi_pct, _POSITION_OI_SEVERITY_CUTOFFS, default="medium"
+    )
     return Alert(
         alert_id=str(uuid.uuid4()),
         alert_type="whale_position",
@@ -262,7 +276,9 @@ def _change_alert(
 ) -> Alert:
     """Create an alert for a significant position change."""
     direction = "increased" if current_notional > prev_notional else "decreased"
-    severity = "high" if change_usd > 5_000_000 else "medium"
+    severity = classify_severity(
+        change_usd, _POSITION_CHANGE_SEVERITY_CUTOFFS, default="medium"
+    )
     return Alert(
         alert_id=str(uuid.uuid4()),
         alert_type="whale_position_change",

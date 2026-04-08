@@ -12,9 +12,22 @@ from bisect import bisect_left
 from collections import defaultdict, deque
 
 from hypersussy.config import HyperSussySettings
-from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
+from hypersussy.engines._shared import (
+    classify_severity,
+    is_on_cooldown,
+    record_alert_timestamp,
+)
 from hypersussy.models import Alert, AssetSnapshot, Trade
 from hypersussy.storage.base import StorageProtocol
+
+# Score = abs(delta_pct) * concentration. Tuned per the original
+# `_classify_severity` thresholds — see git history if you need the
+# old branch-by-branch form.
+_OI_SEVERITY_CUTOFFS = (
+    (0.15, "critical"),
+    (0.08, "high"),
+    (0.04, "medium"),
+)
 
 
 class OiConcentrationEngine:
@@ -159,7 +172,9 @@ class OiConcentrationEngine:
 
         window_label = _format_window(window_ms)
         direction = "increased" if delta_pct > 0 else "decreased"
-        severity = _classify_severity(abs(delta_pct), concentration)
+        severity = classify_severity(
+            abs(delta_pct) * concentration, _OI_SEVERITY_CUTOFFS
+        )
         top_addrs_list = [addr for addr, _ in top_addresses]
 
         return Alert(
@@ -216,21 +231,3 @@ def _format_window(window_ms: int) -> str:
     return f"{minutes}m"
 
 
-def _classify_severity(delta_pct: float, concentration: float) -> str:
-    """Classify alert severity based on OI change and concentration.
-
-    Args:
-        delta_pct: Absolute OI change percentage.
-        concentration: Top-N address volume concentration ratio.
-
-    Returns:
-        Severity string: "low", "medium", "high", or "critical".
-    """
-    score = delta_pct * concentration
-    if score > 0.15:
-        return "critical"
-    if score > 0.08:
-        return "high"
-    if score > 0.04:
-        return "medium"
-    return "low"

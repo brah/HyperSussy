@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Query
 
-from hypersussy.api.deps import ActionsDep, PnlServiceDep, ReaderDep, SpotServiceDep
+from hypersussy.api.deps import (
+    ActionsDep,
+    NormalizedAddressDep,
+    PnlServiceDep,
+    ReaderDep,
+    SpotServiceDep,
+)
 from hypersussy.api.schemas import (
     AddWhaleRequest,
     CoinPositionItem,
@@ -57,26 +63,22 @@ def get_whale_count(reader: ReaderDep) -> WhaleCountResponse:
 
 @router.get("/positions/{address}")
 def get_whale_positions(
-    address: str,
+    address: NormalizedAddressDep,
     reader: ReaderDep,
 ) -> list[PositionItem]:
     """Return latest open positions for a whale address.
 
     Args:
-        address: The 0x wallet address (42-char hex).
+        address: The 0x wallet address (42-char hex), normalised by
+            the FastAPI dependency.
         reader: Injected DashboardReader.
 
     Returns:
         List of position rows ordered by notional descending.
-
-    Raises:
-        HTTPException: 422 if address is not a valid 0x wallet address.
     """
-    addr = normalize_wallet_address(address)
-    if addr is None:
-        raise HTTPException(status_code=422, detail="Invalid wallet address")
     return [
-        PositionItem.model_validate(r) for r in reader.get_whale_positions(address=addr)
+        PositionItem.model_validate(r)
+        for r in reader.get_whale_positions(address=address)
     ]
 
 
@@ -107,7 +109,7 @@ def get_top_coin_positions(
 
 @router.get("/pnl/{address}")
 async def get_realized_pnl(
-    address: str,
+    address: NormalizedAddressDep,
     pnl_service: PnlServiceDep,
 ) -> RealizedPnlResponse:
     """Return realized PnL for a wallet (7-day and all-time).
@@ -116,19 +118,14 @@ async def get_realized_pnl(
     the ``closedPnl`` field across all fills.
 
     Args:
-        address: The 0x wallet address (42-char hex).
+        address: The 0x wallet address (42-char hex), normalised by
+            the FastAPI dependency.
         pnl_service: Injected PnL service.
 
     Returns:
         RealizedPnlResponse with 7-day and all-time totals.
-
-    Raises:
-        HTTPException: 422 if address is not a valid 0x wallet address.
     """
-    addr = normalize_wallet_address(address)
-    if addr is None:
-        raise HTTPException(status_code=422, detail="Invalid wallet address")
-    snapshot = await pnl_service.get_pnl(addr)
+    snapshot = await pnl_service.get_pnl(address)
     return RealizedPnlResponse(
         pnl_7d=snapshot.pnl_7d.realized_pnl,
         pnl_all_time=snapshot.pnl_all_time.realized_pnl,
@@ -141,7 +138,7 @@ async def get_realized_pnl(
 
 @router.get("/fills/{address}")
 async def get_fills(
-    address: str,
+    address: NormalizedAddressDep,
     pnl_service: PnlServiceDep,
     before_ms: int | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -152,22 +149,17 @@ async def get_fills(
     previous response's ``next_cursor`` to load older fills.
 
     Args:
-        address: The 0x wallet address (42-char hex).
+        address: The 0x wallet address (42-char hex), normalised by
+            the FastAPI dependency.
         pnl_service: Injected PnL service.
         before_ms: Only fills before this timestamp (cursor).
         limit: Page size (1-200).
 
     Returns:
         FillPageResponse with fills and next_cursor.
-
-    Raises:
-        HTTPException: 422 if address is not a valid 0x wallet address.
     """
-    addr = normalize_wallet_address(address)
-    if addr is None:
-        raise HTTPException(status_code=422, detail="Invalid wallet address")
     fills, next_cursor = await pnl_service.get_fills(
-        addr,
+        address,
         before_ms=before_ms,
         limit=limit,
     )
@@ -179,7 +171,7 @@ async def get_fills(
 
 @router.get("/account/{address}")
 async def get_wallet_account(
-    address: str,
+    address: NormalizedAddressDep,
     spot_service: SpotServiceDep,
 ) -> WalletAccountResponse:
     """Return account equity summary and spot token balances for a wallet.
@@ -188,19 +180,14 @@ async def get_wallet_account(
     Hyperliquid API.  Results are cached for 60 seconds per address.
 
     Args:
-        address: The 0x wallet address (42-char hex).
+        address: The 0x wallet address (42-char hex), normalised by
+            the FastAPI dependency.
         spot_service: Injected spot/account service.
 
     Returns:
         WalletAccountResponse with equity metrics and spot holdings.
-
-    Raises:
-        HTTPException: 422 if address is not a valid 0x wallet address.
     """
-    addr = normalize_wallet_address(address)
-    if addr is None:
-        raise HTTPException(status_code=422, detail="Invalid wallet address")
-    snap = await spot_service.get_account(addr)
+    snap = await spot_service.get_account(address)
     return WalletAccountResponse(
         account_value=snap.margin.account_value,
         withdrawable=snap.margin.withdrawable,
@@ -240,17 +227,12 @@ def add_whale(body: AddWhaleRequest, actions: ActionsDep) -> dict[str, str]:
 
 
 @router.delete("/{address}", status_code=204)
-def remove_whale(address: str, actions: ActionsDep) -> None:
+def remove_whale(address: NormalizedAddressDep, actions: ActionsDep) -> None:
     """Remove a wallet address from the tracked list.
 
     Args:
-        address: The 0x wallet address (42-char hex).
+        address: The 0x wallet address (42-char hex), normalised by
+            the FastAPI dependency.
         actions: Injected DashboardActions.
-
-    Raises:
-        HTTPException: 422 if address is not a valid 0x wallet address.
     """
-    addr = normalize_wallet_address(address)
-    if addr is None:
-        raise HTTPException(status_code=422, detail="Invalid wallet address")
-    actions.remove_tracked_address(address=addr)
+    actions.remove_tracked_address(address=address)

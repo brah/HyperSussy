@@ -9,17 +9,18 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
+from hypersussy.api._address_cache import TtlAddressCache
 from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.rate_limiter import WeightRateLimiter
 
 _CACHE_TTL_S = 120.0
 # Hard cap on distinct addresses retained in the per-process PnL cache.
-# Paired with on-insert TTL eviction, this bounds memory growth in
-# long-running sessions that search many distinct wallets.
+# Paired with on-insert TTL eviction in TtlAddressCache, this bounds
+# memory growth in long-running sessions that search many distinct
+# wallets.
 _CACHE_MAX_ENTRIES = 512
 _HL_FILL_CAP = 2000
 _MAX_PNL_PAGES = 10  # safety cap: 10 pages x 2000 = 20k fills max
@@ -50,12 +51,6 @@ class PnlSnapshot:
     pnl_all_time: PnlResult
 
 
-@dataclass(slots=True)
-class _CacheEntry:
-    snapshot: PnlSnapshot
-    expires_at: float
-
-
 class PnlService:
     """Fetches and aggregates realized PnL for a wallet address.
 
@@ -74,10 +69,10 @@ class PnlService:
             rate_limiter=WeightRateLimiter(max_weight=200, window_seconds=60),
             include_hip3=False,
         )
-        # OrderedDict + TTL + hard cap: see SpotService for rationale.
-        # Without this bound, every distinct wallet searched stays in
-        # the dict forever — a slow memory leak in long sessions.
-        self._cache: OrderedDict[str, _CacheEntry] = OrderedDict()
+        self._cache: TtlAddressCache[PnlSnapshot] = TtlAddressCache(
+            ttl_seconds=_CACHE_TTL_S,
+            max_entries=_CACHE_MAX_ENTRIES,
+        )
 
     async def get_pnl(self, address: str) -> PnlSnapshot:
         """Fetch 7-day and all-time realized PnL concurrently.
@@ -88,39 +83,21 @@ class PnlService:
         Returns:
             PnlSnapshot with both time windows.
         """
-        now = time.monotonic()
         cached = self._cache.get(address)
-        if cached is not None and now < cached.expires_at:
-            self._cache.move_to_end(address)
-            return cached.snapshot
+        if cached is not None:
+            return cached
 
+        # NOTE: time.time() is wall-clock and is intentionally used for
+        # the HL API ``start_ms`` filter (HL expects epoch milliseconds).
+        # The cache TTL inside ``TtlAddressCache`` uses time.monotonic().
         seven_d_ms = int((time.time() - 7 * 86_400) * 1000)
         pnl_7d, pnl_all = await asyncio.gather(
             self._fetch_pnl(address, seven_d_ms),
             self._fetch_pnl(address, 0),
         )
         snapshot = PnlSnapshot(pnl_7d=pnl_7d, pnl_all_time=pnl_all)
-        self._cache[address] = _CacheEntry(
-            snapshot=snapshot,
-            expires_at=now + _CACHE_TTL_S,
-        )
-        self._cache.move_to_end(address)
-        self._evict_cache(now)
+        self._cache.put(address, snapshot)
         return snapshot
-
-    def _evict_cache(self, now: float) -> None:
-        """Drop expired entries, then LRU-evict until under the hard cap.
-
-        Args:
-            now: Current monotonic time.
-        """
-        expired = [
-            key for key, entry in self._cache.items() if entry.expires_at <= now
-        ]
-        for key in expired:
-            del self._cache[key]
-        while len(self._cache) > _CACHE_MAX_ENTRIES:
-            self._cache.popitem(last=False)
 
     async def _fetch_pnl(self, address: str, start_ms: int) -> PnlResult:
         """Fetch all fills from HL and sum closedPnl.
@@ -142,6 +119,8 @@ class PnlService:
         end_ms: int | None = None  # None = now
 
         for page_idx in range(_MAX_PNL_PAGES):
+            # Wall-clock — HL fill timestamps are epoch ms, so the upper
+            # bound has to be in the same domain.
             raw = await self._fetch_raw_fills(
                 address,
                 start_ms,
@@ -199,6 +178,7 @@ class PnlService:
             oldest ``time`` in the page for the next request, or
             ``None`` if no more fills exist.
         """
+        # Wall-clock — HL fill timestamps are epoch ms.
         end_ms = before_ms or int(time.time() * 1000)
 
         # Try a narrow window first to keep the API call cheap.

@@ -80,6 +80,8 @@ class LiquidationRiskEngine:
 
         Caches L2 book fetches per coin so each book is retrieved at
         most once per tick regardless of how many whales hold that coin.
+        Latest positions for the entire tracked batch are fetched in
+        a single SQLite query (instead of N sequential reads).
 
         Args:
             timestamp_ms: Current timestamp in milliseconds.
@@ -93,14 +95,21 @@ class LiquidationRiskEngine:
         book_cache: dict[str, L2Book | None] = {}
 
         tracked = await self._storage.get_tracked_addresses()
+        batch = tracked[: self._settings.liquidation_max_tracked]
 
-        for address in tracked[: self._settings.liquidation_max_tracked]:
-            try:
-                positions = await self._storage.get_latest_positions(address)
-            except sqlite3.Error:
-                logger.exception("Failed to get positions for %s", address)
-                continue
+        try:
+            positions_by_address = await self._storage.get_latest_positions_batch(
+                batch
+            )
+        except sqlite3.Error:
+            logger.exception(
+                "Failed to batch-load latest positions for %d whales",
+                len(batch),
+            )
+            return alerts
 
+        for address in batch:
+            positions = positions_by_address.get(address, [])
             for pos in positions:
                 if pos.liquidation_price is None or pos.liquidation_price == 0:
                     continue

@@ -41,6 +41,47 @@ class StorageStats:
     distinct_addresses_traded: int
 
 
+def _top_addresses_union_sql(*, with_total: bool) -> str:
+    """Build the SQL for "top buyer+seller volume per address".
+
+    The same buyer/seller UNION GROUP BY shape feeds two routes:
+    ``/api/trades/top-whales`` (just addresses + volume) and
+    ``/api/trades/top-holders`` (also wants the grand total via a
+    window function so the frontend can show concentration share).
+
+    Both call sites used to inline the same query — the only
+    differences were the SELECT projection and the LIMIT shape.
+    Centralising the query body keeps schema knowledge in one place.
+
+    Args:
+        with_total: When True, project an extra ``total_volume``
+            column computed via ``SUM(SUM(vol)) OVER ()``.
+
+    Returns:
+        SQL string with placeholders ``(coin, since_ms, coin, since_ms, limit)``.
+    """
+    total_col = ", SUM(SUM(vol)) OVER () AS total_volume" if with_total else ""
+    return f"""
+        SELECT address, SUM(vol) AS volume_usd{total_col}
+        FROM (
+            SELECT buyer AS address, SUM(price * size) AS vol
+            FROM trades
+            WHERE coin = ? AND timestamp_ms >= ? AND buyer != ''
+            GROUP BY buyer
+
+            UNION ALL
+
+            SELECT seller AS address, SUM(price * size) AS vol
+            FROM trades
+            WHERE coin = ? AND timestamp_ms >= ? AND seller != ''
+            GROUP BY seller
+        )
+        GROUP BY address
+        ORDER BY volume_usd DESC
+        LIMIT ?
+    """
+
+
 class DashboardReader:
     """Read-only SQLite interface for API routes.
 
@@ -150,31 +191,13 @@ class DashboardReader:
         self,
         coin: str,
         hours: int = 1,
+        limit: int = 20,
     ) -> list[dict[str, object]]:
         """Top addresses by combined buy and sell volume for a coin."""
         since_ms = self._hours_to_since_ms(hours)
         return self._fetch_dicts(
-            """
-            SELECT address, SUM(volume_usd) AS volume_usd
-            FROM (
-                SELECT buyer AS address, SUM(price * size) AS volume_usd
-                FROM trades
-                WHERE coin = ? AND timestamp_ms >= ?
-                GROUP BY buyer
-
-                UNION ALL
-
-                SELECT seller AS address, SUM(price * size) AS volume_usd
-                FROM trades
-                WHERE coin = ? AND timestamp_ms >= ?
-                GROUP BY seller
-            )
-            WHERE address != ''
-            GROUP BY address
-            ORDER BY volume_usd DESC
-            LIMIT 20
-            """,
-            (coin, since_ms, coin, since_ms),
+            _top_addresses_union_sql(with_total=False),
+            (coin, since_ms, coin, since_ms, limit),
         )
 
     def get_tracked_addresses(
@@ -210,83 +233,96 @@ class DashboardReader:
             cur = self._connect().execute(
                 "SELECT key, value FROM settings_overrides",
             )
-        except sqlite3.OperationalError:
+        except sqlite3.OperationalError as exc:
             # Table may not exist yet on a freshly-created DB — the
             # schema is applied by SqliteStorage.init() which runs
             # after this reader is constructed in the server lifespan.
+            # Anything else (disk full, malformed image, locked beyond
+            # busy_timeout) needs to surface so we don't paper over a
+            # real failure with an empty overrides dict.
+            if "no such table" not in str(exc).lower():
+                raise
             return {}
         return {str(row["key"]): str(row["value"]) for row in cur.fetchall()}
 
     def get_storage_stats(self) -> StorageStats:
         """Return per-table row counts and distinct-entity counts.
 
-        Cached in-process for ``_STORAGE_STATS_TTL_S`` seconds because the
-        ``COUNT(*)`` over ``trades`` and the ``COUNT(DISTINCT)`` UNION over
-        buyer/seller are the slowest queries the reader does, and the
-        answers change slowly relative to typical render frequency.
+        Cached in-process for ``_STORAGE_STATS_TTL_S`` seconds because
+        the ``COUNT(*)`` over ``trades`` and the ``COUNT(DISTINCT)``
+        UNION over buyer/seller are the slowest queries the reader
+        does, and the answers change slowly relative to typical
+        render frequency.
+
+        The entire cache check + compute path is held under the lock
+        so two concurrent callers on a cold cache cannot both run the
+        expensive scan: the second caller blocks on the lock, then
+        returns the cache the first caller just populated. Each
+        thread still uses its own per-thread connection from
+        ``_connect()`` so we are not serialising readers in general —
+        only this one stats path.
 
         Returns:
             StorageStats with row counts and distinct-entity totals.
         """
-        now = time.monotonic()
         with self._storage_stats_lock:
+            now = time.monotonic()
             if (
                 self._storage_stats_cache is not None
                 and now < self._storage_stats_expires_at
             ):
                 return self._storage_stats_cache
 
-        conn = self._connect()
-        rows = {
-            name: int(conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0])
-            for name in (
-                "asset_snapshots",
-                "trades",
-                "address_positions",
-                "alerts",
-                "candles",
-                "tracked_addresses",
-            )
-        }
-        distinct_coins = frozenset(
-            row[0]
-            for row in conn.execute(
-                "SELECT DISTINCT coin FROM asset_snapshots"
-            ).fetchall()
-        )
-        distinct_positioned = int(
-            conn.execute(
-                "SELECT COUNT(DISTINCT address) FROM address_positions"
-            ).fetchone()[0]
-        )
-        distinct_traded = int(
-            conn.execute(
-                """
-                SELECT COUNT(DISTINCT addr) FROM (
-                    SELECT buyer AS addr FROM trades WHERE buyer != ''
-                    UNION
-                    SELECT seller AS addr FROM trades WHERE seller != ''
+            conn = self._connect()
+            rows = {
+                name: int(conn.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0])
+                for name in (
+                    "asset_snapshots",
+                    "trades",
+                    "address_positions",
+                    "alerts",
+                    "candles",
+                    "tracked_addresses",
                 )
-                """
-            ).fetchone()[0]
-        )
+            }
+            distinct_coins = frozenset(
+                row[0]
+                for row in conn.execute(
+                    "SELECT DISTINCT coin FROM asset_snapshots"
+                ).fetchall()
+            )
+            distinct_positioned = int(
+                conn.execute(
+                    "SELECT COUNT(DISTINCT address) FROM address_positions"
+                ).fetchone()[0]
+            )
+            distinct_traded = int(
+                conn.execute(
+                    """
+                    SELECT COUNT(DISTINCT addr) FROM (
+                        SELECT buyer AS addr FROM trades WHERE buyer != ''
+                        UNION
+                        SELECT seller AS addr FROM trades WHERE seller != ''
+                    )
+                    """
+                ).fetchone()[0]
+            )
 
-        stats = StorageStats(
-            asset_snapshots_rows=rows["asset_snapshots"],
-            trades_rows=rows["trades"],
-            address_positions_rows=rows["address_positions"],
-            alerts_rows=rows["alerts"],
-            candles_rows=rows["candles"],
-            tracked_addresses_rows=rows["tracked_addresses"],
-            distinct_coins=distinct_coins,
-            distinct_addresses_positioned=distinct_positioned,
-            distinct_addresses_traded=distinct_traded,
-        )
+            stats = StorageStats(
+                asset_snapshots_rows=rows["asset_snapshots"],
+                trades_rows=rows["trades"],
+                address_positions_rows=rows["address_positions"],
+                alerts_rows=rows["alerts"],
+                candles_rows=rows["candles"],
+                tracked_addresses_rows=rows["tracked_addresses"],
+                distinct_coins=distinct_coins,
+                distinct_addresses_positioned=distinct_positioned,
+                distinct_addresses_traded=distinct_traded,
+            )
 
-        with self._storage_stats_lock:
             self._storage_stats_cache = stats
             self._storage_stats_expires_at = time.monotonic() + _STORAGE_STATS_TTL_S
-        return stats
+            return stats
 
     def get_whale_positions(
         self,
@@ -440,30 +476,16 @@ class DashboardReader:
         hours: int = 24,
         limit: int = 15,
     ) -> list[dict[str, object]]:
-        """Top addresses by combined buy and sell volume for a coin."""
+        """Top addresses by combined buy/sell volume with grand total.
+
+        The window-function ``total_volume`` column is the sum across
+        all aggregated addresses in the result set *before* LIMIT is
+        applied — it represents the denominator the frontend uses to
+        compute concentration shares.
+        """
         since_ms = self._hours_to_since_ms(hours)
         return self._fetch_dicts(
-            """
-            SELECT address,
-                   SUM(vol) AS volume_usd,
-                   SUM(SUM(vol)) OVER () AS total_volume
-            FROM (
-                SELECT buyer AS address, SUM(price * size) AS vol
-                FROM trades
-                WHERE coin = ? AND timestamp_ms >= ? AND buyer != ''
-                GROUP BY buyer
-
-                UNION ALL
-
-                SELECT seller AS address, SUM(price * size) AS vol
-                FROM trades
-                WHERE coin = ? AND timestamp_ms >= ? AND seller != ''
-                GROUP BY seller
-            )
-            GROUP BY address
-            ORDER BY volume_usd DESC
-            LIMIT ?
-            """,
+            _top_addresses_union_sql(with_total=True),
             (coin, since_ms, coin, since_ms, limit),
         )
 

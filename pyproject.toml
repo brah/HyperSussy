@@ -29,7 +29,7 @@ dev = [
     "types-requests>=2.33.0",
     "httpx>=0.28.0",
     "fastapi>=0.135",
-    "uvicorn[standard]>=0.42",
+    "uvicorn[standard]>=0.44.0",
     "pyinstrument>=5.1.2",
 ]
 notebooks = [
@@ -39,7 +39,7 @@ notebooks = [
 ]
 api = [
     "fastapi>=0.135",
-    "uvicorn[standard]>=0.42",
+    "uvicorn[standard]>=0.44.0",
 ]
 
 [project.scripts]

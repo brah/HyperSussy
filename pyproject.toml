@@ -8,11 +8,11 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
-    "hyperliquid-python-sdk>=0.22.0",
+    "hyperliquid-python-sdk>=0.23.0",
     "aiosqlite>=0.22.1",
     "orjson>=3.11.0",
-    "polars>=1.39.0",
-    "pydantic>=2.12.0",
+    "polars>=1.40.0",
+    "pydantic>=2.13.2",
     "pydantic-settings>=2.13.0",
     "websockets>=16.0",
     "structlog>=25.0.0",
@@ -20,15 +20,15 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=9.0",
+    "pytest>=9.0.3",
     "pytest-asyncio>=1.0",
-    "mypy>=1.20",
-    "ruff>=0.15.0",
+    "mypy>=1.20.1",
+    "ruff>=0.15.11",
     "pytest-cov>=7.0",
     "aioresponses>=0.7.8",
     "types-requests>=2.33.0",
     "httpx>=0.28.0",
-    "fastapi>=0.135",
+    "fastapi>=0.136.0",
     "uvicorn[standard]>=0.42",
     "pyinstrument>=5.1.2",
 ]
@@ -38,7 +38,7 @@ notebooks = [
     "tqdm>=4.60",
 ]
 api = [
-    "fastapi>=0.135",
+    "fastapi>=0.136.0",
     "uvicorn[standard]>=0.42",
 ]
 

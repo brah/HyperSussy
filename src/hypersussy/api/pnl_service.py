@@ -185,10 +185,17 @@ class PnlService:
         start_ms = end_ms - _INITIAL_WINDOW_DAYS * 86_400_000
         raw = await self._fetch_raw_fills(address, max(start_ms, 0), end_ms)
 
+        # Track whether we've actually scanned from the beginning of
+        # time. Two paths set it True: (1) the narrow window already
+        # extends to epoch 0 (deep pagination), (2) we explicitly
+        # widen below because the narrow window was under-full.
+        scanned_all_time = start_ms <= 0
+
         # If the narrow window returned fewer than limit and didn't
         # hit the API cap, widen to all-time to find older fills.
-        if len(raw) < limit and len(raw) < _HL_FILL_CAP and start_ms > 0:
+        if len(raw) < limit and len(raw) < _HL_FILL_CAP and not scanned_all_time:
             raw = await self._fetch_raw_fills(address, 0, end_ms)
+            scanned_all_time = True
 
         # Sort newest-first, slice to limit.
         raw.sort(key=lambda f: f.get("time", 0), reverse=True)
@@ -197,11 +204,15 @@ class PnlService:
         next_cursor: int | None = None
         if page:
             oldest_time = page[-1].get("time", 0)
-            # More fills exist only if the raw response had more
-            # than we're returning (sliced away) or the API hit
-            # its cap (implying the window had even more).
-            has_more = len(raw) > len(page) or len(raw) >= _HL_FILL_CAP
-            if has_more:
+            sliced_off = len(raw) > len(page)
+            api_capped = len(raw) >= _HL_FILL_CAP
+            # Narrow window filled exactly to ``limit`` without
+            # widening: we don't actually know whether older fills
+            # exist outside the 30-day window. Return the cursor so
+            # the client can probe — the next call will widen if the
+            # probe's narrow window comes back under-full.
+            narrow_may_hide_older = not scanned_all_time and len(raw) >= limit
+            if sliced_off or api_capped or narrow_may_hide_older:
                 next_cursor = oldest_time
 
         fills = [self._normalize_fill(f) for f in page]

@@ -9,14 +9,22 @@ import pytest
 
 pytest.importorskip("fastapi", reason="fastapi not installed")
 
-from hypersussy.api.server import _ensure_db_ready
+from hypersussy.storage.sqlite import SqliteStorage
 
 
-def test_ensure_db_ready_creates_schema(tmp_path: Path) -> None:
-    """The API startup helper must create the DB file and tables eagerly."""
+async def test_storage_init_creates_schema(tmp_path: Path) -> None:
+    """Opening and initialising SqliteStorage creates the schema.
+
+    The API lifespan relies on ``config_storage.init()`` to create
+    the schema so the read-only ``DashboardReader`` can connect.
+    Regression test for that ordering — an earlier version of the
+    server ran a separate synchronous helper; this test pins the
+    contract that ``SqliteStorage.init()`` alone is sufficient.
+    """
     db_path = tmp_path / "fresh.db"
-
-    _ensure_db_ready(str(db_path))
+    storage = SqliteStorage(db_path=str(db_path))
+    await storage.init()
+    await storage.close()
 
     assert db_path.exists()
     conn = sqlite3.connect(db_path)

@@ -254,24 +254,25 @@ class DashboardReader:
         does, and the answers change slowly relative to typical
         render frequency.
 
-        The entire cache check + compute path is held under the lock
-        so two concurrent callers on a cold cache cannot both run the
-        expensive scan: the second caller blocks on the lock, then
-        returns the cache the first caller just populated. Each
-        thread still uses its own per-thread connection from
-        ``_connect()`` so we are not serialising readers in general —
-        only this one stats path.
+        Uses double-checked locking: the common "cache hit" path
+        never acquires the lock at all, so concurrent cache hits
+        don't serialise on each other. The lock still guards the
+        expensive cold-miss compute so two concurrent cold callers
+        don't both pay the scan cost.
 
         Returns:
             StorageStats with row counts and distinct-entity totals.
         """
+        cached = self._storage_stats_cache
+        if cached is not None and time.monotonic() < self._storage_stats_expires_at:
+            return cached
+
         with self._storage_stats_lock:
-            now = time.monotonic()
-            if (
-                self._storage_stats_cache is not None
-                and now < self._storage_stats_expires_at
-            ):
-                return self._storage_stats_cache
+            # Re-check inside the lock — another thread may have
+            # populated the cache while we were waiting on it.
+            cached = self._storage_stats_cache
+            if cached is not None and time.monotonic() < self._storage_stats_expires_at:
+                return cached
 
             conn = self._connect()
             rows = {

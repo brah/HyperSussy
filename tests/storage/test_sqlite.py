@@ -57,9 +57,7 @@ class TestSqliteStorage:
         assert all(v == 20000.0 for _, v in top)
 
     @pytest.mark.asyncio
-    async def test_top_addresses_and_total_volume(
-        self, storage: SqliteStorage
-    ) -> None:
+    async def test_top_addresses_and_total_volume(self, storage: SqliteStorage) -> None:
         """Top addresses ranked by combined buyer+seller volume."""
         trades = [
             Trade(
@@ -87,9 +85,7 @@ class TestSqliteStorage:
         ]
         await storage.insert_trades(trades)
 
-        top, total = await storage.get_top_addresses_and_total_volume(
-            "BTC", 0, limit=5
-        )
+        top, total = await storage.get_top_addresses_and_total_volume("BTC", 0, limit=5)
         # Both addresses end up with 75_000 (50000*1 buyer for one,
         # 50000*0.5 seller for the other and vice versa) so the
         # ORDER BY tie-break is unspecified — assert on the set.
@@ -134,9 +130,7 @@ class TestSqliteStorage:
         assert history[0].size == 10.0
 
     @pytest.mark.asyncio
-    async def test_get_latest_positions_batch(
-        self, storage: SqliteStorage
-    ) -> None:
+    async def test_get_latest_positions_batch(self, storage: SqliteStorage) -> None:
         """Batched fetch returns latest position per (address, coin)."""
         positions = [
             Position(
@@ -223,9 +217,7 @@ class TestSqliteStorage:
         assert recent[0].metadata["delta_pct"] == 0.15
 
     @pytest.mark.asyncio
-    async def test_settings_overrides_crud(
-        self, storage: SqliteStorage
-    ) -> None:
+    async def test_settings_overrides_crud(self, storage: SqliteStorage) -> None:
         """Upsert, read, and delete on the settings_overrides table."""
         assert await storage.get_settings_overrides() == {}
 

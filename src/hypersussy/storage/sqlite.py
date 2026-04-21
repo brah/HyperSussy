@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib.resources
 import logging
+import random
 import sqlite3
 import time
 from collections.abc import Awaitable, Callable, Sequence
@@ -24,6 +25,10 @@ from hypersussy.models import (
 logger = logging.getLogger(__name__)
 
 _WRITE_RETRY_DELAYS_S = (0.25, 0.5, 1.0, 2.0)
+# Uniform jitter fraction applied to each retry delay so concurrent
+# retriers don't lock-step through their backoffs and collide at the
+# same moment on every wake-up.
+_WRITE_RETRY_JITTER = 0.25
 
 # Whitelist of tables the retention loop may target. Gate-keeping the
 # table name this way keeps delete_older_than safe from SQL injection
@@ -32,9 +37,23 @@ _RETENTION_TABLES: frozenset[str] = frozenset(
     {"trades", "asset_snapshots", "address_positions"}
 )
 
+# Default upper bound on time-series history queries. Callers can
+# raise the cap for targeted needs but the default protects the API
+# layer from accidentally materialising years of rows.
+_DEFAULT_HISTORY_LIMIT = 50_000
+
 
 def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
-    """Return True when SQLite reports a lock/busy condition."""
+    """Return True when SQLite reports a lock/busy condition.
+
+    Prefers the structured ``sqlite_errorname`` attribute (Python 3.11+)
+    so the check doesn't break if SQLite reorganises its error text.
+    Falls back to string match for the rare case where a third-party
+    driver raises ``OperationalError`` without the error code.
+    """
+    name = getattr(exc, "sqlite_errorname", "")
+    if name in {"SQLITE_BUSY", "SQLITE_LOCKED"}:
+        return True
     text = str(exc).lower()
     return "database is locked" in text or "database table is locked" in text
 
@@ -82,10 +101,13 @@ class SqliteStorage:
 
         Without this, plain ``DELETE`` statements leave empty pages in
         the file and ``PRAGMA incremental_vacuum`` is a no-op, so the
-        retention loop can never shrink the SQLite file on disk. The
-        switch requires a full ``VACUUM`` which rewrites the whole
-        file and temporarily needs roughly 2x free disk space, so it
-        only runs on the very first boot after this code lands.
+        retention loop can never shrink the SQLite file on disk.
+
+        Runs every boot but the expensive ``VACUUM`` that actually
+        flips the mode only executes once — the mode check short-
+        circuits on every subsequent boot since the PRAGMA persists
+        on disk. The ``VACUUM`` rewrites the whole file and
+        temporarily needs roughly 2x free disk space.
         """
         cursor = await self._conn.execute("PRAGMA auto_vacuum")
         row = await cursor.fetchone()
@@ -129,11 +151,9 @@ class SqliteStorage:
         params: Sequence[object] = (),
     ) -> None:
         """Execute a single write statement under the shared write lock."""
-        async with self._write_lock:
-            await self._run_write_with_retry(
-                lambda: self._conn.execute(query, params),
-            )
-            await self._conn.commit()
+        await self._write_under_lock(
+            lambda: self._conn.execute(query, params),
+        )
 
     async def _executemany_write(
         self,
@@ -141,17 +161,36 @@ class SqliteStorage:
         rows: Sequence[Sequence[object]],
     ) -> None:
         """Execute a batch write statement under the shared write lock."""
+        await self._write_under_lock(
+            lambda: self._conn.executemany(query, rows),
+        )
+
+    async def _write_under_lock(
+        self,
+        action: Callable[[], Awaitable[object]],
+    ) -> None:
+        """Run ``action`` under the write lock with retry + commit.
+
+        One helper replaces the three copies that used to live in
+        ``_execute_write``, ``_executemany_write`` and the retention /
+        vacuum paths. All writes go through the same lock → retry →
+        commit pipeline so a transient ``database is locked`` never
+        skips the commit path for one caller only.
+        """
         async with self._write_lock:
-            await self._run_write_with_retry(
-                lambda: self._conn.executemany(query, rows),
-            )
+            await self._run_write_with_retry(action)
             await self._conn.commit()
 
     async def _run_write_with_retry(
         self,
         action: Callable[[], Awaitable[object]],
     ) -> None:
-        """Retry locked SQLite writes a few times before surfacing the error."""
+        """Retry locked SQLite writes a few times before surfacing the error.
+
+        Applies a small random jitter to each backoff so two
+        concurrent writers that happen to retry at the same moment
+        don't replay the collision on every wake-up.
+        """
         for attempt, delay in enumerate((0.0, *_WRITE_RETRY_DELAYS_S), start=1):
             try:
                 await action()
@@ -161,7 +200,9 @@ class SqliteStorage:
                 is_last = attempt > len(_WRITE_RETRY_DELAYS_S)
                 if not is_retryable or is_last:
                     raise
-                await asyncio.sleep(delay)
+                if delay > 0:
+                    jittered = delay * (1.0 + random.uniform(0, _WRITE_RETRY_JITTER))
+                    await asyncio.sleep(jittered)
 
     async def _fetchall(
         self,
@@ -284,25 +325,37 @@ class SqliteStorage:
             ],
         )
 
-    async def get_oi_history(self, coin: str, since_ms: int) -> list[AssetSnapshot]:
+    async def get_oi_history(
+        self,
+        coin: str,
+        since_ms: int,
+        *,
+        limit: int = _DEFAULT_HISTORY_LIMIT,
+    ) -> list[AssetSnapshot]:
         """Fetch recent OI history for a coin.
+
+        Rows are ordered oldest-first for the caller's charting
+        convenience, but the ``LIMIT`` caps how many can be returned.
+        A caller who passes ``since_ms=0`` on a long-running database
+        would otherwise materialise every snapshot ever recorded.
 
         Args:
             coin: Asset name.
             since_ms: Absolute start timestamp in milliseconds.
+            limit: Maximum rows to return (default 50k).
 
         Returns:
             Snapshots ordered by timestamp ascending.
         """
-        cutoff = since_ms
         rows = await self._fetchall(
             """SELECT coin, timestamp_ms, open_interest,
                       open_interest_usd, mark_price, oracle_price,
                       funding_rate, premium, day_volume_usd, mid_price
                FROM asset_snapshots
                WHERE coin = ? AND timestamp_ms >= ?
-               ORDER BY timestamp_ms ASC""",
-            (coin, cutoff),
+               ORDER BY timestamp_ms ASC
+               LIMIT ?""",
+            (coin, since_ms, limit),
         )
         return [self._asset_snapshot_from_row(row) for row in rows]
 
@@ -477,7 +530,12 @@ class SqliteStorage:
         )
 
     async def get_position_history(
-        self, address: str, coin: str, since_ms: int
+        self,
+        address: str,
+        coin: str,
+        since_ms: int,
+        *,
+        limit: int = _DEFAULT_HISTORY_LIMIT,
     ) -> list[Position]:
         """Fetch position history for an address on a coin.
 
@@ -485,11 +543,11 @@ class SqliteStorage:
             address: The 0x address.
             coin: Asset name.
             since_ms: Absolute start timestamp in milliseconds.
+            limit: Maximum rows to return (default 50k).
 
         Returns:
             Positions ordered by timestamp ascending.
         """
-        cutoff = since_ms
         rows = await self._fetchall(
             """SELECT address, coin, timestamp_ms, size, entry_price,
                       notional_usd, unrealized_pnl, leverage_value,
@@ -498,13 +556,18 @@ class SqliteStorage:
                FROM address_positions
                 WHERE address = ? AND coin = ?
                   AND timestamp_ms >= ?
-               ORDER BY timestamp_ms ASC""",
-            (address, coin, cutoff),
+               ORDER BY timestamp_ms ASC
+               LIMIT ?""",
+            (address, coin, since_ms, limit),
         )
         return [self._position_from_row(row) for row in rows]
 
     async def get_latest_positions(self, address: str) -> list[Position]:
         """Get the most recent position snapshot per coin for an address.
+
+        Thin wrapper over :meth:`get_latest_positions_batch` — the
+        single-address case is just the batch case with one element,
+        and maintaining two near-identical SQL blocks invited drift.
 
         Args:
             address: The 0x address.
@@ -512,24 +575,8 @@ class SqliteStorage:
         Returns:
             Latest position per coin (one entry per coin).
         """
-        rows = await self._fetchall(
-            """SELECT ap.address, ap.coin, ap.timestamp_ms, ap.size,
-                      ap.entry_price, ap.notional_usd, ap.unrealized_pnl,
-                      ap.leverage_value, ap.leverage_type,
-                      ap.liquidation_price, ap.mark_price, ap.margin_used
-               FROM address_positions ap
-               INNER JOIN (
-                   SELECT address, coin, MAX(timestamp_ms) AS max_ts
-                   FROM address_positions
-                   WHERE address = ?
-                   GROUP BY address, coin
-               ) latest
-               ON ap.address = latest.address
-                  AND ap.coin = latest.coin
-                  AND ap.timestamp_ms = latest.max_ts""",
-            (address,),
-        )
-        return [self._position_from_row(row) for row in rows]
+        result = await self.get_latest_positions_batch([address])
+        return result.get(address, [])
 
     async def get_latest_positions_batch(
         self, addresses: list[str]
@@ -582,11 +629,17 @@ class SqliteStorage:
     async def insert_alert(self, alert: Alert) -> None:
         """Store a generated alert.
 
+        ``alert.alert_id`` is a UUID4, so the PRIMARY KEY collision
+        the old ``INSERT OR IGNORE`` was guarding against is not
+        actually possible. Dedup authority lives in
+        :class:`hypersussy.alerts.manager.AlertManager`; this row
+        write assumes the manager already said "yes, dispatch".
+
         Args:
             alert: The alert to persist.
         """
         await self._execute_write(
-            """INSERT OR IGNORE INTO alerts
+            """INSERT INTO alerts
                (alert_id, alert_type, severity, coin, title,
                 description, timestamp_ms, metadata_json, exchange)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -608,16 +661,26 @@ class SqliteStorage:
         alert_type: str,
         coin: str,
         since_ms: int,
+        *,
+        limit: int = 50,
     ) -> list[Alert]:
         """Fetch recent alerts for deduplication checks.
+
+        Newest-first — the dedup fingerprint match only cares about
+        whether *any* recent alert collides, and newer entries are
+        more likely to match typical burst patterns. ``limit`` caps
+        the result so an unbounded flood on one (type, coin) never
+        turns this hot-path query into a full table scan by way of
+        materialising thousands of rows.
 
         Args:
             alert_type: Engine alert type string.
             coin: Asset name.
             since_ms: Start timestamp.
+            limit: Maximum rows to return (default 50).
 
         Returns:
-            Matching alerts ordered by timestamp.
+            Matching alerts ordered newest-first.
         """
         rows = await self._fetchall(
             """SELECT alert_id, alert_type, severity, coin, title,
@@ -626,8 +689,9 @@ class SqliteStorage:
                FROM alerts
                 WHERE alert_type = ? AND coin = ?
                   AND timestamp_ms >= ?
-               ORDER BY timestamp_ms ASC""",
-            (alert_type, coin, since_ms),
+               ORDER BY timestamp_ms DESC
+               LIMIT ?""",
+            (alert_type, coin, since_ms, limit),
         )
         return [self._alert_from_row(row) for row in rows]
 
@@ -666,6 +730,8 @@ class SqliteStorage:
         interval: str,
         start_ms: int,
         end_ms: int,
+        *,
+        limit: int = _DEFAULT_HISTORY_LIMIT,
     ) -> list[CandleBar]:
         """Fetch cached candle data.
 
@@ -674,6 +740,7 @@ class SqliteStorage:
             interval: Candle interval string.
             start_ms: Start timestamp.
             end_ms: End timestamp.
+            limit: Maximum rows to return (default 50k).
 
         Returns:
             Candle bars ordered by timestamp.
@@ -684,8 +751,9 @@ class SqliteStorage:
                FROM candles
                WHERE coin = ? AND interval_str = ?
                 AND timestamp_ms >= ? AND timestamp_ms <= ?
-               ORDER BY timestamp_ms ASC""",
-            (coin, interval, start_ms, end_ms),
+               ORDER BY timestamp_ms ASC
+               LIMIT ?""",
+            (coin, interval, start_ms, end_ms, limit),
         )
         return [self._candle_from_row(row) for row in rows]
 
@@ -728,9 +796,7 @@ class SqliteStorage:
             # just matches zero additional rows.
             deleted = int(cursor.rowcount or 0)
 
-        async with self._write_lock:
-            await self._run_write_with_retry(_do_delete)
-            await self._conn.commit()
+        await self._write_under_lock(_do_delete)
         return deleted
 
     async def incremental_vacuum(self, pages: int = 2000) -> None:
@@ -747,11 +813,7 @@ class SqliteStorage:
                 you need to reclaim more in one sweep.
         """
         pragma = f"PRAGMA incremental_vacuum({int(pages)})"
-        async with self._write_lock:
-            await self._run_write_with_retry(
-                lambda: self._conn.execute(pragma),
-            )
-            await self._conn.commit()
+        await self._write_under_lock(lambda: self._conn.execute(pragma))
 
     # -- Settings overrides --
 

@@ -125,5 +125,9 @@ class Alert:
     title: str
     description: str
     timestamp_ms: int
-    metadata: dict[str, float | str | list[str]] = field(default_factory=dict)
+    # ``int`` sits alongside ``float`` so integer-valued metadata
+    # (window_ms, sample_count, twap_id) can stay integers through
+    # serialisation rather than being cast to float at the producer
+    # site. JSON serialisers accept both identically.
+    metadata: dict[str, float | int | str | list[str]] = field(default_factory=dict)
     exchange: str = "hyperliquid"

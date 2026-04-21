@@ -163,18 +163,38 @@ export interface WalletAccountResponse {
   spot: SpotAssetItem[];
 }
 
-export interface ConfigFieldItem {
+/**
+ * A live-editable settings field, emitted by ``GET /api/config``.
+ *
+ * Discriminated on ``type`` so TS can narrow ``value``/``default``
+ * at a call site. Numeric fields carry optional ``minimum``/
+ * ``maximum`` bounds; ``bool`` fields never do, and collapsing them
+ * into the same shape used to force runtime casts everywhere they
+ * were consumed.
+ */
+interface ConfigFieldBase {
   key: string;
   section: string;
   label: string;
   description: string;
-  type: "int" | "float" | "bool";
-  value: number | boolean;
-  default: number | boolean;
   overridden: boolean;
+}
+
+export interface ConfigNumberField extends ConfigFieldBase {
+  type: "int" | "float";
+  value: number;
+  default: number;
   minimum: number | null;
   maximum: number | null;
 }
+
+export interface ConfigBoolField extends ConfigFieldBase {
+  type: "bool";
+  value: boolean;
+  default: boolean;
+}
+
+export type ConfigFieldItem = ConfigNumberField | ConfigBoolField;
 
 export interface ConfigResponse {
   fields: ConfigFieldItem[];
@@ -195,7 +215,20 @@ export interface StorageStatsResponse {
   perp_coverage_pct: number;
 }
 
+/**
+ * Single candle bar pushed by the backend ``candle`` channel.
+ *
+ * Mirrors the ``CandleItem`` REST shape but is delivered one bar at
+ * a time over /ws/live for the actively-watched (coin, interval).
+ */
+export interface CandleWsItem {
+  coin: string;
+  interval: string;
+  candle: CandleItem;
+}
+
 export type WsMessage =
   | { type: "snapshots"; data: Record<string, LiveSnapshot>; timestamp_ms: number }
   | { type: "alert"; data: AlertItem; timestamp_ms: number }
-  | { type: "health"; data: HealthResponse; timestamp_ms: number };
+  | { type: "health"; data: HealthResponse; timestamp_ms: number }
+  | { type: "candle"; data: CandleWsItem; timestamp_ms: number };

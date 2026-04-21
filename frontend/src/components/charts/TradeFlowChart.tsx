@@ -1,10 +1,11 @@
-import { memo, useEffect, useMemo } from "react";
-import { HistogramSeries, createChart, type Time } from "lightweight-charts";
+import { memo, useMemo } from "react";
+import { HistogramSeries, type Time } from "lightweight-charts";
 import type { TradeFlowItem } from "../../api/types";
 import { colors } from "../../theme/colors";
-import { lwcChartOptions, msToSec } from "../../theme/chartDefaults";
+import { msToSec } from "../../theme/chartDefaults";
 import { formatUSD } from "../../utils/format";
 import { useContainerWidth } from "../../hooks/useContainerWidth";
+import { useLightweightChart } from "../../hooks/useLightweightChart";
 
 interface TradeFlowChartProps {
   data: TradeFlowItem[];
@@ -46,36 +47,35 @@ export const TradeFlowChart = memo(function TradeFlowChart({
   const [containerRef, width] = useContainerWidth();
   const pivoted = useMemo(() => pivotFlow(data), [data]);
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || width === 0 || pivoted.length === 0) return;
+  useLightweightChart(
+    containerRef,
+    width,
+    height,
+    (chart) => {
+      if (pivoted.length === 0) return;
+      chart
+        .addSeries(HistogramSeries, {
+          color: colors.teal,
+          priceFormat: volFormat,
+          title: "Buy",
+        })
+        .setData(
+          pivoted.map((b) => ({ time: msToSec(b.bucket) as Time, value: b.buy })),
+        );
 
-    const chart = createChart(el, {
-      ...lwcChartOptions(width, height),
-      leftPriceScale: { borderColor: colors.grid, visible: false },
-    });
-
-    // Buy: positive bars (teal)
-    chart.addSeries(HistogramSeries, {
-      color: colors.teal,
-      priceFormat: volFormat,
-      title: "Buy",
-    }).setData(
-      pivoted.map((b) => ({ time: msToSec(b.bucket) as Time, value: b.buy })),
-    );
-
-    // Sell: negative bars (red) — visually mirror below zero
-    chart.addSeries(HistogramSeries, {
-      color: colors.red,
-      priceFormat: volFormat,
-      title: "Sell",
-    }).setData(
-      pivoted.map((b) => ({ time: msToSec(b.bucket) as Time, value: -b.sell })),
-    );
-
-    chart.timeScale().fitContent();
-    return () => chart.remove();
-  }, [width, height, pivoted]);
+      chart
+        .addSeries(HistogramSeries, {
+          color: colors.red,
+          priceFormat: volFormat,
+          title: "Sell",
+        })
+        .setData(
+          pivoted.map((b) => ({ time: msToSec(b.bucket) as Time, value: -b.sell })),
+        );
+    },
+    [pivoted],
+    { leftPriceScale: { borderColor: colors.grid, visible: false } },
+  );
 
   return <div ref={containerRef} style={{ width: "100%", height }} />;
 });

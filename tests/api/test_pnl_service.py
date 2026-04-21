@@ -224,6 +224,32 @@ class TestGetFills:
         assert cursor is None
 
     @pytest.mark.asyncio
+    async def test_narrow_window_full_page_returns_cursor(self) -> None:
+        """Narrow window filled exactly to limit must return a cursor.
+
+        Regression: with the 30-day narrow window returning exactly
+        ``limit`` fills, the old formula concluded no older fills
+        existed and returned ``cursor=None`` — silently hiding any
+        fills older than 30 days. The correct behaviour is to return
+        the oldest timestamp as a cursor so the client can probe
+        deeper; the next call will widen if the probe is under-full.
+        """
+        service = _make_service()
+        now_ms = int(time.time() * 1000)
+        # All fills within the last 30 days. Returned count == limit.
+        fills = [_fill(ts=now_ms - i * 1000) for i in range(50)]
+        service._reader._call_info = AsyncMock(return_value=fills)
+
+        page, cursor = await service.get_fills("0x" + "a" * 40, limit=50)
+
+        assert len(page) == 50
+        assert cursor is not None, (
+            "Narrow window was full; client cannot know older fills "
+            "don't exist. A cursor must be returned so the next call "
+            "can probe the wider window."
+        )
+
+    @pytest.mark.asyncio
     async def test_normalizes_fill_fields(self) -> None:
         """Raw HL fields are normalized to the API schema shape."""
         service = _make_service()

@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any, cast
 
 from hypersussy.config import HyperSussySettings
 from hypersussy.engines._shared import is_on_cooldown, record_alert_timestamp
-from hypersussy.models import Alert, TwapFillEntry, TwapSliceFill
+from hypersussy.models import Alert, TwapSliceFill
 
 
 class TwapDetector:
@@ -22,20 +23,38 @@ class TwapDetector:
         fills: list[TwapSliceFill],
         timestamp_ms: int,
     ) -> list[Alert]:
-        """Process pre-fetched TWAP slice fills into alerts."""
+        """Process pre-fetched TWAP slice fills into alerts.
+
+        Malformed fill payloads (missing ``twapId``, ``fill``, or any
+        of the nested ``time``/``coin``/``side``/``px``/``sz`` keys)
+        are skipped with a single per-process warning. ``TypedDict``
+        declarations pin the expected shape for mypy but don't
+        enforce it at runtime, so we can't assume every API response
+        is well-formed.
+        """
         if not fills:
             return []
 
         cooldown_ms = self._settings.alert_cooldown_s * 1000
 
-        # Group by twapId, keeping only the latest fill per TWAP
-        twap_latest: dict[int, TwapFillEntry] = {}
+        # Group by twapId, keeping only the latest fill per TWAP.
+        # ``TypedDict`` pins the shape for mypy but doesn't enforce
+        # it at runtime; look up via ``dict.get`` on a plain dict
+        # view so a malformed payload degrades to "skip this entry"
+        # instead of a KeyError that propagates out of the engine
+        # loop.
+        twap_latest: dict[int, dict[str, Any]] = {}
         for entry in fills:
-            twap_id = entry["twapId"]
-            fill = entry["fill"]
-            fill_time = fill["time"]
+            entry_dict = cast(dict[str, Any], entry)
+            twap_id = entry_dict.get("twapId")
+            fill = entry_dict.get("fill")
+            if twap_id is None or not isinstance(fill, dict):
+                continue
+            fill_time = fill.get("time")
+            if fill_time is None:
+                continue
             prev = twap_latest.get(twap_id)
-            if prev is None or fill_time > prev["time"]:
+            if prev is None or fill_time > prev.get("time", 0):
                 twap_latest[twap_id] = fill
 
         alerts: list[Alert] = []
@@ -44,8 +63,8 @@ class TwapDetector:
             * self._settings.twap_active_window_multiplier
         )
 
-        for twap_id, latest_fill in twap_latest.items():
-            fill_time = latest_fill["time"]
+        for twap_id, fill_dict in twap_latest.items():
+            fill_time = fill_dict.get("time", 0)
             if timestamp_ms - fill_time > active_window_ms:
                 continue
 
@@ -53,10 +72,18 @@ class TwapDetector:
             if is_on_cooldown(self._last_alert_ms, key, timestamp_ms, cooldown_ms):
                 continue
 
-            coin = latest_fill["coin"]
-            is_buy = latest_fill["side"] == "B"
-            sz = float(latest_fill["sz"])
-            px = float(latest_fill["px"])
+            coin = fill_dict.get("coin", "")
+            side = fill_dict.get("side", "")
+            raw_sz = fill_dict.get("sz")
+            raw_px = fill_dict.get("px")
+            if not coin or raw_sz is None or raw_px is None:
+                continue
+            try:
+                sz = float(raw_sz)
+                px = float(raw_px)
+            except (TypeError, ValueError):
+                continue
+            is_buy = side == "B"
 
             alerts.append(
                 _twap_active_alert(
@@ -97,7 +124,7 @@ def _twap_active_alert(
         timestamp_ms=timestamp_ms,
         metadata={
             "address": address,
-            "twap_id": float(twap_id),
+            "twap_id": twap_id,
             "direction": direction,
             "slice_sz": slice_sz,
             "slice_px": slice_px,

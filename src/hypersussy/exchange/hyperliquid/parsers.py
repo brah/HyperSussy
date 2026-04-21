@@ -33,6 +33,48 @@ def _f(val: Any) -> float:
     return float(val)
 
 
+def _ctx_to_snapshot(
+    coin: str, ctx: dict[str, Any], timestamp_ms: int
+) -> AssetSnapshot | None:
+    """Build an :class:`AssetSnapshot` from a raw HL asset-ctx dict.
+
+    Both the bulk ``metaAndAssetCtxs`` REST response and the WS
+    ``activeAssetCtx`` channel carry the same ``ctx`` shape, and the
+    field-mapping logic used to be duplicated across two call sites.
+    Pull it into one helper so field additions (e.g. the ``midPx``
+    optional) can't drift between them.
+
+    Returns ``None`` when the ctx indicates a delisted or inactive
+    asset (no ``markPx``), matching the callers' pre-existing behaviour
+    of skipping such rows.
+
+    Args:
+        coin: Asset name.
+        ctx: Raw HL asset-ctx dict with numeric fields as strings.
+        timestamp_ms: Timestamp to attach to the snapshot.
+
+    Returns:
+        Parsed snapshot, or ``None`` for delisted/inactive assets.
+    """
+    if not ctx.get("markPx"):
+        return None
+    mark = _f(ctx["markPx"])
+    oi = _f(ctx.get("openInterest"))
+    raw_mid = ctx.get("midPx")
+    return AssetSnapshot(
+        coin=coin,
+        timestamp_ms=timestamp_ms,
+        open_interest=oi,
+        open_interest_usd=oi * mark,
+        mark_price=mark,
+        oracle_price=_f(ctx.get("oraclePx")),
+        funding_rate=_f(ctx.get("funding")),
+        premium=_f(ctx.get("premium")),
+        day_volume_usd=_f(ctx.get("dayNtlVlm")),
+        mid_price=_f(raw_mid) if raw_mid else None,
+    )
+
+
 def parse_meta_and_asset_ctxs(
     raw: tuple[dict[str, Any], list[dict[str, Any]]],
 ) -> list[AssetSnapshot]:
@@ -50,26 +92,9 @@ def parse_meta_and_asset_ctxs(
     snapshots: list[AssetSnapshot] = []
 
     for asset_info, ctx in zip(universe, ctxs, strict=True):
-        # Skip delisted / inactive assets (no mark price from the exchange)
-        if not ctx.get("markPx"):
-            continue
-        coin = asset_info["name"]
-        mark = _f(ctx.get("markPx"))
-        oi = _f(ctx.get("openInterest"))
-        snapshots.append(
-            AssetSnapshot(
-                coin=coin,
-                timestamp_ms=now_ms,
-                open_interest=oi,
-                open_interest_usd=oi * mark if mark else 0.0,
-                mark_price=mark,
-                oracle_price=_f(ctx.get("oraclePx")),
-                funding_rate=_f(ctx.get("funding")),
-                premium=_f(ctx.get("premium")),
-                day_volume_usd=_f(ctx.get("dayNtlVlm")),
-                mid_price=(_f(ctx["midPx"]) if ctx.get("midPx") else None),
-            )
-        )
+        snapshot = _ctx_to_snapshot(asset_info["name"], ctx, now_ms)
+        if snapshot is not None:
+            snapshots.append(snapshot)
 
     return snapshots
 
@@ -169,6 +194,39 @@ def parse_candles(
         )
         for c in raw
     ]
+
+
+def parse_ws_candle(msg: dict[str, Any]) -> CandleBar | None:
+    """Parse a WebSocket ``candle`` channel message into a single bar.
+
+    The HL ``candle`` channel emits one bar per message — both
+    in-progress updates of the open bar (same ``t``) and the start of
+    a new bar (advanced ``t``). The shape mirrors a single element of
+    ``info.candles_snapshot()``'s return value plus the standard
+    channel envelope (``s`` for symbol, ``i`` for interval).
+
+    Args:
+        msg: The full WS message dict with ``channel`` and ``data`` keys.
+
+    Returns:
+        A CandleBar, or None if the payload is missing required fields.
+    """
+    data: dict[str, Any] = msg.get("data", {})
+    coin: str = data.get("s", "")
+    interval: str = data.get("i", "")
+    if not coin or not interval or "t" not in data:
+        return None
+    return CandleBar(
+        coin=coin,
+        interval=interval,
+        timestamp_ms=int(data["t"]),
+        open=_f(data.get("o")),
+        high=_f(data.get("h")),
+        low=_f(data.get("l")),
+        close=_f(data.get("c")),
+        volume=_f(data.get("v")),
+        num_trades=int(data.get("n", 0)),
+    )
 
 
 def parse_funding_history(
@@ -284,23 +342,10 @@ def parse_ws_active_asset_ctx(msg: dict[str, Any]) -> AssetSnapshot | None:
     """
     data: dict[str, Any] = msg.get("data", {})
     coin: str = data.get("coin", "")
-    ctx: dict[str, Any] = data.get("ctx", {})
-    if not coin or not ctx.get("markPx"):
+    if not coin:
         return None
-    mark = _f(ctx["markPx"])
-    oi = _f(ctx.get("openInterest"))
-    return AssetSnapshot(
-        coin=coin,
-        timestamp_ms=int(time.time() * 1000),
-        open_interest=oi,
-        open_interest_usd=oi * mark,
-        mark_price=mark,
-        oracle_price=_f(ctx.get("oraclePx")),
-        funding_rate=_f(ctx.get("funding")),
-        premium=_f(ctx.get("premium")),
-        day_volume_usd=_f(ctx.get("dayNtlVlm")),
-        mid_price=_f(ctx["midPx"]) if ctx.get("midPx") else None,
-    )
+    ctx: dict[str, Any] = data.get("ctx", {})
+    return _ctx_to_snapshot(coin, ctx, int(time.time() * 1000))
 
 
 def parse_ws_all_mids(

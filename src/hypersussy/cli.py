@@ -229,8 +229,10 @@ def _run_api() -> None:
     import uvicorn
 
     from hypersussy.api.server import app
+    from hypersussy.config import HyperSussySettings
 
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    settings = HyperSussySettings()
+    uvicorn.run(app, host=settings.api_host, port=settings.api_port)
 
 
 def main() -> None:

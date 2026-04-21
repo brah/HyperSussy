@@ -8,10 +8,8 @@ production build exists.
 
 from __future__ import annotations
 
-import importlib.resources
 import logging
 import os
-import sqlite3
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -42,6 +40,7 @@ from hypersussy.app.db_reader import DashboardReader
 from hypersussy.app.runner import BackgroundRunner
 from hypersussy.app.state import SharedState
 from hypersussy.config import HyperSussySettings
+from hypersussy.logging_utils import LogFloodGuard
 from hypersussy.storage.sqlite import SqliteStorage
 
 logger = logging.getLogger(__name__)
@@ -49,20 +48,10 @@ logger = logging.getLogger(__name__)
 # Requests slower than this get logged at WARNING. Tune in one place.
 SLOW_REQUEST_THRESHOLD_S = 0.25
 
-
-def _ensure_db_ready(db_path: str) -> None:
-    """Create the SQLite DB file and schema before opening read-only readers."""
-    schema_sql = (
-        importlib.resources.files("hypersussy.storage")
-        .joinpath("schema.sql")
-        .read_text(encoding="utf-8")
-    )
-    conn = sqlite3.connect(db_path)
-    try:
-        conn.executescript(schema_sql)
-        conn.commit()
-    finally:
-        conn.close()
+# One slow-request WARNING per endpoint per minute — without this a
+# flaky downstream at the wrong moment can bury the log in thousands
+# of identical lines, drowning any useful signal alongside them.
+_slow_request_guard = LogFloodGuard(window_s=60.0)
 
 
 @asynccontextmanager
@@ -73,9 +62,21 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     db_dir = os.path.dirname(settings.db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
-    _ensure_db_ready(settings.db_path)
 
     state = SharedState()
+
+    # Open the async storage handle *first* so its ``init()`` creates
+    # the file + schema before the read-only DashboardReader tries to
+    # connect (read-only mode fails on a missing file). An earlier
+    # version of this block ran schema creation three times — once
+    # synchronously via a helper, then again here via aiosqlite, then
+    # a third time inside the background runner. The runner's init
+    # is idempotent so that third call is cheap; trimming this down
+    # to two runs (one sync path via aiosqlite here, one runner-side
+    # for the runner's own connection).
+    config_storage = SqliteStorage(db_path=settings.db_path)
+    await config_storage.init()
+
     reader = DashboardReader(db_path=settings.db_path)
     actions = DashboardActions(db_path=settings.db_path)
 
@@ -94,13 +95,6 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
     await candle_service.init()
     pnl_service = PnlService(base_url=settings.hl_api_url)
     spot_service = SpotService(base_url=settings.hl_api_url)
-    # Dedicated async storage handle for the config route's override
-    # writes. The background runner creates its own SqliteStorage
-    # inside its event loop thread; we can't safely share that from
-    # the API request thread, so we open a second aiosqlite connection
-    # against the same file (both use WAL).
-    config_storage = SqliteStorage(db_path=settings.db_path)
-    await config_storage.init()
     runner = BackgroundRunner(settings=settings, shared_state=state)
 
     app.state.shared = state
@@ -164,7 +158,10 @@ async def _timing_middleware(
     elapsed = time.perf_counter() - started
 
     if elapsed >= SLOW_REQUEST_THRESHOLD_S:
-        logger.warning(
+        _slow_request_guard.log(
+            logger,
+            logging.WARNING,
+            f"slow_request:{request.method}:{request.url.path}",
             "slow_request method=%s path=%s status=%d duration_ms=%d",
             request.method,
             request.url.path,

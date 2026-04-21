@@ -14,6 +14,15 @@
   --color-hs-green-dark: #163300;
   --color-hs-mint: #1e3a1e;
   --color-hs-secondary: #9ca3af;
+
+  /*
+   * Dark-theme tokens for the candlestick chart family.
+   * Mirrors ``chartDarkColors`` in ``theme/colors.ts`` — the TS
+   * tokens feed the lightweight-charts canvas, the CSS tokens feed
+   * the surrounding DOM (chart header, pane reorder buttons).
+   */
+  --color-hs-chart-bg: #000000;
+  --color-hs-chart-border: #1a1a1a;
 }
 
 *,

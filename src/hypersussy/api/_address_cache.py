@@ -87,9 +87,7 @@ class TtlAddressCache[T]:
             now: Current monotonic time, threaded through to avoid a
                 second ``time.monotonic()`` call.
         """
-        expired = [
-            key for key, entry in self._cache.items() if entry.expires_at <= now
-        ]
+        expired = [key for key, entry in self._cache.items() if entry.expires_at <= now]
         for key in expired:
             del self._cache[key]
         while len(self._cache) > self._max_entries:

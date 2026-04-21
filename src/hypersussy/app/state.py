@@ -8,7 +8,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 
-from hypersussy.models import Alert, AssetSnapshot
+from hypersussy.models import Alert, AssetSnapshot, CandleBar
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +45,21 @@ class RuntimeHealth:
     runtime_errors: tuple[RuntimeIssue, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class CandleEntry:
+    """The latest candle for a (coin, interval) pair plus a change marker.
+
+    Args:
+        bar: The most recently received CandleBar from the HL WS.
+        seq: Process-monotonic counter bumped on every push. WS clients
+            track the last seq they sent so they can detect a tick
+            without comparing the bar contents.
+    """
+
+    bar: CandleBar
+    seq: int
+
+
 class SharedState:
     """Thread-safe store for live snapshots, alerts, and runtime health."""
 
@@ -58,6 +73,14 @@ class SharedState:
         self._last_snapshot_ms: int | None = None
         self._last_alert_ms: int | None = None
         self._log_path: str | None = None
+        # Live candle state — populated by CandleStreamRegistry from
+        # the HL `candle` WS channel and consumed by /ws/live clients.
+        # The desired-keys map is a refcount per (coin, interval); the
+        # registry's reconcile loop reads the keys and subscribes/
+        # unsubscribes against HL accordingly.
+        self._desired_candle_keys: dict[tuple[str, str], int] = {}
+        self._last_candles: dict[tuple[str, str], CandleEntry] = {}
+        self._candle_seq_counter: int = 0
 
     def push_snapshot(self, snapshot: AssetSnapshot) -> None:
         """Store the latest snapshot for one coin."""
@@ -172,3 +195,85 @@ class SharedState:
         """Return the log file path, or None if not yet set."""
         with self._lock:
             return self._log_path
+
+    # ── Live candles ────────────────────────────────────────────
+
+    def acquire_candle_subscription(self, coin: str, interval: str) -> None:
+        """Reserve a HL candle subscription for ``(coin, interval)``.
+
+        Refcounted: multiple ``/ws/live`` clients viewing the same
+        ``(coin, interval)`` pair share one upstream HL subscription.
+        The reconcile loop in CandleStreamRegistry reads
+        :meth:`get_desired_candle_keys` to know what HL subscriptions
+        should currently exist.
+
+        Args:
+            coin: Asset ticker.
+            interval: HL candle interval string (e.g. ``"1m"``).
+        """
+        key = (coin, interval)
+        with self._lock:
+            self._desired_candle_keys[key] = self._desired_candle_keys.get(key, 0) + 1
+
+    def release_candle_subscription(self, coin: str, interval: str) -> None:
+        """Drop one reference to ``(coin, interval)``.
+
+        When the refcount reaches zero the key is removed from the
+        desired set *and* any cached bar is evicted from
+        ``_last_candles``; the reconcile loop will subsequently
+        unsubscribe from HL on its next tick. Without the cache
+        eviction, a long session that browses many symbols/intervals
+        would retain every bar it ever saw.
+
+        Args:
+            coin: Asset ticker.
+            interval: HL candle interval string.
+        """
+        key = (coin, interval)
+        with self._lock:
+            count = self._desired_candle_keys.get(key, 0)
+            if count <= 1:
+                self._desired_candle_keys.pop(key, None)
+                self._last_candles.pop(key, None)
+            else:
+                self._desired_candle_keys[key] = count - 1
+
+    def get_desired_candle_keys(self) -> set[tuple[str, str]]:
+        """Return a snapshot of all currently-desired candle keys."""
+        with self._lock:
+            return set(self._desired_candle_keys.keys())
+
+    def push_candle(self, bar: CandleBar) -> None:
+        """Store the latest candle for one (coin, interval).
+
+        Bumps the per-process sequence counter so consumers can detect
+        an update without comparing bar contents. Silently drops bars
+        for keys no client currently wants — closes the race between
+        ``release_candle_subscription`` evicting the cache entry and a
+        trailing HL message for the same key re-inserting it (which
+        would leak the entry forever since nothing would ever release
+        it again).
+
+        Args:
+            bar: The candle bar to store.
+        """
+        key = (bar.coin, bar.interval)
+        with self._lock:
+            if key not in self._desired_candle_keys:
+                return
+            self._candle_seq_counter += 1
+            self._last_candles[key] = CandleEntry(bar=bar, seq=self._candle_seq_counter)
+
+    def get_candle_entry(self, coin: str, interval: str) -> CandleEntry | None:
+        """Return the latest candle entry for ``(coin, interval)``.
+
+        Args:
+            coin: Asset ticker.
+            interval: HL candle interval string.
+
+        Returns:
+            The candle entry, or ``None`` if no candle has been
+            received for this key yet.
+        """
+        with self._lock:
+            return self._last_candles.get((coin, interval))

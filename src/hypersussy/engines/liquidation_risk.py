@@ -7,6 +7,7 @@ book depth.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sqlite3
 import uuid
@@ -22,6 +23,8 @@ from hypersussy.models import Alert, AssetSnapshot, L2Book, Trade
 from hypersussy.storage.base import StorageProtocol
 
 logger = logging.getLogger(__name__)
+
+_L2_FETCH_ERRORS = (ClientError, ServerError, requests.RequestException, OSError)
 
 
 class LiquidationRiskEngine:
@@ -78,10 +81,18 @@ class LiquidationRiskEngine:
     async def tick(self, timestamp_ms: int) -> list[Alert]:
         """Check tracked whales for liquidation proximity.
 
-        Caches L2 book fetches per coin so each book is retrieved at
-        most once per tick regardless of how many whales hold that coin.
-        Latest positions for the entire tracked batch are fetched in
-        a single SQLite query (instead of N sequential reads).
+        Two passes so book fetches can run concurrently:
+
+        1. Score all tracked positions against the distance threshold
+           to collect the distinct set of coins that need an L2 book.
+        2. ``asyncio.gather`` those book fetches, then score the
+           impact ratio and emit alerts.
+
+        The previous shape interleaved book fetches with the
+        per-position loop, serialising up to N book requests per tick
+        through the REST rate limiter. Batching them cuts the tick
+        wall-time for a diverse whale set from O(N) round-trips to
+        O(max(1, N/concurrency)).
 
         Args:
             timestamp_ms: Current timestamp in milliseconds.
@@ -92,15 +103,12 @@ class LiquidationRiskEngine:
         alerts: list[Alert] = []
         cooldown_ms = self._settings.alert_cooldown_s * 1000
         threshold = self._settings.liquidation_distance_threshold
-        book_cache: dict[str, L2Book | None] = {}
 
         tracked = await self._storage.get_tracked_addresses()
         batch = tracked[: self._settings.liquidation_max_tracked]
 
         try:
-            positions_by_address = await self._storage.get_latest_positions_batch(
-                batch
-            )
+            positions_by_address = await self._storage.get_latest_positions_batch(batch)
         except sqlite3.Error:
             logger.exception(
                 "Failed to batch-load latest positions for %d whales",
@@ -108,9 +116,9 @@ class LiquidationRiskEngine:
             )
             return alerts
 
+        candidates: list[_LiquidationCandidate] = []
         for address in batch:
-            positions = positions_by_address.get(address, [])
-            for pos in positions:
+            for pos in positions_by_address.get(address, []):
                 if pos.liquidation_price is None or pos.liquidation_price == 0:
                     continue
 
@@ -126,59 +134,76 @@ class LiquidationRiskEngine:
                 if is_on_cooldown(self._last_alert_ms, key, timestamp_ms, cooldown_ms):
                     continue
 
-                impact_ratio = await self._estimate_impact(
-                    pos.coin, pos.size, book_cache
-                )
-
-                alerts.append(
-                    _liquidation_alert(
-                        _LiquidationContext(
-                            address=address,
-                            coin=pos.coin,
-                            size=pos.size,
-                            notional_usd=pos.notional_usd,
-                            mark_price=mark,
-                            liq_price=pos.liquidation_price,
-                            distance=distance,
-                            impact_ratio=impact_ratio,
-                            timestamp_ms=timestamp_ms,
-                        )
+                candidates.append(
+                    _LiquidationCandidate(
+                        address=address,
+                        coin=pos.coin,
+                        size=pos.size,
+                        notional_usd=pos.notional_usd,
+                        mark_price=mark,
+                        liq_price=pos.liquidation_price,
+                        distance=distance,
+                        cooldown_key=key,
                     )
                 )
-                record_alert_timestamp(self._last_alert_ms, key, timestamp_ms)
+
+        if not candidates:
+            return alerts
+
+        coins = {c.coin for c in candidates}
+        book_cache = await self._fetch_book_cache(coins)
+
+        for cand in candidates:
+            impact_ratio = _impact_from_cache(book_cache.get(cand.coin), cand.size)
+            alerts.append(
+                _liquidation_alert(
+                    _LiquidationContext(
+                        address=cand.address,
+                        coin=cand.coin,
+                        size=cand.size,
+                        notional_usd=cand.notional_usd,
+                        mark_price=cand.mark_price,
+                        liq_price=cand.liq_price,
+                        distance=cand.distance,
+                        impact_ratio=impact_ratio,
+                        timestamp_ms=timestamp_ms,
+                    )
+                )
+            )
+            record_alert_timestamp(self._last_alert_ms, cand.cooldown_key, timestamp_ms)
 
         return alerts
 
-    async def _estimate_impact(
-        self,
-        coin: str,
-        position_size: float,
-        book_cache: dict[str, L2Book | None],
-    ) -> float:
-        """Estimate market impact of liquidating a position.
+    async def _fetch_book_cache(self, coins: set[str]) -> dict[str, L2Book | None]:
+        """Concurrently fetch L2 books for ``coins``.
 
-        Uses *book_cache* to avoid fetching the same coin's L2 book
-        multiple times within a single tick.
-
-        Args:
-            coin: Asset name.
-            position_size: Absolute position size.
-            book_cache: Mutable cache of coin -> L2Book for this tick.
-
-        Returns:
-            Ratio of position size to available book depth.
-            Higher values indicate more impact risk.
+        Errors per coin are absorbed and represented as ``None`` in
+        the returned map so the caller can degrade impact scoring to
+        zero without cascading failures across unrelated coins.
         """
-        if coin not in book_cache:
-            try:
-                book_cache[coin] = await self._reader.get_l2_book(coin)
-            except (ClientError, ServerError, requests.RequestException, OSError):
-                logger.warning("Failed to fetch L2 book for %s", coin)
-                book_cache[coin] = None  # sentinel to avoid retrying
-        book = book_cache[coin]
-        if book is None:
-            return 0.0
-        return _compute_impact_ratio(book, position_size)
+        ordered = list(coins)
+        results = await asyncio.gather(
+            *(self._reader.get_l2_book(c) for c in ordered),
+            return_exceptions=True,
+        )
+        cache: dict[str, L2Book | None] = {}
+        for coin, result in zip(ordered, results, strict=True):
+            if isinstance(result, _L2_FETCH_ERRORS):
+                logger.warning("Failed to fetch L2 book for %s (%s)", coin, result)
+                cache[coin] = None
+            elif isinstance(result, BaseException):
+                # Unknown exception types get the same treatment as
+                # known network faults — liquidation scoring is
+                # best-effort; one bad coin mustn't wedge the tick.
+                logger.exception(
+                    "Unexpected L2 book error for %s",
+                    coin,
+                    exc_info=result,
+                )
+                cache[coin] = None
+            else:
+                cache[coin] = result
+        return cache
 
 
 def _compute_impact_ratio(book: L2Book, position_size: float) -> float:
@@ -198,7 +223,34 @@ def _compute_impact_ratio(book: L2Book, position_size: float) -> float:
     return abs(position_size) / total_depth
 
 
-def _classify_severity(distance: float, impact_ratio: float) -> str:
+def _impact_from_cache(book: L2Book | None, position_size: float) -> float:
+    """Score impact when a book may be missing from the cache.
+
+    A ``None`` book (fetch failed) degrades to zero impact — the
+    same behaviour the previous serial implementation had, kept so
+    alerts still fire for near-liquidation positions even when L2
+    data is momentarily unavailable.
+    """
+    if book is None:
+        return 0.0
+    return _compute_impact_ratio(book, position_size)
+
+
+@dataclass(frozen=True, slots=True)
+class _LiquidationCandidate:
+    """Pre-scored whale position awaiting impact computation."""
+
+    address: str
+    coin: str
+    size: float
+    notional_usd: float
+    mark_price: float
+    liq_price: float
+    distance: float
+    cooldown_key: str
+
+
+def _classify_liquidation_severity(distance: float, impact_ratio: float) -> str:
     """Classify alert severity from liquidation distance and impact.
 
     Args:
@@ -245,7 +297,7 @@ def _liquidation_alert(ctx: _LiquidationContext) -> Alert:
     return Alert(
         alert_id=str(uuid.uuid4()),
         alert_type="liquidation_risk",
-        severity=_classify_severity(ctx.distance, ctx.impact_ratio),
+        severity=_classify_liquidation_severity(ctx.distance, ctx.impact_ratio),
         coin=ctx.coin,
         title=(f"{ctx.coin}: whale {side} {ctx.distance:.1%} from liquidation"),
         description=(

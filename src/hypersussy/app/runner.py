@@ -3,37 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
-import sqlite3
 import threading
-
-import requests
-from hyperliquid.utils.error import ClientError, ServerError
+from typing import TYPE_CHECKING
 
 from hypersussy.app.state import SharedState
 from hypersussy.config import HyperSussySettings
+from hypersussy.errors import RECOVERABLE as _RECOVERABLE
+
+if TYPE_CHECKING:
+    from hypersussy.orchestrator import Orchestrator
 
 logger = logging.getLogger(__name__)
-
-# Transient infrastructure failures — expected and recoverable.
-_NETWORK_ERRORS: tuple[type[Exception], ...] = (
-    ClientError,
-    ServerError,
-    requests.RequestException,
-    sqlite3.Error,
-    OSError,
-)
-
-# Programming/data errors — indicate bugs; caught only to prevent crashes.
-_LOGIC_ERRORS: tuple[type[Exception], ...] = (
-    ValueError,
-    KeyError,
-    TypeError,
-    RuntimeError,
-)
-
-_RECOVERABLE = _NETWORK_ERRORS + _LOGIC_ERRORS
 
 
 class BackgroundRunner:
@@ -47,7 +30,7 @@ class BackgroundRunner:
         self._settings = settings
         self._state = shared_state
         self._thread: threading.Thread | None = None
-        self._orchestrator_ref: object | None = None
+        self._orchestrator: Orchestrator | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop_event = threading.Event()
 
@@ -66,10 +49,8 @@ class BackgroundRunner:
     def stop(self) -> None:
         """Signal the orchestrator to stop and join the thread."""
         self._stop_event.set()
-        if self._orchestrator_ref is not None:
-            stop_fn = getattr(self._orchestrator_ref, "stop", None)
-            if stop_fn is not None:
-                stop_fn()
+        if self._orchestrator is not None:
+            self._orchestrator.stop()
         if self._loop is not None and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._cancel_all_tasks)
         if self._thread is not None:
@@ -111,6 +92,9 @@ class BackgroundRunner:
         from hypersussy.alerts.sinks.log_sink import LogSink
         from hypersussy.app.sink import AppSink
         from hypersussy.cli import _build_components, _configure_logging
+        from hypersussy.exchange.hyperliquid.candle_stream import (
+            CandleStreamRegistry,
+        )
         from hypersussy.orchestrator import Orchestrator
 
         db_dir = os.path.dirname(self._settings.db_path)
@@ -145,10 +129,25 @@ class BackgroundRunner:
             settings=self._settings,
             data_bus=self._state,
         )
-        self._orchestrator_ref = orchestrator
+        self._orchestrator = orchestrator
         self._state.set_running(True)
+
+        # Live candle stream — runs as a peer task to the orchestrator
+        # so the dashboard can push real-time bar updates without
+        # polling the REST candles endpoint. Communication with the
+        # API layer goes through SharedState's candle methods.
+        candle_registry = CandleStreamRegistry(
+            ws_url=self._settings.hl_ws_url,
+            state=self._state,
+        )
+        candle_task = asyncio.create_task(
+            candle_registry.run(), name="candle_stream_registry"
+        )
 
         try:
             await orchestrator.run()
         finally:
+            candle_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await candle_task
             await storage.close()

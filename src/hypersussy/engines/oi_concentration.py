@@ -60,14 +60,19 @@ class OiConcentrationEngine:
     async def on_asset_update(self, snapshot: AssetSnapshot) -> list[Alert]:
         """Ingest an asset snapshot into the OI ring buffer.
 
+        Records every snapshot so the ring buffer retains a faithful
+        time series. The min-OI gate is applied in :meth:`_check_window`
+        on both endpoints of the comparison instead — that way a coin
+        that dipped below threshold and recovered doesn't silently drop
+        its in-between samples, while the noise filter still rejects
+        window comparisons where either endpoint is below the minimum.
+
         Args:
             snapshot: Updated asset snapshot.
 
         Returns:
             Empty list (analysis happens in tick).
         """
-        if snapshot.open_interest_usd < self._settings.oi_min_usd:
-            return []
         self._oi_history[snapshot.coin].append(
             (snapshot.timestamp_ms, snapshot.open_interest_usd)
         )
@@ -105,6 +110,9 @@ class OiConcentrationEngine:
                 continue
 
             current_oi = history[-1][1]
+            # Current-value noise gate. Per-endpoint gate in
+            # _check_window handles the past value so a dip in the
+            # middle of a window cannot score as a giant swing.
             if current_oi < self._settings.oi_min_usd:
                 continue
 
@@ -146,7 +154,12 @@ class OiConcentrationEngine:
             return None
         start_oi = history[idx][1]
 
-        if start_oi == 0:
+        # Per-endpoint noise gate: reject comparisons where the window
+        # start was below the min OI threshold. Without this, a coin
+        # that momentarily dipped to near-zero and recovered would score
+        # as a multi-thousand-percent "increase" — true mathematically
+        # but noise in a whale-monitoring context.
+        if start_oi < self._settings.oi_min_usd:
             return None
 
         delta_pct = (current_oi - start_oi) / start_oi
@@ -196,7 +209,7 @@ class OiConcentrationEngine:
                 "delta_pct": delta_pct,
                 "start_oi_usd": start_oi,
                 "current_oi_usd": current_oi,
-                "window_ms": float(window_ms),
+                "window_ms": window_ms,
                 "concentration": concentration,
                 "top_volume_usd": top_volume,
                 "total_volume_usd": total_volume,
@@ -229,5 +242,3 @@ def _format_window(window_ms: int) -> str:
     if minutes >= 60:
         return f"{minutes // 60}h"
     return f"{minutes}m"
-
-

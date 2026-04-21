@@ -100,6 +100,11 @@ class HyperSussySettings(BaseSettings):
     funding_abs_threshold: float = 0.001
     funding_rolling_window: int = 168  # hours
     funding_min_samples: int = 24
+    # Max-once-per-interval sampling for the rolling z-score history.
+    # Funding rates update roughly hourly on Hyperliquid; dropping
+    # intra-hour duplicates keeps the rolling window a meaningful
+    # time series instead of an over-weighted snapshot cluster.
+    funding_sample_interval_ms: int = 3_600_000
 
     # Liquidation Risk engine
     liquidation_distance_threshold: float = 0.05
@@ -117,6 +122,10 @@ class HyperSussySettings(BaseSettings):
     meta_poll_interval_s: float = 10.0
     engine_tick_interval_s: float = 10.0
     asset_list_refresh_s: float = 300.0
+
+    # API server
+    api_host: str = "0.0.0.0"  # noqa: S104 — binds to all interfaces by design
+    api_port: int = 8000
 
     # Logging
     log_level: str = "INFO"

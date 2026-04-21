@@ -15,13 +15,11 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Sequence
 from functools import partial
 
-import requests
-from hyperliquid.utils.error import ClientError, ServerError
-
 from hypersussy.alerts.manager import AlertManager
 from hypersussy.config import HyperSussySettings
 from hypersussy.engines.base import DetectionEngine
 from hypersussy.engines.whale_tracker import WhaleTrackerEngine
+from hypersussy.errors import RECOVERABLE as _RECOVERABLE
 from hypersussy.exchange.hyperliquid.client import HyperLiquidReader
 from hypersussy.exchange.hyperliquid.websocket import HyperLiquidStream
 from hypersussy.logging_utils import LogFloodGuard
@@ -38,25 +36,6 @@ _MAX_TRADE_WS_CONNECTIONS = 7
 _MAX_POSITION_WS_USERS = 1000
 # Periodic reconciliation cadence for dynamic market stream subscriptions.
 _STREAM_RECONCILE_S = 1.0
-
-# Transient infrastructure failures — expected and recoverable.
-_NETWORK_ERRORS: tuple[type[Exception], ...] = (
-    ClientError,
-    ServerError,
-    requests.RequestException,
-    sqlite3.Error,
-    OSError,
-)
-
-# Programming/data errors — indicate bugs; caught only to prevent
-# daemon crashes. Each occurrence should be investigated.
-_LOGIC_ERRORS: tuple[type[Exception], ...] = (
-    ValueError,
-    KeyError,
-    TypeError,
-)
-
-_RECOVERABLE = _NETWORK_ERRORS + _LOGIC_ERRORS
 
 
 class Orchestrator:
@@ -98,35 +77,23 @@ class Orchestrator:
 
     def _mark_engine_error(self, engine_name: str, exc: Exception) -> None:
         """Forward engine errors to the dashboard state when available."""
-        if self._data_bus is None:
-            return
-        mark = getattr(self._data_bus, "mark_engine_error", None)
-        if callable(mark):
-            mark(engine_name, str(exc))
+        if self._data_bus is not None:
+            self._data_bus.mark_engine_error(engine_name, str(exc))
 
     def _clear_engine_error(self, engine_name: str) -> None:
         """Clear a previously recorded engine error."""
-        if self._data_bus is None:
-            return
-        clear = getattr(self._data_bus, "clear_engine_error", None)
-        if callable(clear):
-            clear(engine_name)
+        if self._data_bus is not None:
+            self._data_bus.clear_engine_error(engine_name)
 
     def _mark_runtime_error(self, source: str, exc: Exception) -> None:
         """Forward runtime loop errors to the dashboard state when available."""
-        if self._data_bus is None:
-            return
-        mark = getattr(self._data_bus, "mark_runtime_error", None)
-        if callable(mark):
-            mark(source, str(exc))
+        if self._data_bus is not None:
+            self._data_bus.mark_runtime_error(source, str(exc))
 
     def _clear_runtime_error(self, source: str) -> None:
         """Clear a previously recorded runtime error."""
-        if self._data_bus is None:
-            return
-        clear = getattr(self._data_bus, "clear_runtime_error", None)
-        if callable(clear):
-            clear(source)
+        if self._data_bus is not None:
+            self._data_bus.clear_runtime_error(source)
 
     async def _dispatch_alerts(self, alerts: list[Alert]) -> None:
         """Process a batch of alerts through the alert manager."""
@@ -158,7 +125,6 @@ class Orchestrator:
         logger.info("Orchestrator starting...")
 
         await self._refresh_coins()
-        trade_batches = self._trade_batches(self._coins)
 
         tasks = [
             asyncio.create_task(self._poll_meta_loop(), name="poll_meta"),
@@ -178,10 +144,10 @@ class Orchestrator:
 
         logger.info(
             "Orchestrator running with %d coins (%d native via WS)"
-            " across %d WS connections, %d engines",
+            " across %d WS connection(s), %d engines",
             len(self._coins),
             len(self._native_coins),
-            len(trade_batches),
+            len(self._trade_batches(self._coins)),
             len(self._engines),
         )
 
@@ -224,8 +190,9 @@ class Orchestrator:
         while self._running:
             await asyncio.sleep(self._settings.asset_list_refresh_s)
             try:
+                # ``_refresh_coins`` clears its own runtime-error entry
+                # on success; the outer handler re-marks only on failure.
                 await self._refresh_coins()
-                self._clear_runtime_error("refresh_coins")
             except _RECOVERABLE as exc:
                 self._mark_runtime_error("refresh_coins", exc)
                 logger.exception("Failed to refresh coin list")
@@ -510,6 +477,20 @@ class Orchestrator:
                 await asyncio.sleep(10.0)
                 continue
             users = tracked[:_MAX_POSITION_WS_USERS]
+            if len(tracked) > _MAX_POSITION_WS_USERS:
+                # Surface the drop so operators aren't left wondering
+                # why a tracked whale never gets live position updates.
+                # REST polling still covers these addresses via
+                # ``PositionTracker.poll_positions``.
+                self._log_guard.log(
+                    logger,
+                    logging.WARNING,
+                    "position_ws_truncated",
+                    "Position WS capped at %d of %d tracked addresses; "
+                    "remainder covered by REST safety-net polls",
+                    _MAX_POSITION_WS_USERS,
+                    len(tracked),
+                )
             logger.info("Starting position WS stream for %d addresses", len(users))
             try:
                 position_stream = self._stream.stream_clearinghouse_states(users)
@@ -545,12 +526,9 @@ class Orchestrator:
         Args:
             trade: The incoming trade.
         """
-        now = time.monotonic()
-        if now >= self._trade_storage_backoff_until:
-            self._trade_buffer.append(trade)
+        self._trade_buffer.append(trade)
+        if time.monotonic() >= self._trade_storage_backoff_until:
             await self._flush_trade_buffer()
-        else:
-            self._trade_buffer.append(trade)
 
         for engine in self._engines:
             await self._run_engine_call(

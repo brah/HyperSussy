@@ -7,11 +7,27 @@
  */
 
 import { create } from "zustand";
-import type { AlertItem, HealthResponse, LiveSnapshot, WsMessage } from "./types";
+import type {
+  AlertItem,
+  CandleItem,
+  HealthResponse,
+  LiveSnapshot,
+  WsMessage,
+} from "./types";
 
 const MAX_LIVE_ALERTS = 100;
 const BACKOFF_CAP_MS = 30_000;
 const STOP_GRACE_MS = 100;
+// After this many consecutive reconnect failures we flip ``unreachable``
+// in the store so the UI can surface a persistent banner. The reconnect
+// loop keeps running so a later success clears the flag — the cap is
+// purely about user-visible state, not about giving up.
+const UNREACHABLE_AFTER_FAILURES = 8;
+
+/** Composite key for `lastCandles` lookups. */
+export function candleKey(coin: string, interval: string): string {
+  return `${coin}:${interval}`;
+}
 
 // Snapshot updates from the backend can arrive several times per second.
 // Each WS message replaces the entire snapshots dict with a fresh top-level
@@ -57,10 +73,27 @@ interface WsState {
   liveAlerts: AlertItem[];
   health: HealthResponse | null;
   connected: boolean;
+  /**
+   * True when reconnection has failed enough times in a row that
+   * we've stopped quietly retrying and want the UI to surface a
+   * persistent "connection lost" banner. Cleared on the next
+   * successful connect.
+   */
+  unreachable: boolean;
+  /**
+   * Latest candle per ``coin:interval`` key, populated by the
+   * server's ``candle`` channel. Components subscribe via a narrow
+   * selector keyed on the active coin/interval to avoid re-renders
+   * when an unrelated chart receives an update.
+   */
+  lastCandles: Record<string, CandleItem>;
   setSnapshots: (s: Record<string, LiveSnapshot>) => void;
   addAlert: (a: AlertItem) => void;
   setHealth: (h: HealthResponse) => void;
   setConnected: (c: boolean) => void;
+  setUnreachable: (u: boolean) => void;
+  setCandle: (coin: string, interval: string, candle: CandleItem) => void;
+  removeCandle: (coin: string, interval: string) => void;
 }
 
 export const useWsStore = create<WsState>((set) => ({
@@ -68,13 +101,35 @@ export const useWsStore = create<WsState>((set) => ({
   liveAlerts: [],
   health: null,
   connected: false,
+  unreachable: false,
+  lastCandles: {},
   setSnapshots: (snapshots) => set({ snapshots }),
   addAlert: (alert) =>
     set((s) => ({
-      liveAlerts: [alert, ...s.liveAlerts].slice(0, MAX_LIVE_ALERTS),
+      // Drop the oldest first so the resulting array is exactly
+      // ``MAX_LIVE_ALERTS`` — the previous shape built an N+1 array
+      // then sliced to N, allocating twice on every push.
+      liveAlerts: [alert, ...s.liveAlerts.slice(0, MAX_LIVE_ALERTS - 1)],
     })),
   setHealth: (health) => set({ health }),
   setConnected: (connected) => set({ connected }),
+  setUnreachable: (unreachable) => set({ unreachable }),
+  setCandle: (coin, interval, candle) =>
+    set((s) => ({
+      lastCandles: { ...s.lastCandles, [candleKey(coin, interval)]: candle },
+    })),
+  // Evict the cached bar for a no-longer-watched (coin, interval) so
+  // long sessions browsing many symbols don't accrete stale entries.
+  // Called from watchCandles/unwatchCandles; the store is the sole
+  // owner of lastCandles so there's no race with readers.
+  removeCandle: (coin, interval) =>
+    set((s) => {
+      const key = candleKey(coin, interval);
+      if (!(key in s.lastCandles)) return s;
+      const next = { ...s.lastCandles };
+      delete next[key];
+      return { lastCandles: next };
+    }),
 }));
 
 let _ws: WebSocket | null = null;
@@ -83,6 +138,13 @@ let _subscriberCount = 0;
 let _allowReconnect = true;
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _stopTimer: ReturnType<typeof setTimeout> | null = null;
+// Consecutive failed reconnect attempts since the last successful open.
+// Feeds the ``unreachable`` flag once it crosses the threshold.
+let _failureCount = 0;
+// The candle subscription the dashboard *wants* the backend to be on.
+// Re-sent after every reconnect so a transient drop doesn't leave the
+// active chart silently disconnected from its candle stream.
+let _desiredCandleWatch: { coin: string; interval: string } | null = null;
 
 function clearReconnectTimer(): void {
   if (_reconnectTimer !== null) {
@@ -125,7 +187,15 @@ function connect(): void {
 
   _ws.onopen = () => {
     setConnected(true);
+    // A successful open clears the unreachable banner and resets
+    // the failure counter. A reconnect that opens but closes
+    // seconds later will bump the counter again below.
+    _failureCount = 0;
+    useWsStore.getState().setUnreachable(false);
     _backoffMs = 1_000;
+    // Re-send the desired candle watch on every (re)connect so a
+    // transient disconnect doesn't strand the active chart.
+    flushDesiredCandleWatch();
   };
 
   _ws.onmessage = (ev: MessageEvent<string>) => {
@@ -154,6 +224,21 @@ function connect(): void {
       case "health":
         setHealth(msg.data);
         break;
+      case "candle":
+        // Drop trailing candle messages for a key we no longer want.
+        // Without this guard, a bar that arrives after unwatchCandles
+        // (but before the backend processes it) would re-insert the
+        // entry we just evicted in removeCandle.
+        if (
+          _desiredCandleWatch !== null &&
+          _desiredCandleWatch.coin === msg.data.coin &&
+          _desiredCandleWatch.interval === msg.data.interval
+        ) {
+          useWsStore
+            .getState()
+            .setCandle(msg.data.coin, msg.data.interval, msg.data.candle);
+        }
+        break;
     }
   };
 
@@ -173,6 +258,10 @@ function connect(): void {
       return;
     }
 
+    _failureCount += 1;
+    if (_failureCount >= UNREACHABLE_AFTER_FAILURES) {
+      useWsStore.getState().setUnreachable(true);
+    }
     scheduleReconnect();
   };
 
@@ -218,4 +307,51 @@ export function stopWebSocket(): void {
     _ws?.close();
     _ws = null;
   }, STOP_GRACE_MS);
+}
+
+function flushDesiredCandleWatch(): void {
+  if (_ws === null || _ws.readyState !== WebSocket.OPEN) return;
+  if (_desiredCandleWatch === null) {
+    _ws.send(JSON.stringify({ type: "unwatch_candles" }));
+    return;
+  }
+  _ws.send(
+    JSON.stringify({
+      type: "watch_candles",
+      coin: _desiredCandleWatch.coin,
+      interval: _desiredCandleWatch.interval,
+    }),
+  );
+}
+
+/**
+ * Tell the backend we want live candle updates for ``(coin, interval)``.
+ *
+ * Holds at most one watch at a time per WebSocket connection — calling
+ * this with a different key automatically releases the previous one
+ * server-side. Safe to call before the WS is open: the request is
+ * stashed and sent on the next ``onopen`` (including reconnects).
+ */
+export function watchCandles(coin: string, interval: string): void {
+  if (
+    _desiredCandleWatch?.coin === coin &&
+    _desiredCandleWatch?.interval === interval
+  ) {
+    return;
+  }
+  const previous = _desiredCandleWatch;
+  _desiredCandleWatch = { coin, interval };
+  if (previous !== null) {
+    useWsStore.getState().removeCandle(previous.coin, previous.interval);
+  }
+  flushDesiredCandleWatch();
+}
+
+/** Drop the active candle subscription, if any. */
+export function unwatchCandles(): void {
+  if (_desiredCandleWatch === null) return;
+  const previous = _desiredCandleWatch;
+  _desiredCandleWatch = null;
+  useWsStore.getState().removeCandle(previous.coin, previous.interval);
+  flushDesiredCandleWatch();
 }

@@ -23,7 +23,7 @@ export const ChartHeader = memo(function ChartHeader({
   const snapshot = useWsStore((s) => s.snapshots[coin]);
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-xs font-mono border-b border-[#1a1a1a] bg-black">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-3 py-2 text-xs font-mono border-b border-hs-chart-border bg-hs-chart-bg">
       <div className="flex items-center gap-2">
         <span className="text-white font-semibold text-sm">{coin}USD</span>
         <WatchStar kind="coin" id={coin} size="sm" />

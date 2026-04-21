@@ -46,28 +46,40 @@ export const fundingQuery = (coin: string, hours: number) =>
     placeholderData: keepPreviousData,
   });
 
+// Latest OI: the REST endpoint is used only as a hydration fallback.
+// Live OI values flow in on every ``snapshots`` WS push, which the
+// charts subscribe to directly. A refetchInterval here would produce
+// redundant HTTP traffic for data the WS is already delivering.
 export const latestOIQuery = () =>
   queryOptions({
     queryKey: ["latest-oi"],
     queryFn: api.fetchLatestOI,
     staleTime: 10_000,
-    refetchInterval: 10_000,
   });
 
+// Alerts: the WS /ws/live channel delivers each new alert as it is
+// dispatched. This REST query is the initial-load fallback so the
+// feed isn't empty before the WS connects (and a safety net when the
+// WS is down). No refetchInterval for the same reason as latestOI.
 export const alertsQuery = (limit: number, since_ms: number) =>
   queryOptions({
     queryKey: ["alerts", limit, since_ms],
     queryFn: () => api.fetchAlerts(limit, since_ms),
     staleTime: 5_000,
-    refetchInterval: 5_000,
   });
 
+// Alert counts: aggregate per alert_type. The WS alert channel emits
+// individual alerts, not running totals, so we can't rebuild this
+// from WS state without re-computing from the full alert history.
+// The consumer (Alerts-by-Engine sub-panel) is already off by
+// default; when visible, a 30 s refresh is plenty for a "counts
+// since midnight" style summary without hammering the API.
 export const alertCountsQuery = (since_ms: number) =>
   queryOptions({
     queryKey: ["alert-counts", since_ms],
     queryFn: () => api.fetchAlertCounts(since_ms),
-    staleTime: 5_000,
-    refetchInterval: 5_000,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   });
 
 export const alertsByAddressQuery = (address: string, limit: number) =>

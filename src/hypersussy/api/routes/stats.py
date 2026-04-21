@@ -35,9 +35,7 @@ def get_storage_stats(
     stats = reader.get_storage_stats()
 
     db_size = (
-        os.path.getsize(settings.db_path)
-        if os.path.exists(settings.db_path)
-        else 0
+        os.path.getsize(settings.db_path) if os.path.exists(settings.db_path) else 0
     )
 
     # Coverage is the intersection of "coins HL currently lists" (live

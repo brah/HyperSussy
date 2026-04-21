@@ -119,6 +119,68 @@ class TestAlertManager:
         assert len(sink.alerts) == 2
 
     @pytest.mark.asyncio
+    async def test_dedup_uses_in_memory_cache_after_first_dispatch(
+        self,
+        storage: SqliteStorage,
+        settings: HyperSussySettings,
+    ) -> None:
+        """After the first dispatch, dedup must not hit storage again.
+
+        Verifies the in-memory fingerprint cache short-circuits
+        before the ``get_recent_alerts`` fallback. Without this, a
+        burst of duplicate alerts on the hot path would issue one
+        SQLite scan per duplicate.
+        """
+        settings.alert_cooldown_s = 3600
+        sink = _MockSink()
+        manager = AlertManager(storage=storage, sinks=[sink], settings=settings)
+
+        # First call seeds the cache via the storage fallback.
+        await manager.process_alert(_make_alert("a1", ts=5000))
+
+        # Swap get_recent_alerts for a counter — if the cache is
+        # authoritative, this must not be awaited for duplicates.
+        calls = 0
+
+        async def _counting(*args: object, **kwargs: object) -> list[Alert]:
+            nonlocal calls
+            calls += 1
+            return []
+
+        storage.get_recent_alerts = _counting  # type: ignore[method-assign]
+
+        for i in range(5):
+            await manager.process_alert(_make_alert(f"dup{i}", ts=5000 + i))
+
+        assert calls == 0, "dedup fell through to storage on a cache hit"
+
+    @pytest.mark.asyncio
+    async def test_dedup_falls_through_to_storage_on_first_sight(
+        self,
+        storage: SqliteStorage,
+        settings: HyperSussySettings,
+    ) -> None:
+        """On first sight, dedup honours persisted cooldown.
+
+        Pins the safety net: a fingerprint that already had an alert
+        dispatched in a *previous* process run must be blocked on the
+        very first in-memory check of the new run.
+        """
+        settings.alert_cooldown_s = 3600
+        # Pre-populate storage as if a prior run dispatched an alert.
+        previous = _make_alert("prior", ts=5000)
+        await storage.insert_alert(previous)
+
+        sink = _MockSink()
+        manager = AlertManager(storage=storage, sinks=[sink], settings=settings)
+
+        # New process, fresh in-memory cache; same fingerprint at t=6000.
+        result = await manager.process_alert(_make_alert("new", ts=6000))
+
+        assert result is False, "persisted cooldown must survive a restart"
+        assert len(sink.alerts) == 0
+
+    @pytest.mark.asyncio
     async def test_throttle_limits_rate(
         self,
         storage: SqliteStorage,

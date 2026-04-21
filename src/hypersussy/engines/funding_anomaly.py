@@ -27,8 +27,6 @@ class FundingAnomalyEngine:
         settings: Application settings with funding anomaly thresholds.
     """
 
-    _SAMPLE_INTERVAL_MS: int = 3_600_000  # one sample per hour maximum
-
     def __init__(self, settings: HyperSussySettings) -> None:
         self._settings = settings
         self._history: dict[str, deque[float]] = defaultdict(
@@ -53,8 +51,9 @@ class FundingAnomalyEngine:
             Empty list.
         """
         self._latest_rate[snapshot.coin] = snapshot.funding_rate
-        last = self._last_sampled_ms.get(snapshot.coin, -self._SAMPLE_INTERVAL_MS)
-        if snapshot.timestamp_ms - last >= self._SAMPLE_INTERVAL_MS:
+        interval_ms = self._settings.funding_sample_interval_ms
+        last = self._last_sampled_ms.get(snapshot.coin, -interval_ms)
+        if snapshot.timestamp_ms - last >= interval_ms:
             self._history[snapshot.coin].append(snapshot.funding_rate)
             self._last_sampled_ms[snapshot.coin] = snapshot.timestamp_ms
         return []
@@ -106,7 +105,7 @@ class FundingAnomalyEngine:
             if not (is_zscore_breach or is_abs_breach):
                 continue
 
-            severity = _classify_severity(abs(zscore), abs(current_rate))
+            severity = _classify_funding_severity(abs(zscore), abs(current_rate))
             reason = []
             if is_zscore_breach:
                 reason.append(f"z-score={zscore:+.2f}")
@@ -135,7 +134,7 @@ class FundingAnomalyEngine:
                         "rolling_mean": mean,
                         "rolling_stdev": stdev,
                         "zscore": zscore,
-                        "sample_count": float(n),
+                        "sample_count": n,
                     },
                 )
             )
@@ -144,7 +143,7 @@ class FundingAnomalyEngine:
         return alerts
 
 
-def _classify_severity(abs_zscore: float, abs_rate: float) -> str:
+def _classify_funding_severity(abs_zscore: float, abs_rate: float) -> str:
     """Classify alert severity from z-score and absolute rate.
 
     Args:

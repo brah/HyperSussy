@@ -141,6 +141,66 @@ class TestOiConcentrationEngine:
         assert len(alerts) == 0
 
     @pytest.mark.asyncio
+    async def test_sub_threshold_window_start_is_ignored(
+        self,
+        engine: OiConcentrationEngine,
+        storage: SqliteStorage,
+    ) -> None:
+        """A window whose start value is below oi_min_usd must not alert.
+
+        Regression: the engine now records every snapshot (including
+        dips below ``oi_min_usd``) to keep the time series continuous.
+        The per-window comparison must reject pairs where the start
+        value is below the min, otherwise a dip-and-recover event
+        would score as a multi-thousand-percent "swing".
+        """
+        # Plenty of concentrated trades so the concentration check
+        # alone would pass — only the start-OI gate should reject.
+        trades = [
+            Trade(
+                coin="BTC",
+                price=50_000.0,
+                size=1.0,
+                side="B",
+                timestamp_ms=ts,
+                buyer="0xwhale",
+                seller="0xmm",
+                tx_hash=f"0xh{ts}",
+                tid=ts,
+            )
+            for ts in range(900_000, 1_200_000, 20_000)
+        ]
+        await storage.insert_trades(trades)
+
+        # A dip inside the 5-minute lookback — current is safely above
+        # threshold, but start-of-window is not.
+        await engine.on_asset_update(_snapshot("BTC", 1_000_000, 500))
+        await engine.on_asset_update(_snapshot("BTC", 1_200_000, 50_000))
+
+        alerts = await engine.tick(1_200_000)
+        assert alerts == [], (
+            "start_oi (500) was below oi_min_usd (1000); comparisons "
+            "against sub-threshold endpoints must be skipped."
+        )
+
+    @pytest.mark.asyncio
+    async def test_dip_samples_are_retained_in_history(
+        self,
+        engine: OiConcentrationEngine,
+    ) -> None:
+        """All snapshots land in the ring buffer, even sub-threshold ones.
+
+        Pins the fix for the write-side gate that used to drop
+        sub-threshold snapshots — the gate now lives in ``tick``.
+        """
+        await engine.on_asset_update(_snapshot("BTC", 0, 100_000))
+        await engine.on_asset_update(_snapshot("BTC", 100, 500))
+        await engine.on_asset_update(_snapshot("BTC", 200, 100_000))
+        # Access via the engine's tick path indirectly — if a dip was
+        # recorded, the history deque has three entries.
+        assert len(engine._oi_history["BTC"]) == 3  # noqa: SLF001
+
+    @pytest.mark.asyncio
     async def test_on_trade_is_noop(
         self,
         engine: OiConcentrationEngine,

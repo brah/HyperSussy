@@ -71,7 +71,7 @@ class HyperLiquidReader:
         hip3_dex_filter: list[str] | None = None,
     ) -> None:
         self._base_url = base_url
-        self._info: Info | Any | None = None
+        self._info: Info | None = None
         self._limiter = rate_limiter or WeightRateLimiter()
         self._include_hip3 = include_hip3
         self._hip3_dex_filter: set[str] = set(hip3_dex_filter or [])
@@ -85,16 +85,29 @@ class HyperLiquidReader:
         self._rate_limited_until = 0.0
 
     @property
-    def _info_client(self) -> Info | Any:
-        """Return the cached HL SDK client (must call _ensure_initialized first)."""
+    def _info_client(self) -> Info:
+        """Return the cached HL SDK client.
+
+        Callers must await :meth:`_ensure_initialized` first. Kept as
+        a property rather than a bare attribute access so the return
+        type is narrowed (``Info``, not ``Info | None``) — callers
+        would otherwise need ``# type: ignore`` for every method
+        call against the SDK surface.
+        """
+        if self._info is None:
+            msg = "HL Info client not initialized; call _ensure_initialized() first"
+            raise RuntimeError(msg)
         return self._info
 
     async def _ensure_initialized(self) -> None:
         """Ensure the HL SDK Info client is initialized inside an executor.
 
-        Runs ``Info.__init__`` (which calls ``spot_meta()``) in a thread
-        executor via the concurrency semaphore, retrying on HTTP 429 with
-        exponential backoff.  Uses a lock to prevent duplicate init races.
+        Runs ``Info.__init__`` (which calls ``spot_meta()``) in a
+        thread executor via the concurrency semaphore. Retries all
+        the transient error classes :meth:`_call_info` handles on
+        live traffic — a startup that only handled 429 would crash
+        the runner on any transient DNS hiccup or ``ServerError``
+        during the first boot after a network blip.
         """
         if self._info is not None:
             return
@@ -108,18 +121,24 @@ class HyperLiquidReader:
                         weight=2,
                     )
                     return
-                except ClientError as exc:
-                    if exc.status_code == 429 and attempt < 3:
-                        delay = 2**attempt
-                        logger.warning(
-                            "HL Info init: 429 rate limit, retry %d/3 in %ds",
-                            attempt + 1,
-                            delay,
-                        )
-                        await asyncio.sleep(delay)
-                    else:
+                except (
+                    ClientError,
+                    ServerError,
+                    requests.RequestException,
+                    OSError,
+                ) as exc:
+                    is_429 = isinstance(exc, ClientError) and exc.status_code == 429
+                    if attempt == 3:
                         logger.error("HL Info init failed after retries: %s", exc)
                         raise
+                    delay = 2**attempt
+                    logger.warning(
+                        "HL Info init: %s, retry %d/3 in %ds",
+                        "429 rate limit" if is_429 else type(exc).__name__,
+                        attempt + 1,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
 
     async def _run_sync(self, func: Callable[[], Any], weight: int) -> Any:
         """Run a synchronous SDK call in an executor with rate limiting.
@@ -134,15 +153,10 @@ class HyperLiquidReader:
         Returns:
             The SDK method's return value.
         """
-        logger.debug("_run_sync: waiting for concurrency semaphore (weight=%d)", weight)
         async with self._concurrency:
-            logger.debug("_run_sync: semaphore acquired, awaiting rate limiter")
             await self._limiter.acquire(weight)
-            logger.debug("_run_sync: dispatching to executor")
             loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(None, func)
-            logger.debug("_run_sync: executor returned")
-            return result
+            return await loop.run_in_executor(None, func)
 
     async def _await_global_cooldown(self) -> None:
         """Pause outbound REST calls while the reader is in global cooldown."""
@@ -233,7 +247,12 @@ class HyperLiquidReader:
                     exc,
                 )
                 raise
-        raise RuntimeError(f"_call_info: unreachable after retries for {operation}")
+        # Every iteration either returns, continues, or raises — the
+        # for-else path is structurally unreachable but mypy demands
+        # a return from the function, and a sentinel raise is safer
+        # than ``assert False``.
+        msg = f"_call_info exhausted retries without raising for {operation}"
+        raise RuntimeError(msg)
 
     async def refresh_hip3_dexes(self) -> list[str]:
         """Fetch and cache the list of active HIP-3 builder dex names.
@@ -264,27 +283,34 @@ class HyperLiquidReader:
         """Fetch all perpetual assets with OI, volume, prices, funding.
 
         Includes both native and HIP-3 builder-deployed markets when
-        ``include_hip3`` is enabled.
+        ``include_hip3`` is enabled. Dex fetches run concurrently —
+        the concurrency semaphore (max 4) and the shared weight
+        limiter naturally bound the load, and ``asyncio.gather``
+        with ``return_exceptions=True`` means one flaky HIP-3 dex
+        can't stall the whole refresh.
 
         Returns:
             Snapshot for every listed perpetual asset.
         """
         if self._include_hip3 and not self._hip3_dex_names:
-            logger.debug("get_asset_snapshots: refreshing HIP-3 dex list")
             await self.refresh_hip3_dexes()
 
         dexes = [""] + (self._hip3_dex_names if self._include_hip3 else [])
+        results = await asyncio.gather(
+            *(self._fetch_dex_snapshots(dex) for dex in dexes),
+            return_exceptions=True,
+        )
         snapshots: list[AssetSnapshot] = []
-        for dex in dexes:
-            try:
-                snapshots.extend(await self._fetch_dex_snapshots(dex))
-            except (
-                ClientError,
-                ServerError,
-                requests.RequestException,
-                OSError,
-            ):
-                logger.debug("Skipping failed dex snapshot fetch for %r", dex)
+        for dex, result in zip(dexes, results, strict=True):
+            if isinstance(result, BaseException):
+                if isinstance(
+                    result,
+                    (ClientError, ServerError, requests.RequestException, OSError),
+                ):
+                    logger.debug("Skipping failed dex snapshot fetch for %r", dex)
+                    continue
+                raise result
+            snapshots.extend(result)
         return snapshots
 
     async def _fetch_dex_snapshots(self, dex: str) -> list[AssetSnapshot]:

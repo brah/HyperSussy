@@ -144,7 +144,12 @@ class PositionTracker:
         positions: list[Position],
         timestamp_ms: int,
     ) -> list[Alert]:
-        """Process a WebSocket-pushed position update for an address."""
+        """Process a WebSocket-pushed position update for an address.
+
+        Does *not* update ``_last_polled``: the REST safety net runs
+        on its own cadence so a silently-stalled WS stream cannot
+        suppress polling for tracked whales.
+        """
         if positions:
             await self._storage.insert_positions(positions)
 

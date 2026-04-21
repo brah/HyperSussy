@@ -3,7 +3,7 @@
  * lightweight-charts are NOT included in the initial bundle.
  */
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   candlesQuery,
@@ -14,7 +14,8 @@ import {
   topWhalesQuery,
   tradeFlowQuery,
 } from "../api/queries";
-import { CandlestickChart, type OverlayLine } from "../components/charts/CandlestickChart";
+import { unwatchCandles, watchCandles } from "../api/websocket";
+import { CandlestickChart } from "../components/charts/CandlestickChart";
 import { ChartHeader } from "../components/charts/ChartHeader";
 import { ChartToolbar } from "../components/charts/ChartToolbar";
 import { FundingChart } from "../components/charts/FundingChart";
@@ -29,15 +30,6 @@ import { TopHoldersTable } from "../components/market/TopHoldersTable";
 import { TopTradersTable } from "../components/market/TopTradersTable";
 import { useIndicator } from "../stores/indicatorStore";
 import { usePanelVisible } from "../stores/panelStore";
-import {
-  computeSMA,
-  computeEMA,
-  computeVWAP,
-  SMA_7_COLOR,
-  SMA_20_COLOR,
-  EMA_50_COLOR,
-  VWAP_COLOR,
-} from "../utils/indicators";
 import type { Hours } from "../components/common/HoursSelector";
 import { type Interval } from "../components/common/IntervalSelector";
 
@@ -84,11 +76,10 @@ export default function CoinView({ coin, coin2s, interval, hours, onIntervalChan
   const showTopTraders = usePanelVisible("top-traders", true);
   const showMarkOracle = usePanelVisible("mark-oracle", false);
 
-  // Indicator toggles (live in their own Zustand store, not panelStore).
-  const showSMA7 = useIndicator("sma7");
-  const showSMA20 = useIndicator("sma20", true);
-  const showEMA50 = useIndicator("ema50");
-  const showVWAP = useIndicator("vwap");
+  // OI/funding sub-pane toggles — read here so we can gate the
+  // matching React Query fetches. The SMA/EMA/VWAP indicator toggles
+  // live entirely inside CandlestickChart, which keeps CoinView from
+  // re-rendering on every WS candle push.
   const showOI = useIndicator("oi", true);
   const showFunding = useIndicator("funding");
 
@@ -97,7 +88,15 @@ export default function CoinView({ coin, coin2s, interval, hours, onIntervalChan
   // panels that render an empty-state branch on `data.length === 0`
   // also pull `isLoading` so the first toggle-on of a hidden panel
   // shows a "Loading…" placeholder instead of flashing "No data".
-  const { data: candles = [], isLoading: candlesLoading } = useQuery({
+  // `isCandlesPlaceholder` flags the keepPreviousData window during a
+  // coin transition — forwarded into CandlestickChart so its overlay
+  // math skips live-patching while the candles array still belongs
+  // to the previous coin.
+  const {
+    data: candles = [],
+    isLoading: candlesLoading,
+    isPlaceholderData: isCandlesPlaceholder,
+  } = useQuery({
     ...candlesQuery(coin, interval, candleHours),
     enabled: showCandlestick && coin.length > 0,
   });
@@ -180,30 +179,39 @@ export default function CoinView({ coin, coin2s, interval, hours, onIntervalChan
     [compareFundingResults, compareCoins],
   );
 
-  const chartOverlays = useMemo<OverlayLine[]>(() => {
-    const lines: OverlayLine[] = [];
-    if (showSMA7) lines.push({ key: "sma7", data: computeSMA(candles, 7), color: SMA_7_COLOR });
-    if (showSMA20) lines.push({ key: "sma20", data: computeSMA(candles, 20), color: SMA_20_COLOR });
-    if (showEMA50) lines.push({ key: "ema50", data: computeEMA(candles, 50), color: EMA_50_COLOR });
-    if (showVWAP) lines.push({ key: "vwap", data: computeVWAP(candles), color: VWAP_COLOR });
-    return lines;
-  }, [candles, showSMA7, showSMA20, showEMA50, showVWAP]);
+  // Live candle stream — opt the WS into the active (coin, interval)
+  // pair so the candlestick chart can patch the open bar in real time
+  // via lightweight-charts' incremental update API. The watch is also
+  // gated on the candlestick panel being visible: no point streaming
+  // candles for a hidden chart.
+  useEffect(() => {
+    if (!showCandlestick || coin.length === 0) {
+      unwatchCandles();
+      return;
+    }
+    watchCandles(coin, interval);
+    return () => {
+      unwatchCandles();
+    };
+  }, [coin, interval, showCandlestick]);
 
   return (
     <>
       <PanelWrapper panelKey="candlestick">
-        <div className="bg-black border border-[#1a1a1a] rounded-2xl overflow-hidden">
+        <div className="bg-hs-chart-bg border border-hs-chart-border rounded-2xl overflow-hidden">
           <ChartHeader coin={coin} interval={interval} onIntervalChange={onIntervalChange} />
           <ChartToolbar />
           {candles.length > 0 ? (
             <CandlestickChart
+              coin={coin}
+              interval={interval}
               candles={candles}
+              isPlaceholderData={isCandlesPlaceholder}
               height={460}
-              overlays={chartOverlays}
               oiData={oiForChart}
               showOI={showOI}
               fundingData={fundingForChart}
-              showFundingMarkers={showFunding}
+              showFunding={showFunding}
             />
           ) : candlesLoading ? (
             <p className="text-gray-500 text-sm py-12 text-center animate-pulse">

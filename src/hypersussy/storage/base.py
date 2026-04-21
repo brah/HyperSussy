@@ -34,12 +34,19 @@ class StorageProtocol(Protocol):
         """
         ...
 
-    async def get_oi_history(self, coin: str, since_ms: int) -> list[AssetSnapshot]:
+    async def get_oi_history(
+        self,
+        coin: str,
+        since_ms: int,
+        *,
+        limit: int = 50_000,
+    ) -> list[AssetSnapshot]:
         """Fetch recent OI history for a coin.
 
         Args:
             coin: Asset name.
             since_ms: Absolute start timestamp in milliseconds.
+            limit: Maximum rows to return.
 
         Returns:
             Snapshots ordered by timestamp ascending.
@@ -156,7 +163,12 @@ class StorageProtocol(Protocol):
         ...
 
     async def get_position_history(
-        self, address: str, coin: str, since_ms: int
+        self,
+        address: str,
+        coin: str,
+        since_ms: int,
+        *,
+        limit: int = 50_000,
     ) -> list[Position]:
         """Fetch position history for an address on a coin.
 
@@ -164,6 +176,7 @@ class StorageProtocol(Protocol):
             address: The 0x address.
             coin: Asset name.
             since_ms: Absolute start timestamp in milliseconds.
+            limit: Maximum rows to return.
 
         Returns:
             Positions ordered by timestamp ascending.
@@ -185,6 +198,8 @@ class StorageProtocol(Protocol):
         alert_type: str,
         coin: str,
         since_ms: int,
+        *,
+        limit: int = 50,
     ) -> list[Alert]:
         """Fetch recent alerts for deduplication checks.
 
@@ -192,9 +207,10 @@ class StorageProtocol(Protocol):
             alert_type: Engine alert type string.
             coin: Asset name.
             since_ms: Start timestamp.
+            limit: Maximum rows to return, newest-first.
 
         Returns:
-            Matching alerts ordered by timestamp.
+            Matching alerts ordered newest-first.
         """
         ...
 
@@ -261,6 +277,8 @@ class StorageProtocol(Protocol):
         interval: str,
         start_ms: int,
         end_ms: int,
+        *,
+        limit: int = 50_000,
     ) -> list[CandleBar]:
         """Fetch cached candle data.
 
@@ -269,6 +287,7 @@ class StorageProtocol(Protocol):
             interval: Candle interval string.
             start_ms: Start timestamp.
             end_ms: End timestamp.
+            limit: Maximum rows to return.
 
         Returns:
             Candle bars ordered by timestamp.

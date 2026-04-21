@@ -51,10 +51,19 @@ class WhaleTrackerEngine:
         return "whale_tracker"
 
     async def on_trade(self, trade: Trade) -> list[Alert]:
-        """Accumulate per-address volume and promote whales."""
+        """Accumulate per-address volume and promote whales.
+
+        ``_whale_active_dexes`` is intentionally populated for *every*
+        HIP-3 trader, not just tracked whales. When discovery later
+        promotes an address, its accumulated dex profile is already
+        available — the first REST position poll can target just the
+        dexes the address has actually traded on, instead of
+        fan-scanning every known HIP-3 dex. Pruning back to the
+        tracked set happens once per ``tick()``.
+        """
         await self._whale_discovery.on_trade(trade)
         if self._position_census is not None:
-            self._position_census.on_trade(trade)
+            await self._position_census.on_trade(trade)
         dex_prefix = trade.coin.split(":", 1)[0] if ":" in trade.coin else ""
         for addr in (trade.buyer, trade.seller):
             if not addr:

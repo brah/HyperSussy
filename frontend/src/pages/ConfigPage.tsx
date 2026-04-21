@@ -152,8 +152,11 @@ function ConfigRow({ field }: Readonly<ConfigRowProps>) {
   }, [draft, field.type, field.value, updateMutation]);
 
   function handleBoolToggle() {
-    const next = !(field.value as boolean);
-    updateMutation.mutate(next);
+    // This handler is only wired up from the ``field.type === "bool"``
+    // branch of the render below, so we can lean on the discriminated
+    // union here and skip a runtime cast.
+    if (field.type !== "bool") return;
+    updateMutation.mutate(!field.value);
   }
 
   const overridden = field.overridden;

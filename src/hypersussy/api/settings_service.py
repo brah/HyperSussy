@@ -257,6 +257,15 @@ _HOT_FIELD_LIST: tuple[HotField, ...] = (
         minimum=2,
         maximum=720,
     ),
+    HotField(
+        "funding_sample_interval_ms",
+        "Funding Anomaly",
+        "Sample interval (ms)",
+        "Minimum spacing between rolling-window samples. Defaults "
+        "to 1 h because HL funding updates roughly hourly.",
+        minimum=60_000,
+        maximum=86_400_000,
+    ),
     # -- Liquidation Risk ---------------------------------------------------
     HotField(
         "liquidation_distance_threshold",

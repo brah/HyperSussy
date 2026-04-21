@@ -2,6 +2,9 @@
  * Thin fetch wrapper for the HyperSussy REST API.
  *
  * All helpers return typed promises and throw on non-OK HTTP responses.
+ * Every request is bounded by ``REQUEST_TIMEOUT_MS`` — without that, a
+ * stalled connection would hold a React Query slot open until the
+ * browser's own (multi-minute) timeout fires.
  */
 
 import type {
@@ -26,49 +29,69 @@ import type {
 } from "./types";
 
 const BASE = "/api";
+const REQUEST_TIMEOUT_MS = 30_000;
 
-async function get<T>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`);
+async function request(path: string, init?: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  try {
+    return await fetch(`${BASE}${path}`, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function assertOk(res: Response): Promise<Response> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`API ${res.status}: ${body || res.statusText}`);
   }
+  return res;
+}
+
+function buildQuery(params?: Record<string, string | number | undefined>): string {
+  if (!params) return "";
+  const qs = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) qs.set(key, String(value));
+  }
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
+async function get<T>(
+  path: string,
+  params?: Record<string, string | number | undefined>,
+): Promise<T> {
+  const res = await assertOk(await request(path + buildQuery(params)));
   return res.json() as Promise<T>;
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
-  }
+  const res = await assertOk(
+    await request(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
   return res.json() as Promise<T>;
 }
 
 async function del<T = void>(path: string): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
-  }
+  const res = await assertOk(await request(path, { method: "DELETE" }));
   // 204 No Content has no body; everything else is parsed as JSON.
   return res.status === 204 ? (undefined as T) : ((await res.json()) as T);
 }
 
 async function put<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
-  }
+  const res = await assertOk(
+    await request(path, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    }),
+  );
   return res.json() as Promise<T>;
 }
 
@@ -76,13 +99,12 @@ async function put<T>(path: string, body: unknown): Promise<T> {
 
 export const fetchHealth = (): Promise<HealthResponse> => get("/health");
 
+// ``/health/logs`` returns ``text/plain``, so we can't route it
+// through ``get<T>`` (JSON-parsing). Share the timeout + assertOk
+// pipeline instead of re-implementing another fetch site.
 export async function fetchLogs(lines = 500): Promise<string> {
-  const res = await fetch(`/api/health/logs?lines=${lines}`);
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`API ${res.status}: ${text || res.statusText}`);
-  }
-  return text;
+  const res = await assertOk(await request(`/health/logs${buildQuery({ lines })}`));
+  return res.text();
 }
 
 // -- Snapshots --
@@ -90,13 +112,13 @@ export async function fetchLogs(lines = 500): Promise<string> {
 export const fetchCoins = (): Promise<string[]> => get("/snapshots/coins");
 
 export const fetchOI = (coin: string, hours = 24): Promise<OISnapshotItem[]> =>
-  get(`/snapshots/oi/${encodeURIComponent(coin)}?hours=${hours}`);
+  get(`/snapshots/oi/${encodeURIComponent(coin)}`, { hours });
 
 export const fetchFunding = (
   coin: string,
   hours = 24
 ): Promise<FundingSnapshotItem[]> =>
-  get(`/snapshots/funding/${encodeURIComponent(coin)}?hours=${hours}`);
+  get(`/snapshots/funding/${encodeURIComponent(coin)}`, { hours });
 
 export const fetchLatestOI = (): Promise<Record<string, number>> =>
   get("/snapshots/latest-oi");
@@ -106,19 +128,17 @@ export const fetchLatestOI = (): Promise<Record<string, number>> =>
 export const fetchAlerts = (
   limit = 200,
   since_ms = 0
-): Promise<AlertItem[]> =>
-  get(`/alerts?limit=${limit}&since_ms=${since_ms}`);
+): Promise<AlertItem[]> => get("/alerts", { limit, since_ms });
 
 export const fetchAlertCounts = (
   since_ms = 0
-): Promise<Record<string, number>> =>
-  get(`/alerts/counts?since_ms=${since_ms}`);
+): Promise<Record<string, number>> => get("/alerts/counts", { since_ms });
 
 export const fetchAlertsByAddress = (
   address: string,
   limit = 20
 ): Promise<AlertSummaryItem[]> =>
-  get(`/alerts/by-address/${encodeURIComponent(address)}?limit=${limit}`);
+  get(`/alerts/by-address/${encodeURIComponent(address)}`, { limit });
 
 // -- Trades --
 
@@ -126,22 +146,20 @@ export const fetchTopWhales = (
   coin: string,
   hours = 1
 ): Promise<TopWhaleItem[]> =>
-  get(`/trades/top-whales/${encodeURIComponent(coin)}?hours=${hours}`);
+  get(`/trades/top-whales/${encodeURIComponent(coin)}`, { hours });
 
 export const fetchTopHolders = (
   coin: string,
   hours = 24,
   limit = 15
 ): Promise<TopHolderItem[]> =>
-  get(
-    `/trades/top-holders/${encodeURIComponent(coin)}?hours=${hours}&limit=${limit}`
-  );
+  get(`/trades/top-holders/${encodeURIComponent(coin)}`, { hours, limit });
 
 export const fetchTradeFlow = (
   coin: string,
   hours = 24
 ): Promise<TradeFlowItem[]> =>
-  get(`/trades/flow/${encodeURIComponent(coin)}?hours=${hours}`);
+  get(`/trades/flow/${encodeURIComponent(coin)}`, { hours });
 
 // -- Candles --
 
@@ -150,14 +168,12 @@ export const fetchCandles = (
   interval = "1h",
   hours = 48
 ): Promise<CandleItem[]> =>
-  get(
-    `/candles/${encodeURIComponent(coin)}?interval=${encodeURIComponent(interval)}&hours=${hours}`
-  );
+  get(`/candles/${encodeURIComponent(coin)}`, { interval, hours });
 
 // -- Whales --
 
 export const fetchWhales = (limit = 50): Promise<TrackedAddressItem[]> =>
-  get(`/whales?limit=${limit}`);
+  get("/whales", { limit });
 
 export const fetchWhaleCount = (): Promise<{ count: number }> =>
   get("/whales/count");
@@ -169,7 +185,7 @@ export const fetchTopCoinPositions = (
   coin: string,
   limit = 25
 ): Promise<CoinPositionItem[]> =>
-  get(`/whales/top/${encodeURIComponent(coin)}?limit=${limit}`);
+  get(`/whales/top/${encodeURIComponent(coin)}`, { limit });
 
 export const addWhale = (
   address: string,
@@ -209,8 +225,8 @@ export const fetchFills = (
   address: string,
   beforeMs?: number,
   limit = 50,
-): Promise<FillPageResponse> => {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (beforeMs != null) params.set("before_ms", String(beforeMs));
-  return get(`/whales/fills/${encodeURIComponent(address)}?${params}`);
-};
+): Promise<FillPageResponse> =>
+  get(`/whales/fills/${encodeURIComponent(address)}`, {
+    limit,
+    before_ms: beforeMs,
+  });

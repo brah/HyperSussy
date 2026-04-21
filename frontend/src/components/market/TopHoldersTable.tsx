@@ -5,22 +5,12 @@ import { DataTable, type Column } from "../common/DataTable";
 import { EmptyState } from "../common/EmptyState";
 import { PanelCard } from "../common/PanelCard";
 import { formatPercent, formatPrice, formatSize, formatUSD } from "../../utils/format";
+import { formatLeverage, liquidationDistancePct } from "../../utils/position";
 import type { CoinPositionItem } from "../../api/types";
 
 interface TopHoldersTableProps {
   coin: string;
   positions: CoinPositionItem[];
-}
-
-function liqDistPct(p: CoinPositionItem): number | null {
-  if (p.liquidation_price == null || p.mark_price === 0) return null;
-  return (Math.abs(p.mark_price - p.liquidation_price) / p.mark_price) * 100;
-}
-
-function formatLeverage(value: number | null, type: string | null): string {
-  if (value == null) return "—";
-  const base = `${value.toFixed(1)}x`;
-  return type == null ? base : `${base} ${type}`;
 }
 
 /** Top open positions across all tracked wallets for a given coin. */
@@ -91,12 +81,12 @@ export const TopHoldersTable = memo(function TopHoldersTable({
       {
         id: "liq_dist_pct",
         header: "Liq. Price",
-        accessor: (p) => liqDistPct(p) ?? Infinity,
+        accessor: (p) => liquidationDistancePct(p) ?? Infinity,
         render: (p) => {
           if (p.liquidation_price == null) {
             return <span className="text-hs-grey">—</span>;
           }
-          const distPct = liqDistPct(p);
+          const distPct = liquidationDistancePct(p);
           return (
             <>
               <span className="text-hs-text">

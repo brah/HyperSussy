@@ -106,45 +106,56 @@ def _make_census(
 class TestOnTrade:
     """Tests for PositionCensus.on_trade volume accumulation."""
 
-    def test_accumulates_volume(self) -> None:
+    @pytest.mark.asyncio
+    async def test_accumulates_volume(self) -> None:
         """Volume is accumulated for both buyer and seller."""
         census, _, _ = _make_census()
-        census.on_trade(_trade("BTC", "0xbuyer", "0xseller", price=50_000.0, size=1.0))
-        assert census._address_volume["0xbuyer"] == 50_000.0
-        assert census._address_volume["0xseller"] == 50_000.0
+        await census.on_trade(
+            _trade("BTC", "0xbuyer", "0xseller", price=50_000.0, size=1.0)
+        )
+        assert census._window.address_volume["0xbuyer"] == 50_000.0
+        assert census._window.address_volume["0xseller"] == 50_000.0
 
-    def test_empty_address_skipped(self) -> None:
+    @pytest.mark.asyncio
+    async def test_empty_address_skipped(self) -> None:
         """Empty buyer/seller strings are not tracked."""
         census, _, _ = _make_census()
-        census.on_trade(_trade("BTC", "", "0xseller"))
-        assert "" not in census._address_volume
+        await census.on_trade(_trade("BTC", "", "0xseller"))
+        assert "" not in census._window.address_volume
 
-    def test_accumulates_across_trades(self) -> None:
+    @pytest.mark.asyncio
+    async def test_accumulates_across_trades(self) -> None:
         """Volume accumulates across multiple trades for same address."""
         census, _, _ = _make_census()
-        census.on_trade(_trade("BTC", "0xaddr", "0xmm", price=1000.0, size=1.0))
-        census.on_trade(_trade("BTC", "0xaddr", "0xmm", price=2000.0, size=1.0))
-        assert census._address_volume["0xaddr"] == 3_000.0
+        await census.on_trade(_trade("BTC", "0xaddr", "0xmm", price=1000.0, size=1.0))
+        await census.on_trade(_trade("BTC", "0xaddr", "0xmm", price=2000.0, size=1.0))
+        assert census._window.address_volume["0xaddr"] == 3_000.0
 
 
 class TestPruneVolume:
     """Tests for sliding window volume pruning."""
 
-    def test_prunes_expired_entries(self) -> None:
+    @pytest.mark.asyncio
+    async def test_prunes_expired_entries(self) -> None:
         """Trades older than lookback window are pruned."""
         census, _, _ = _make_census()
         census._settings.census_volume_lookback_ms = 1000
-        census.on_trade(_trade("BTC", "0xaddr", "0xmm", price=100.0, size=1.0, ts=100))
+        await census.on_trade(
+            _trade("BTC", "0xaddr", "0xmm", price=100.0, size=1.0, ts=100)
+        )
         census.prune_volume(timestamp_ms=2000)
-        assert census._address_volume.get("0xaddr") is None
+        assert census._window.address_volume.get("0xaddr") is None
 
-    def test_keeps_recent_entries(self) -> None:
+    @pytest.mark.asyncio
+    async def test_keeps_recent_entries(self) -> None:
         """Trades within the lookback window are kept."""
         census, _, _ = _make_census()
         census._settings.census_volume_lookback_ms = 5000
-        census.on_trade(_trade("BTC", "0xaddr", "0xmm", price=100.0, size=1.0, ts=3000))
+        await census.on_trade(
+            _trade("BTC", "0xaddr", "0xmm", price=100.0, size=1.0, ts=3000)
+        )
         census.prune_volume(timestamp_ms=5000)
-        assert census._address_volume["0xaddr"] == 100.0
+        assert census._window.address_volume["0xaddr"] == 100.0
 
 
 class TestTick:
@@ -154,7 +165,7 @@ class TestTick:
     async def test_polls_qualifying_addresses(self) -> None:
         """Addresses above min volume and not whales are polled."""
         census, reader, storage = _make_census(min_volume=1_000.0, batch_size=10)
-        census.on_trade(
+        await census.on_trade(
             _trade("BTC", "0xaddr", "0xmm", price=10_000.0, size=1.0, ts=100)
         )
         pos = _position("BTC", "0xaddr", 50_000.0)
@@ -171,7 +182,7 @@ class TestTick:
     async def test_excludes_whale_addresses(self) -> None:
         """Addresses already tracked as whales are excluded."""
         census, reader, _ = _make_census(min_volume=1_000.0)
-        census.on_trade(
+        await census.on_trade(
             _trade("BTC", "0xwhale", "0xmm", price=10_000.0, size=1.0, ts=100)
         )
 
@@ -183,7 +194,9 @@ class TestTick:
     async def test_excludes_below_min_volume(self) -> None:
         """Addresses below the volume threshold are not polled."""
         census, reader, _ = _make_census(min_volume=50_000.0)
-        census.on_trade(_trade("BTC", "0xsmall", "0xmm", price=100.0, size=1.0, ts=100))
+        await census.on_trade(
+            _trade("BTC", "0xsmall", "0xmm", price=100.0, size=1.0, ts=100)
+        )
 
         await census.tick(timestamp_ms=1_000, whale_addresses=set())
 
@@ -195,7 +208,7 @@ class TestTick:
         census, reader, _ = _make_census(
             poll_interval=60.0, min_volume=1_000.0, batch_size=10
         )
-        census.on_trade(
+        await census.on_trade(
             _trade("BTC", "0xaddr", "0xmm", price=10_000.0, size=1.0, ts=100)
         )
         # Use timestamps large enough to pass the interval check.
@@ -220,7 +233,7 @@ class TestTick:
         """Only batch_size addresses are polled per tick."""
         census, reader, _ = _make_census(batch_size=2, min_volume=1_000.0)
         for i in range(5):
-            census.on_trade(
+            await census.on_trade(
                 _trade(
                     "BTC",
                     f"0xaddr{i}",
@@ -241,10 +254,10 @@ class TestTick:
         census, reader, _ = _make_census(batch_size=1, min_volume=1_000.0)
         # Use same counterparty so 0xmm accumulates most volume
         # but exclude 0xmm as whale to test ranking of 0xsmall vs 0xbig
-        census.on_trade(
+        await census.on_trade(
             _trade("BTC", "0xsmall", "0xmm", price=5_000.0, size=1.0, ts=100)
         )
-        census.on_trade(
+        await census.on_trade(
             _trade("BTC", "0xbig", "0xmm", price=50_000.0, size=1.0, ts=200)
         )
 
@@ -258,7 +271,7 @@ class TestTick:
         """No storage call when positions list is empty."""
         census, reader, storage = _make_census(min_volume=1_000.0)
         reader.get_user_positions = AsyncMock(return_value=[])
-        census.on_trade(
+        await census.on_trade(
             _trade("BTC", "0xaddr", "0xmm", price=10_000.0, size=1.0, ts=100)
         )
 
@@ -270,15 +283,24 @@ class TestTick:
 class TestEviction:
     """Tests for memory cap enforcement."""
 
-    def test_evicts_lowest_volume(self) -> None:
+    @pytest.mark.asyncio
+    async def test_evicts_lowest_volume(self) -> None:
         """When over max_addresses, lowest-volume addresses are evicted."""
         census, _, _ = _make_census(max_addresses=2)
-        census.on_trade(_trade("BTC", "0xlow", "0xmm", price=100.0, size=1.0, ts=100))
-        census.on_trade(_trade("BTC", "0xmed", "0xmm", price=500.0, size=1.0, ts=200))
-        census.on_trade(_trade("BTC", "0xhigh", "0xmm", price=1000.0, size=1.0, ts=300))
+        await census.on_trade(
+            _trade("BTC", "0xlow", "0xmm", price=100.0, size=1.0, ts=100)
+        )
+        await census.on_trade(
+            _trade("BTC", "0xmed", "0xmm", price=500.0, size=1.0, ts=200)
+        )
+        await census.on_trade(
+            _trade("BTC", "0xhigh", "0xmm", price=1000.0, size=1.0, ts=300)
+        )
         # 0xmm also has accumulated volume, so we have 4 addresses
         # eviction triggers when > max_addresses * 2 = 4, need one more
-        census.on_trade(_trade("BTC", "0xextra", "0xmm2", price=50.0, size=1.0, ts=400))
+        await census.on_trade(
+            _trade("BTC", "0xextra", "0xmm2", price=50.0, size=1.0, ts=400)
+        )
         # Now 5 unique addresses (0xlow, 0xmed, 0xhigh, 0xmm, 0xextra, 0xmm2)
         # That's 6 > 2*2=4, so eviction should fire
-        assert len(census._address_volume) <= 2
+        assert len(census._window.address_volume) <= 2

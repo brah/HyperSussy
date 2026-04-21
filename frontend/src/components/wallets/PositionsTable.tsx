@@ -4,15 +4,11 @@ import { CoinLink } from "../common/CoinLink";
 import { DataTable, type Column } from "../common/DataTable";
 import { EmptyState } from "../common/EmptyState";
 import { formatPercent, formatPrice, formatSize, formatUSD } from "../../utils/format";
+import { liquidationDistancePct } from "../../utils/position";
 import type { PositionItem } from "../../api/types";
 
 interface PositionsTableProps {
   positions: PositionItem[];
-}
-
-function liqDistPct(p: PositionItem): number | null {
-  if (p.liquidation_price == null || p.mark_price === 0) return null;
-  return (Math.abs(p.mark_price - p.liquidation_price) / p.mark_price) * 100;
 }
 
 /** Open positions for a single wallet address, with sortable columns. */
@@ -80,12 +76,12 @@ export function PositionsTable({ positions }: Readonly<PositionsTableProps>) {
       {
         id: "liq_dist_pct",
         header: "Liq. Price",
-        accessor: (p) => liqDistPct(p) ?? Infinity,
+        accessor: (p) => liquidationDistancePct(p) ?? Infinity,
         render: (p) => {
           if (p.liquidation_price == null) {
             return <span className="text-hs-grey">—</span>;
           }
-          const distPct = liqDistPct(p);
+          const distPct = liquidationDistancePct(p);
           return (
             <>
               <span className="text-hs-text">

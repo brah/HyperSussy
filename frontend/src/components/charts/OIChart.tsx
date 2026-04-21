@@ -1,10 +1,11 @@
-import { memo, useEffect } from "react";
-import { AreaSeries, createChart, type Time } from "lightweight-charts";
+import { memo } from "react";
+import { AreaSeries, type Time } from "lightweight-charts";
 import type { OISnapshotItem } from "../../api/types";
 import { compareColors } from "../../theme/colors";
-import { lwcChartOptions, msToSec } from "../../theme/chartDefaults";
+import { msToSec } from "../../theme/chartDefaults";
 import { formatUSD } from "../../utils/format";
 import { useContainerWidth } from "../../hooks/useContainerWidth";
+import { useLightweightChart } from "../../hooks/useLightweightChart";
 
 export type OIMode = "pct" | "usd";
 
@@ -44,29 +45,30 @@ export const OIChart = memo(function OIChart({
 }: Readonly<OIChartProps>) {
   const [containerRef, width] = useContainerWidth();
 
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el || width === 0 || series.length === 0) return;
-
-    const chart = createChart(el, lwcChartOptions(width, height));
-    const priceFormat = mode === "usd" ? usdFormat : pctFormat;
-
-    series.forEach(({ data, label }, i) => {
-      const color = compareColors[i % compareColors.length];
-      chart.addSeries(AreaSeries, {
-        lineColor: color,
-        topColor: color + "40",
-        bottomColor: color + "00",
-        lineWidth: 2,
-        lineStyle: i === 0 ? 0 : 2,
-        priceFormat,
-        title: label,
-      }).setData(mode === "usd" ? toUsd(data) : toPercent(data));
-    });
-
-    chart.timeScale().fitContent();
-    return () => chart.remove();
-  }, [width, height, series, mode]);
+  useLightweightChart(
+    containerRef,
+    width,
+    height,
+    (chart) => {
+      if (series.length === 0) return;
+      const priceFormat = mode === "usd" ? usdFormat : pctFormat;
+      series.forEach(({ data, label }, i) => {
+        const color = compareColors[i % compareColors.length];
+        chart
+          .addSeries(AreaSeries, {
+            lineColor: color,
+            topColor: color + "40",
+            bottomColor: color + "00",
+            lineWidth: 2,
+            lineStyle: i === 0 ? 0 : 2,
+            priceFormat,
+            title: label,
+          })
+          .setData(mode === "usd" ? toUsd(data) : toPercent(data));
+      });
+    },
+    [series, mode],
+  );
 
   return <div ref={containerRef} style={{ width: "100%", height }} />;
 });

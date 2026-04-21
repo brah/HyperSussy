@@ -14,6 +14,35 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: "day_volume_usd", label: "24h Volume" },
 ];
 
+// Stable comparator factories. The table re-sorts on every WS
+// throttled flush; inlining the closure in the render path
+// allocated a fresh lambda per coin/flush. Module-level factories
+// mean at most one allocation per (key, dir) pair across the
+// session.
+const COMPARATORS: {
+  [K in SortKey]: {
+    asc: (a: LiveSnapshot, b: LiveSnapshot) => number;
+    desc: (a: LiveSnapshot, b: LiveSnapshot) => number;
+  };
+} = (() => {
+  const out = {} as {
+    [K in SortKey]: {
+      asc: (a: LiveSnapshot, b: LiveSnapshot) => number;
+      desc: (a: LiveSnapshot, b: LiveSnapshot) => number;
+    };
+  };
+  for (const { key } of COLUMNS) {
+    const asc =
+      key === "coin"
+        ? (a: LiveSnapshot, b: LiveSnapshot) => a.coin.localeCompare(b.coin)
+        : (a: LiveSnapshot, b: LiveSnapshot) =>
+            Number(a[key]) - Number(b[key]);
+    const desc = (a: LiveSnapshot, b: LiveSnapshot) => -asc(a, b);
+    out[key] = { asc, desc };
+  }
+  return out;
+})();
+
 interface MarketSummaryTableProps {
   onSelectCoin: (coin: string) => void;
 }
@@ -33,17 +62,7 @@ export function MarketSummaryTable({
     const list = Object.values(snapshots).filter(
       (s) => s.open_interest_usd > 0 || s.day_volume_usd > 0,
     );
-    return list.sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
-      let cmp: number;
-      if (typeof av === "string" && typeof bv === "string") {
-        cmp = av.localeCompare(bv);
-      } else {
-        cmp = Number(av) - Number(bv);
-      }
-      return sortDir === "asc" ? cmp : -cmp;
-    });
+    return list.sort(COMPARATORS[sortKey][sortDir]);
   }, [snapshots, sortKey, sortDir]);
 
   function handleSort(key: SortKey) {

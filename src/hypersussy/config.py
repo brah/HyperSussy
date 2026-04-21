@@ -44,6 +44,16 @@ class HyperSussySettings(BaseSettings):
     rate_limit_window_s: int = 60
     candle_rate_limit_weight: int = 200
 
+    # Candle pagination: how many bars a single page returns by
+    # default, and how many HL backfill hops one page request may
+    # trigger on a cold cache. 1500 bars × 8 chunks × 5000 HL cap
+    # = up to 40k bars per first-view, bounded to avoid runaway
+    # latency on a misconfigured cursor. Both are live-editable so
+    # operators can dial them up for heavy historical use or down
+    # if the dashboard feels sluggish.
+    candles_page_size: int = 1500
+    candles_max_backfill_chunks: int = 8
+
     # Engine toggles
     engine_oi_concentration: bool = True
     engine_whale_tracker: bool = True

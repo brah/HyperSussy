@@ -345,6 +345,25 @@ _HOT_FIELD_LIST: tuple[HotField, ...] = (
         "Seconds between retention loop ticks.",
         minimum=60.0,
     ),
+    # -- Candles ------------------------------------------------------------
+    HotField(
+        "candles_page_size",
+        "Candles",
+        "Page size (bars)",
+        "Bars returned per /api/candles page. Larger = fewer round trips "
+        "on deep scroll; smaller = faster first paint.",
+        minimum=100,
+        maximum=10_000,
+    ),
+    HotField(
+        "candles_max_backfill_chunks",
+        "Candles",
+        "Max backfill chunks",
+        "Safety cap on HL backfill round trips per page request. One "
+        "chunk pulls up to 5000 bars — 8 chunks ≈ 40k bars max per call.",
+        minimum=1,
+        maximum=32,
+    ),
 )
 
 HOT_FIELDS: dict[str, HotField] = {f.name: f for f in _HOT_FIELD_LIST}

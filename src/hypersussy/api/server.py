@@ -91,6 +91,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None]:
         db_path=settings.db_path,
         rate_limit_weight=settings.candle_rate_limit_weight,
         window_seconds=settings.rate_limit_window_s,
+        settings=settings,
     )
     await candle_service.init()
     pnl_service = PnlService(base_url=settings.hl_api_url)

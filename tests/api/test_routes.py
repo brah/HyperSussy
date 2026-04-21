@@ -171,7 +171,7 @@ def client(tmp_path: pytest.TempPathFactory) -> TestClient:  # type: ignore[type
         }
     ]
     candle_service = MagicMock()
-    candle_service.get_candles = AsyncMock(return_value=candle_rows)
+    candle_service.get_candle_page = AsyncMock(return_value=candle_rows)
 
     test_app = FastAPI()
     test_app.include_router(health.router, prefix="/api")

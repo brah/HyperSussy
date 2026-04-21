@@ -163,12 +163,21 @@ export const fetchTradeFlow = (
 
 // -- Candles --
 
+/**
+ * Fetch a single candle page. Omit ``before_ms`` for the newest
+ * bars; pass the oldest ``timestamp_ms`` from the previous page to
+ * load older data. ``limit`` caps the returned bar count.
+ */
 export const fetchCandles = (
   coin: string,
   interval = "1h",
-  hours = 48
+  opts: { before_ms?: number; limit?: number } = {},
 ): Promise<CandleItem[]> =>
-  get(`/candles/${encodeURIComponent(coin)}`, { interval, hours });
+  get(`/candles/${encodeURIComponent(coin)}`, {
+    interval,
+    before_ms: opts.before_ms,
+    limit: opts.limit,
+  });
 
 // -- Whales --
 

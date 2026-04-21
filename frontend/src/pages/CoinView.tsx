@@ -3,10 +3,10 @@
  * lightweight-charts are NOT included in the initial bundle.
  */
 
-import { useEffect, useMemo, useState } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 import {
-  candlesQuery,
+  candlesInfiniteQuery,
   fundingQuery,
   oiQuery,
   topCoinPositionsQuery,
@@ -56,6 +56,11 @@ interface CoinViewProps {
 
 export default function CoinView({ coin, coin2s, interval, hours, onIntervalChange }: Readonly<CoinViewProps>) {
   const [oiMode, setOiMode] = useState<OIMode>("pct");
+  // OI / Funding indicator overlays still use a time-windowed REST
+  // query because they're not paginated — sized to the interval via
+  // HOURS_FOR_INTERVAL. The main candle series has moved to
+  // useInfiniteQuery so deep history loads on pan-to-left without
+  // growing this initial payload.
   const candleHours = HOURS_FOR_INTERVAL[interval];
   // Clamp to MAX_COMPARE and filter out the primary coin.
   // Memoized so downstream useMemos can list it as a stable dependency.
@@ -93,13 +98,39 @@ export default function CoinView({ coin, coin2s, interval, hours, onIntervalChan
   // math skips live-patching while the candles array still belongs
   // to the previous coin.
   const {
-    data: candles = [],
+    data: candlesData,
     isLoading: candlesLoading,
     isPlaceholderData: isCandlesPlaceholder,
-  } = useQuery({
-    ...candlesQuery(coin, interval, candleHours),
+    hasNextPage: hasOlderCandles,
+    isFetchingNextPage: isFetchingOlderCandles,
+    fetchNextPage: fetchOlderCandles,
+  } = useInfiniteQuery({
+    ...candlesInfiniteQuery(coin, interval),
     enabled: showCandlestick && coin.length > 0,
   });
+
+  // Flatten the infinite-query pages into one oldest-first array.
+  // React Query stores pages in request order (newest page first in
+  // ``pages[0]``, older pages appended as the user scrolls left), and
+  // each page is itself oldest-first within its window. Flattening
+  // [older_page, ..., newest_page] → concatenated oldest-first array
+  // feeds lightweight-charts' ``setData`` cleanly without a sort.
+  const candles = useMemo(() => {
+    if (!candlesData) return [];
+    const merged = [];
+    for (let i = candlesData.pages.length - 1; i >= 0; i--) {
+      merged.push(...candlesData.pages[i]);
+    }
+    return merged;
+  }, [candlesData]);
+
+  // Chart asks for older bars by calling this; we translate into a
+  // React Query ``fetchNextPage`` and swallow the result promise —
+  // the useInfiniteQuery state updates drive the re-render.
+  const onLoadOlderCandles = useCallback(() => {
+    if (!hasOlderCandles || isFetchingOlderCandles) return;
+    void fetchOlderCandles();
+  }, [hasOlderCandles, isFetchingOlderCandles, fetchOlderCandles]);
   // Plain `oiData` (using `hours`) is only consumed by the OI compare
   // panel, which renders only when `comparing`. The candle sub-pane
   // uses `oiForChart` (different hours window).
@@ -212,6 +243,9 @@ export default function CoinView({ coin, coin2s, interval, hours, onIntervalChan
               showOI={showOI}
               fundingData={fundingForChart}
               showFunding={showFunding}
+              onLoadOlder={onLoadOlderCandles}
+              hasMoreOlder={hasOlderCandles}
+              isLoadingOlder={isFetchingOlderCandles}
             />
           ) : candlesLoading ? (
             <p className="text-gray-500 text-sm py-12 text-center animate-pulse">

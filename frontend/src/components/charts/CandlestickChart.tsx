@@ -66,7 +66,25 @@ interface CandlestickChartProps {
   showOI?: boolean;
   fundingData?: FundingSnapshotItem[];
   showFunding?: boolean;
+  /**
+   * Invoked when the user scrolls near the chart's left edge and
+   * more historical bars should be fetched. Parent translates this
+   * into a ``useInfiniteQuery.fetchNextPage()`` call. The chart
+   * doesn't await — the resulting re-render with an extended
+   * ``candles`` prop drives the series update.
+   */
+  onLoadOlder?: () => void;
+  /** Whether older pages are available from the backend. */
+  hasMoreOlder?: boolean;
+  /** Whether an older-page fetch is currently in flight. */
+  isLoadingOlder?: boolean;
 }
+
+// Trigger ``onLoadOlder`` when the visible logical range's ``from``
+// comes within this many bars of the series start. 50 is enough
+// runway that the new page typically lands before the user runs out
+// of bars, while not being so large it triggers on every scroll.
+const LOAD_OLDER_TRIGGER_BARS = 50;
 
 // Pane layout: relative stretch factors (flex-grow style).
 //   pane 0: candles            ── default pane created with the chart
@@ -129,6 +147,9 @@ export const CandlestickChart = memo(function CandlestickChart({
   showOI = false,
   fundingData,
   showFunding = false,
+  onLoadOlder,
+  hasMoreOlder = false,
+  isLoadingOlder = false,
 }: Readonly<CandlestickChartProps>) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -505,6 +526,40 @@ export const CandlestickChart = memo(function CandlestickChart({
     chartRef.current?.applyOptions({ height });
   }, [height]);
 
+  // ── Pan-to-load older bars ──────────────────────────────────
+  // Subscribe once (per chart lifecycle) to the time-scale's visible
+  // logical range. Whenever the left edge of the view enters the
+  // trigger zone, ask the parent for another page. Refs are used so
+  // the handler picks up the latest prop values without resubscribing
+  // (which would leak LWC subscriptions across renders).
+  const onLoadOlderRef = useRef(onLoadOlder);
+  onLoadOlderRef.current = onLoadOlder;
+  const hasMoreOlderRef = useRef(hasMoreOlder);
+  hasMoreOlderRef.current = hasMoreOlder;
+  const isLoadingOlderRef = useRef(isLoadingOlder);
+  isLoadingOlderRef.current = isLoadingOlder;
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const handler = (range: { from: number; to: number } | null): void => {
+      if (!range) return;
+      if (!hasMoreOlderRef.current || isLoadingOlderRef.current) return;
+      // ``from`` can go slightly negative when the user has scrolled
+      // past the first bar; trigger based on absolute bars from the
+      // series start rather than the raw value to keep the condition
+      // readable.
+      if (range.from <= LOAD_OLDER_TRIGGER_BARS) {
+        onLoadOlderRef.current?.();
+      }
+    };
+    const timeScale = chart.timeScale();
+    timeScale.subscribeVisibleLogicalRangeChange(handler);
+    return () => {
+      timeScale.unsubscribeVisibleLogicalRangeChange(handler);
+    };
+  }, []);
+
   // ── Candle + volume data ────────────────────────────────────
   const candleData = useMemo<CandlestickData[]>(
     () =>
@@ -569,11 +624,46 @@ export const CandlestickChart = memo(function CandlestickChart({
     }
   }
 
+  // Tracks how many bars the series held before the most recent
+  // ``setData`` call. Used to detect pan-to-load extensions (same
+  // key, grew by N) vs coin changes (different key) so the view can
+  // preserve the user's scroll position on extensions instead of
+  // ``fitContent``-ing them back to the right edge.
+  const prevCandleCountRef = useRef<number>(0);
+
   useEffect(() => {
     if (!candleSeriesRef.current || !volumeSeriesRef.current) return;
+    const chart = chartRef.current;
+    const timeScale = chart?.timeScale();
+    const wasSeededFor = seededKeyRef.current;
+    const isCoinChange = wasSeededFor !== activeKey;
+    const prevLength = prevCandleCountRef.current;
+    const newLength = candleData.length;
+    // Capture the view before replacing data — only meaningful on
+    // an extension, where we need to shift indices forward by the
+    // new-older count to keep the same bars visible.
+    const savedRange =
+      !isCoinChange && newLength > prevLength
+        ? timeScale?.getVisibleLogicalRange()
+        : null;
+
     candleSeriesRef.current.setData(candleData);
     volumeSeriesRef.current.setData(volumeData);
-    chartRef.current?.timeScale().fitContent();
+
+    if (isCoinChange) {
+      timeScale?.fitContent();
+    } else if (savedRange) {
+      // Older bars prepended — LWC shifts indices, so bar that was
+      // at logical index K is now at K + (newLength - prevLength).
+      // Offset the visible range by that delta so the user's scroll
+      // position looks the same post-load.
+      const delta = newLength - prevLength;
+      timeScale?.setVisibleLogicalRange({
+        from: savedRange.from + delta,
+        to: savedRange.to + delta,
+      });
+    }
+
     // Record which key the candle series now holds. The closure
     // captures `activeKey` at the moment this effect runs, which
     // is exactly when fresh REST data arrived for the active coin.
@@ -590,6 +680,7 @@ export const CandlestickChart = memo(function CandlestickChart({
     // guarantees we only re-seed when real data arrives for the
     // current coin.
     seededKeyRef.current = activeKey;
+    prevCandleCountRef.current = newLength;
     // Reset the stale-bar guard to the last historical bar's time
     // so any older entry still cached in the WS store is rejected
     // by applyLiveBar instead of being passed to lightweight-charts'

@@ -117,13 +117,37 @@ export const tradeFlowQuery = (coin: string, hours: number) =>
     placeholderData: keepPreviousData,
   });
 
-export const candlesQuery = (coin: string, interval: string, hours: number) =>
-  queryOptions({
-    queryKey: ["candles", coin, interval, hours],
-    queryFn: () => api.fetchCandles(coin, interval, hours),
+/**
+ * Cursor-paginated candle history.
+ *
+ * Page 0 is the newest ``CANDLE_PAGE_SIZE`` bars; each subsequent
+ * page is fetched on demand via ``fetchNextPage()`` when the user
+ * scrolls close to the left edge of the chart. ``initialPageParam``
+ * is ``undefined`` so the first fetch sends no ``before_ms``, which
+ * the backend treats as "newest bars" with an implicit top-up.
+ *
+ * ``getNextPageParam`` returns the oldest timestamp of the page
+ * just received — or ``undefined`` when the server returned fewer
+ * than the page size, which is our signal that history is
+ * exhausted.
+ */
+export const CANDLE_PAGE_SIZE = 1500;
+
+export const candlesInfiniteQuery = (coin: string, interval: string) =>
+  infiniteQueryOptions({
+    queryKey: ["candles", coin, interval],
+    initialPageParam: undefined as number | undefined,
+    queryFn: ({ pageParam }: { pageParam: number | undefined }) =>
+      api.fetchCandles(coin, interval, {
+        before_ms: pageParam,
+        limit: CANDLE_PAGE_SIZE,
+      }),
+    getNextPageParam: (lastPage) => {
+      if (lastPage.length < CANDLE_PAGE_SIZE) return undefined;
+      return lastPage[0]?.timestamp_ms;
+    },
     staleTime: 30_000,
     enabled: coin.length > 0,
-    placeholderData: keepPreviousData,
   });
 
 // Tracked whales change once per user action (manual add/remove via the
